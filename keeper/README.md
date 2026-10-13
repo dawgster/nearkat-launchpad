@@ -51,8 +51,7 @@ first run downloads a NEAR sandbox binary.
 | `POST /auth/challenge` | none | Nonce, message and recipient to sign (NEP-413) |
 | `GET /info` | none | Prices per message and per save (yoctoNEAR) and the model id |
 | `POST /auth/session` | none | Body `{ nonce, signed_message, callback_url? }`; returns a 15-minute token |
-| `GET /kats/:id/context` | owner | The whole context: token id, version, salt, personality, memory summary |
-| `PUT /kats/:id/personality` | owner | Body `{ prompt }`, up to 4,000 characters |
+| `GET /kats/:id/context` | owner | The whole context: token id, version, salt, character (`personality`), memory summary |
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
 
 Errors are JSON `{ error, message }`: 400 `invalid_input`, 401

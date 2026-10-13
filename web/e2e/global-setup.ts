@@ -47,12 +47,16 @@ function startFakeModel() {
         };
         const system = messages[0]?.content ?? "";
         const last = messages.at(-1)?.content ?? "";
-        const mood = system.includes("grumpy") ? "Hmph." : "Meow!";
+        // Two kinds of request reach the model: a chat turn, and the update that
+        // carries a conversation into the kat's character and memory.
+        const content = system.includes("CHARACTER:")
+          ? "CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\nThe owner kept saying hello."
+          : `${system.includes("grumpy") ? "Hmph." : "Meow!"} You said: ${last}`;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
             id: `chat-${Date.now()}`,
-            choices: [{ message: { role: "assistant", content: `${mood} You said: ${last}` } }],
+            choices: [{ message: { role: "assistant", content } }],
           }),
         );
       } else {

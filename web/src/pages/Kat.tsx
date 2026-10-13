@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { CharacterPanel } from "../components/CharacterPanel.tsx";
 import { Chat } from "../components/Chat.tsx";
 import { FundPanel } from "../components/FundPanel.tsx";
 import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { KatBadge } from "../components/KatBadge.tsx";
-import { PersonalityEditor } from "../components/PersonalityEditor.tsx";
 import { Shell } from "../components/Shell.tsx";
-import { shorten } from "../lib/format.ts";
+import { formatNear, shorten } from "../lib/format.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
@@ -20,7 +20,7 @@ const SETTLE_WAITS = 30;
 /** Keeper answers that mean "not yet" while the contract shows this wallet as owner. */
 const SETTLING_CODES = ["waking_up", "not_owner", "not_found"];
 
-/** The owner's side of the page: the conversation, and the panel that shapes the kat. */
+/** The owner's side of the page: the conversation, and what the kat has become. */
 function Den({
   tokenId,
   ownerId,
@@ -123,15 +123,7 @@ function Den({
         onOutOfBalance={() => setOutOfBalance(true)}
       />
       <aside className="min-w-0 space-y-10 lg:border-l lg:border-cream/10 lg:pl-10">
-        <PersonalityEditor
-          personality={context.data.personality}
-          savePrice={prices.save}
-          save={async (prompt) => {
-            await session.call((token) => keeper.setPersonality(token, tokenId, prompt));
-            setBalance((current) => current - prices.save);
-            void reloadContext();
-          }}
-        />
+        <CharacterPanel character={context.data.personality} />
         <section aria-labelledby="memory">
           <h2 id="memory" className="font-sans text-lg font-bold">
             Memory
@@ -139,6 +131,10 @@ function Den({
           <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-mist">
             {context.data.memory_summary ||
               "Nothing remembered yet. After a longer conversation, the kat writes down what mattered."}
+          </p>
+          <p className="mt-3 text-sm text-mist">
+            Saving what it learned costs {formatNear(prices.save)} NEAR from its balance, after
+            about ten exchanges.
           </p>
         </section>
         <FundPanel

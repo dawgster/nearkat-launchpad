@@ -71,7 +71,6 @@ export interface Keeper {
   /** `callbackUrl` is the page URL given to the wallet, which web wallets sign over. */
   createSession(nonce: string, signed: SignedMessage, callbackUrl?: string): Promise<Session>;
   getContext(token: string, tokenId: string): Promise<ContextDoc>;
-  setPersonality(token: string, tokenId: string, prompt: string): Promise<ContextDoc>;
   chat(token: string, tokenId: string, message: string): Promise<ChatReply>;
 }
 
@@ -117,8 +116,6 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
         body: { nonce, signed_message: signed, callback_url: callbackUrl },
       }),
     getContext: (token, tokenId) => request("GET", `${kat(tokenId)}/context`, { token }),
-    setPersonality: (token, tokenId, prompt) =>
-      request("PUT", `${kat(tokenId)}/personality`, { token, body: { prompt } }),
     chat: (token, tokenId, message) =>
       request("POST", `${kat(tokenId)}/chat`, { token, body: { message } }),
   };

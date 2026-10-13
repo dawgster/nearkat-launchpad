@@ -11,7 +11,7 @@ const shot = async (page: import("@playwright/test").Page, name: string) => {
 // One story, in order: the second half depends on what the first half did.
 test.describe.configure({ mode: "serial" });
 
-test("an owner mints a kat, shapes it, talks to it, and gives it away", async ({ page }) => {
+test("an owner mints a kat, raises it by talking to it, and gives it away", async ({ page }) => {
   await page.goto(ALICE_URL);
   await expect(page.getByRole("heading", { level: 1 })).toContainText("It remembers.");
   await shot(page, "1-surface");
@@ -22,16 +22,26 @@ test("an owner mints a kat, shapes it, talks to it, and gives it away", async ({
 
   // Minting lands in the new kat's burrow; the keeper wakes it within a few seconds.
   await expect(page).toHaveURL(/\/kat\/1$/);
-  const personality = page.getByLabel("Personality");
   // The keeper needs a few seconds to see the new kat and wake it; the page waits.
+  const character = page.getByRole("region", { name: "Character" });
   await expect(page.getByRole("status")).toBeVisible();
-  await expect(personality).toHaveValue(/newly hatched nearkat/, { timeout: 60_000 });
+  await expect(character).toContainText("newly hatched nearkat", { timeout: 60_000 });
+  // Nothing on the page lets the owner write the character.
+  await expect(character.getByRole("textbox")).toHaveCount(0);
 
-  await personality.fill("You are grumpy and suspicious of strangers.");
-  await page.getByRole("button", { name: "Save personality" }).click();
-  await expect(page.getByText("Personality saved.")).toBeVisible();
+  // Ten exchanges later the kat saves what it learned, and its character has moved.
+  const box = page.getByLabel("Message to Nearkat #1");
+  for (let i = 1; i <= 10; i++) {
+    await box.fill(`hello ${i}`);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText(`Meow! You said: hello ${i}`)).toBeVisible();
+  }
+  await expect(character).toContainText("grumpy and suspicious of strangers");
+  await expect(page.getByRole("region", { name: "Memory" })).toContainText(
+    "The owner kept saying hello.",
+  );
 
-  await page.getByLabel("Message to Nearkat #1").fill("hello down there");
+  await box.fill("hello down there");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hmph. You said: hello down there")).toBeVisible();
   await shot(page, "2-burrow");
@@ -56,16 +66,16 @@ test("an owner mints a kat, shapes it, talks to it, and gives it away", async ({
   // The previous owner can still see that the kat exists, but not its mind.
   await page.goto(`${ALICE_URL}/kat/1`);
   await expect(page.getByText("The connected wallet isn't the owner.")).toBeVisible();
-  await expect(page.getByLabel("Personality")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Character" })).toHaveCount(0);
 });
 
-test("the new owner finds the kat with the personality it was given", async ({ page }) => {
+test("the new owner finds the kat with the character it grew into", async ({ page }) => {
   await page.goto(BOB_URL);
   await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
   await page.getByRole("link", { name: /Nearkat #1/ }).click();
   // The keeper trails the chain by a few seconds after a transfer; the page waits for it.
-  await expect(page.getByLabel("Personality")).toHaveValue(
-    "You are grumpy and suspicious of strangers.",
+  await expect(page.getByRole("region", { name: "Character" })).toContainText(
+    "grumpy and suspicious of strangers",
     { timeout: 60_000 },
   );
   await page.getByLabel("Message to Nearkat #1").fill("who are you?");

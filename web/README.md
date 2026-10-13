@@ -1,6 +1,6 @@
 # Nearkat web app
 
-Where owners mint a kat, talk to it, shape its personality, give it away and
+Where owners mint a kat, raise it by talking to it, give it away and
 check what the keeper tells them. Design:
 `../docs/superpowers/specs/2026-10-13-nearkat-ai-nft-design.md`.
 
@@ -38,7 +38,7 @@ with `cargo near build non-reproducible-wasm` in `../contract`, and a browser:
 | Path | What it is |
 |---|---|
 | `/` | The surface: what a nearkat is, minting, and the kats in your wallet |
-| `/kat/:id` | The burrow: talk to a kat, edit its personality, add NEAR, give it away |
+| `/kat/:id` | The burrow: talk to a kat, read its character and memory, add NEAR, give it away |
 | `/kat/:id/verify` | What the browser can check about the kat and its keeper |
 
 ## Notes

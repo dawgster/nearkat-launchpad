@@ -27,19 +27,22 @@ describe("createKeeper", () => {
     });
   });
 
+  test("has no way to write a kat's character", () => {
+    const { keeper } = setup(() => Response.json({}));
+    expect("setPersonality" in keeper).toBe(false);
+  });
+
   test("uses the right method and path for each call", async () => {
     const { keeper, calls } = setup(() => Response.json({}));
     await keeper.attestation();
     await keeper.challenge();
     await keeper.createSession("n", { accountId: "a.near", publicKey: "pk", signature: "sig" });
     await keeper.getContext("tok", "7");
-    await keeper.setPersonality("tok", "7", "grumpy");
     expect(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`)).toEqual([
       "GET /attestation",
       "POST /auth/challenge",
       "POST /auth/session",
       "GET /kats/7/context",
-      "PUT /kats/7/personality",
     ]);
     expect(calls[2]?.init.body).toBe(
       JSON.stringify({

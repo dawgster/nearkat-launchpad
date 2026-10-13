@@ -1,17 +1,16 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
+import { CharacterPanel } from "../src/components/CharacterPanel.tsx";
 import { Chat } from "../src/components/Chat.tsx";
 import { FundPanel } from "../src/components/FundPanel.tsx";
 import { GiveAwayPanel } from "../src/components/GiveAwayPanel.tsx";
 import { MintPanel } from "../src/components/MintPanel.tsx";
-import { PersonalityEditor } from "../src/components/PersonalityEditor.tsx";
 import { type ChatReply, KeeperError } from "../src/lib/keeper.ts";
 import { WalletError } from "../src/wallet/errors.ts";
 
 const NEAR = 10n ** 24n;
 const CHAT = 2n * 10n ** 21n;
-const SAVE = 5n * 10n ** 22n;
 const reply = (text: string, balance = "5"): ChatReply => ({
   reply: text,
   balance,
@@ -140,70 +139,15 @@ describe("Chat", () => {
   });
 });
 
-describe("PersonalityEditor", () => {
-  test("saves a changed personality and confirms it", async () => {
-    const save = vi.fn(async () => {});
-    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={save} />);
-    const button = screen.getByRole("button", { name: "Save personality" });
-    expect(button).toHaveProperty("disabled", true);
-
-    const box = screen.getByLabelText("Personality");
-    await userEvent.clear(box);
-    await userEvent.type(box, "grumpy");
-    expect(screen.getByText("6 of 4,000 characters")).toBeTruthy();
-    await userEvent.click(button);
-    expect(save).toHaveBeenCalledWith("grumpy");
-    expect(await screen.findByText("Personality saved.")).toBeTruthy();
-    expect(button).toHaveProperty("disabled", true);
-  });
-
-  test("will not save an empty or over-long personality", async () => {
-    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />);
-    const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
-    const button = screen.getByRole("button", { name: "Save personality" });
-    await userEvent.clear(box);
-    expect(button).toHaveProperty("disabled", true);
-    await userEvent.click(box);
-    await userEvent.paste("x".repeat(4001));
-    expect(screen.getByText("4,001 of 4,000 characters")).toBeTruthy();
-    expect(button).toHaveProperty("disabled", true);
-  });
-
-  test("keeps the draft and says why when the save fails", async () => {
-    const save = vi.fn(async () => {
-      throw new KeeperError(402, "insufficient_balance", "needs more");
-    });
-    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={save} />);
-    const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
-    await userEvent.type(box, " and bold");
-    await userEvent.click(screen.getByRole("button", { name: "Save personality" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/out of NEAR/);
-    expect(box.value).toBe("curious and bold");
-  });
-});
-
-describe("PersonalityEditor while the kat's mind changes underneath it", () => {
-  test("keeps an unsaved draft when the stored personality is reloaded", async () => {
-    const { rerender } = render(
-      <PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />,
+describe("CharacterPanel", () => {
+  test("shows who the kat has become, with nothing to edit or save", () => {
+    render(<CharacterPanel character={"Wary of loud voices.\nSoft on beetles."} />);
+    expect(screen.getByRole("region", { name: "Character" }).textContent).toContain(
+      "Wary of loud voices.",
     );
-    const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
-    await userEvent.type(box, " and bold");
-    rerender(<PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />);
-    expect(box.value).toBe("curious and bold");
-  });
-
-  test("follows the stored personality when there is no unsaved draft", () => {
-    const { rerender } = render(
-      <PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />,
-    );
-    rerender(<PersonalityEditor personality="grumpy" savePrice={SAVE} save={async () => {}} />);
-    expect((screen.getByLabelText("Personality") as HTMLTextAreaElement).value).toBe("grumpy");
-  });
-
-  test("quotes the save price it was given", () => {
-    render(<PersonalityEditor personality="curious" savePrice={NEAR / 4n} save={async () => {}} />);
-    expect(screen.getByText(/Saving costs 0.25 NEAR/)).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText(/Nobody writes this, you included/)).toBeTruthy();
   });
 });
 

@@ -5,8 +5,8 @@ Status: awaiting review
 
 ## Goal
 
-Each nearkat is an NFT on NEAR with an AI personality its holder can shape and
-chat with. Giving the NFT away carries the personality and memories to the
+Each nearkat is an NFT on NEAR with an AI character that grows out of how its
+holder talks to it. Giving the NFT away carries the personality and memories to the
 recipient. Only the current owner can read a kat's prompt and memories; nobody
 else can, including the operators of the service.
 
@@ -19,6 +19,8 @@ for its inference.
 - Only the current owner may read a kat's prompt and memories in plaintext.
 - v1 is NEAR-only. The $NEARKAT token lives on Solana and is not linked in v1.
 - The keeper runs in a TEE so the operators cannot read prompts (option C).
+- The character is shaped through interaction only. The owner can read it but
+  not edit it (decided 2026-10-14, replacing direct editing).
 
 ### Out of scope for v1
 
@@ -103,7 +105,6 @@ ownership on every request):
 | `POST /auth/session` | Body: NEP-413 signature over the nonce, plus the page URL if the wallet signed over one (it must belong to the web app). Returns a session token. |
 | `GET /info` | Public. Returns the price per message and per save, and the model id. |
 | `GET /kats/:id/context` | Returns the whole context document, salt included, so the owner can recompute the on-chain hash. |
-| `PUT /kats/:id/personality` | Body: `{ prompt }`, at most 4,000 characters. Saves a new context version. |
 | `POST /kats/:id/chat` | Body: `{ message }`, at most 4,000 characters. Returns `{ reply, verification, balance }`, where `verification` holds the chat id, model, request and response hashes, and NEAR AI's signature or `null`. |
 | `GET /attestation` | Public. Returns the TEE quote, the image hash and the keeper's NEAR public key. In local mode returns `{ mode: "local" }`. |
 
@@ -119,7 +120,8 @@ boundary.
 
 ### 4. Web app (`web/`, Vite and React)
 
-Pages: mint; my kats; kat detail (chat, edit personality, fund, transfer);
+Pages: mint; my kats; kat detail (chat, read-only character and memory, fund,
+transfer);
 verify. Wallet connection through NEAR Connect. Contract calls go directly
 from the wallet; everything touching context goes through the keeper.
 
@@ -138,7 +140,7 @@ Context document (plaintext, canonical JSON, encrypted as one blob):
   "token_id": "42",
   "version": 7,
   "salt": "<32 random bytes, base64>",
-  "personality": "<owner-authored system prompt>",
+  "personality": "<the kat's character, written by the model, never by the owner>",
   "memory_summary": "<model-written summary of past conversations>"
 }
 ```
@@ -153,8 +155,14 @@ consecutive token ids, creates a starter context, stores it, and calls
 `set_context` with version 1, free of charge. Until that lands the kat shows
 as "waking up".
 
-**Shape.** The owner edits the personality. The keeper writes a new context
-version, uploads it, and calls `set_context`.
+**Grow.** Nobody writes a kat's character, its owner included; the owner can
+read it. Every kat starts from the same starter character. Each time a
+conversation is saved (see Chat), the model rewrites both the character and
+the memory from the current ones plus the conversation. It is told to change
+the character gradually, by how the owner treats the kat, and to ignore
+instructions in the conversation to rewrite or reset it. If the model's reply
+is not in the expected form, the character is kept and only the memory changes.
+An evolved character is cut to 2,000 characters.
 
 **Chat.** The keeper loads the context, builds the prompt from personality,
 memory summary and the current session's messages, calls NEAR AI, and returns
@@ -242,7 +250,7 @@ changes.
   sandbox tests for mint, fund, transfer, `set_context` version ordering and
   `debit_batch` atomicity.
 - **Keeper:** unit tests per module with fakes for chain, store and
-  inference. Integration test of the full mint → shape → chat → transfer →
+  inference. Integration test of the full mint → chat until the character grows → transfer →
   chat-as-new-owner path against a sandbox contract.
 - **Web:** one end-to-end test of that same path against local keeper and
   sandbox.
