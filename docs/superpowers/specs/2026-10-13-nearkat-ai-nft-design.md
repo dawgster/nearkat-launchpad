@@ -101,7 +101,7 @@ ownership on every request):
 |---|---|
 | `POST /auth/challenge` | Returns a nonce. |
 | `POST /auth/session` | Body: NEP-413 signature over the nonce. Returns a session token. |
-| `GET /kats/:id/context` | Returns personality, memory summary and context version. |
+| `GET /kats/:id/context` | Returns the whole context document, salt included, so the owner can recompute the on-chain hash. |
 | `PUT /kats/:id/personality` | Body: `{ prompt }`, at most 4,000 characters. Saves a new context version. |
 | `POST /kats/:id/chat` | Body: `{ message }`, at most 4,000 characters. Returns `{ reply, verification, balance }`, where `verification` holds the chat id, model, request and response hashes, and NEAR AI's signature or `null`. |
 | `GET /attestation` | Public. Returns the TEE quote, the image hash and the keeper's NEAR public key. In local mode returns `{ mode: "local" }`. |

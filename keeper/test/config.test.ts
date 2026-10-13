@@ -39,12 +39,29 @@ describe("loadConfig", () => {
     });
   });
 
+  test("accepts a local sandbox node when given its RPC URL", () => {
+    const config = loadConfig({
+      ...base,
+      NEAR_NETWORK: "sandbox",
+      NEAR_RPC_URL: "http://127.0.0.1:3030",
+    });
+    expect(config).toMatchObject({ network: "sandbox", rpcUrl: "http://127.0.0.1:3030" });
+  });
+
+  test("leaves the RPC URL unset by default", () => {
+    expect(loadConfig(base).rpcUrl).toBeUndefined();
+  });
+
+  test("requires an RPC URL for a sandbox", () => {
+    expect(() => loadConfig({ ...base, NEAR_NETWORK: "sandbox" })).toThrow("NEAR_RPC_URL");
+  });
+
   test.each(["CONTRACT_ID", "KEEPER_ACCOUNT_ID", "NEAR_AI_API_KEY"])("requires %s", (name) => {
     expect(() => loadConfig({ ...base, [name]: "" })).toThrow(name);
   });
 
   test.each([
-    ["NEAR_NETWORK", "sandbox"],
+    ["NEAR_NETWORK", "devnet"],
     ["PORT", "0"],
     ["PORT", "http"],
     ["PORT", "70000"],

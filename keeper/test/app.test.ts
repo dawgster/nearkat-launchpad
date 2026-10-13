@@ -68,7 +68,7 @@ describe("keeper HTTP API", () => {
     const token = await signIn("alice.near");
 
     const context = await app.request("/kats/1/context", as(token, undefined, "GET"));
-    expect(await context.json()).toEqual({
+    expect(await context.json()).toMatchObject({
       personality: STARTER_PERSONALITY,
       memory_summary: "",
       version: 1,

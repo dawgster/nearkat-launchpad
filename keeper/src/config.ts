@@ -1,5 +1,7 @@
 export interface Config {
-  network: "testnet" | "mainnet";
+  network: "testnet" | "mainnet" | "sandbox";
+  /** Overrides the network's default RPC endpoint. Required for a sandbox. */
+  rpcUrl: string | undefined;
   contractId: string;
   keeperAccountId: string;
   rootSecretHex: string | undefined;
@@ -37,8 +39,11 @@ function yocto(env: NodeJS.ProcessEnv, name: string, fallback: string): bigint {
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const network = env.NEAR_NETWORK ?? "testnet";
-  if (network !== "testnet" && network !== "mainnet") {
-    throw new Error("NEAR_NETWORK must be testnet or mainnet");
+  if (network !== "testnet" && network !== "mainnet" && network !== "sandbox") {
+    throw new Error("NEAR_NETWORK must be testnet, mainnet or sandbox");
+  }
+  if (network === "sandbox" && !env.NEAR_RPC_URL) {
+    throw new Error("NEAR_RPC_URL is required when NEAR_NETWORK is sandbox");
   }
   const port = Number(env.PORT ?? "8787");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -50,6 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
   return {
     network,
+    rpcUrl: env.NEAR_RPC_URL || undefined,
     contractId: required(env, "CONTRACT_ID"),
     keeperAccountId: required(env, "KEEPER_ACCOUNT_ID"),
     rootSecretHex: env.KEEPER_ROOT_SECRET,

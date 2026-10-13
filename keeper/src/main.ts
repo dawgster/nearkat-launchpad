@@ -17,7 +17,12 @@ const FLUSH_EVERY_MS = 5 * 60_000;
 const config = loadConfig(process.env);
 const keys = keysFromRootSecret(localRootSecret(config.rootSecretHex));
 const near = new Near({
-  network: config.network,
+  network: config.rpcUrl
+    ? {
+        rpcUrl: config.rpcUrl,
+        networkId: config.network === "sandbox" ? "localnet" : config.network,
+      }
+    : (config.network as "testnet" | "mainnet"),
   privateKey: keys.nearPrivateKey(),
   defaultSignerId: config.keeperAccountId,
 });

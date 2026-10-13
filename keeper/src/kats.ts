@@ -48,11 +48,11 @@ export interface KatServiceOptions {
   log?: (message: string) => void;
 }
 
-export interface ContextView {
-  personality: string;
-  memory_summary: string;
-  version: number;
-}
+/**
+ * What the owner sees of their kat's context. It is the whole document,
+ * salt included, so the owner can recompute the hash recorded on-chain.
+ */
+export type ContextView = ContextDoc;
 
 export interface ChatReply {
   reply: string;
@@ -99,11 +99,7 @@ export class KatService {
   async getContext(accountId: string, tokenId: string): Promise<ContextView> {
     return this.#locked(tokenId, async () => {
       const doc = await this.#load(tokenId, await this.#owned(accountId, tokenId));
-      return {
-        personality: doc.personality,
-        memory_summary: doc.memory_summary,
-        version: doc.version,
-      };
+      return doc;
     });
   }
 
@@ -116,7 +112,7 @@ export class KatService {
       const next = newContext(tokenId, doc.version + 1, prompt, doc.memory_summary);
       await this.#save(next);
       this.#o.meter.charge(tokenId, this.#o.prices.save);
-      return { personality: prompt, memory_summary: next.memory_summary, version: next.version };
+      return next;
     });
   }
 

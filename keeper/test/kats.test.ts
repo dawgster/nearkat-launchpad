@@ -138,11 +138,20 @@ describe("wakeNew", () => {
 describe("getContext", () => {
   test("returns the context to the owner", async () => {
     const { kats } = await setup();
-    expect(await kats.getContext("alice.near", "1")).toEqual({
+    expect(await kats.getContext("alice.near", "1")).toMatchObject({
+      token_id: "1",
       personality: STARTER_PERSONALITY,
       memory_summary: "",
       version: 1,
     });
+  });
+
+  test("includes the salt, so the owner can recompute the on-chain hash", async () => {
+    const { chain, kats } = await setup();
+    const view = await kats.getContext("alice.near", "1");
+    expect(contextHash(view).toString("base64")).toBe(chain.kats.get("1")?.context_hash);
+    const shaped = await kats.setPersonality("alice.near", "1", "You are grumpy.");
+    expect(contextHash(shaped).toString("base64")).toBe(chain.kats.get("1")?.context_hash);
   });
 
   test("refuses anyone who is not the owner", async () => {
@@ -179,7 +188,7 @@ describe("setPersonality", () => {
   test("saves the prompt as the next version and charges one save", async () => {
     const { chain, store, meter, kats } = await setup();
     const view = await kats.setPersonality("alice.near", "1", "You are grumpy.");
-    expect(view).toEqual({ personality: "You are grumpy.", memory_summary: "", version: 2 });
+    expect(view).toMatchObject({ personality: "You are grumpy.", memory_summary: "", version: 2 });
     expect(await onChainContext(chain, store)).toMatchObject({
       version: 2,
       personality: "You are grumpy.",
