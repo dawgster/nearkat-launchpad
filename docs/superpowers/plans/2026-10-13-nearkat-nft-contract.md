@@ -25,6 +25,7 @@ All code in this plan was compiled and run before the plan was written: every ta
 - Dependency versions: `near-sdk = "5.29.1"`, `near-contract-standards = "5.29.1"`.
 - Use checked or saturating arithmetic on every `NearToken` operation.
 - Two additions beyond the spec, both small: admin methods require exactly 1 yoctoNEAR attached (so a function-call access key cannot invoke them), and a `get_config` view exposes admin, keeper, treasury, mint price and accrued treasury.
+- `near-workspaces` is marked as deprecating by NEAR in favour of `near-api-rs` plus `near-sandbox-rs`. It is kept here as a test-only dependency because the sandbox tests are validated against it; migrating is a later change confined to `contract/tests/sandbox.rs`.
 - If cargo fails with `curl ... HTTP2 framing layer`, rerun with `CARGO_HTTP_MULTIPLEXING=false`.
 
 ## Review Focus
