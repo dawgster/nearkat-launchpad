@@ -22,6 +22,18 @@ export interface Config {
   savePrice: bigint;
 }
 
+/**
+ * Must be a canonical model id, not an alias: the keeper asks NEAR AI not to
+ * resolve aliases, because the model id is part of the signed text. This one
+ * runs in NEAR AI's own enclave, so its replies carry an enclave signature.
+ */
+const DEFAULT_MODEL = "z-ai/glm-5.3-flash";
+/**
+ * The default model reasons before it answers, and that reasoning counts
+ * against the limit: at 200 tokens it never reaches its answer.
+ */
+const DEFAULT_MAX_TOKENS = "2048";
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) {
@@ -50,7 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
   }
-  const maxTokens = Number(env.NEAR_AI_MAX_TOKENS ?? "1024");
+  const maxTokens = Number(env.NEAR_AI_MAX_TOKENS ?? DEFAULT_MAX_TOKENS);
   if (!Number.isInteger(maxTokens) || maxTokens < 1) {
     throw new Error("NEAR_AI_MAX_TOKENS must be a positive whole number");
   }
@@ -62,7 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     rootSecretHex: env.KEEPER_ROOT_SECRET,
     nearAiBaseUrl: env.NEAR_AI_BASE_URL ?? "https://cloud-api.near.ai/v1",
     nearAiApiKey: required(env, "NEAR_AI_API_KEY"),
-    nearAiModel: env.NEAR_AI_MODEL ?? "zai-org/GLM-5.1-FP8",
+    nearAiModel: env.NEAR_AI_MODEL ?? DEFAULT_MODEL,
     storeDir: env.STORE_DIR ?? "./data/contexts",
     meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
     maxTokens,

@@ -294,11 +294,23 @@ describe("chat", () => {
     await kats.chat("alice.near", "1", "hello");
     await kats.chat("alice.near", "1", "how are you?");
     expect(inference.calls[1]).toEqual([
-      { role: "system", content: "You are grumpy." },
+      { role: "system", content: expect.stringContaining("You are grumpy.") },
       { role: "user", content: "hello" },
       { role: "assistant", content: "reply 1" },
       { role: "user", content: "how are you?" },
     ]);
+  });
+
+  test("tells the model which kat it is and to stay in character", async () => {
+    const { inference, kats } = await setup();
+    await kats.chat("alice.near", "1", "hello");
+    const system = inference.calls[0]?.[0]?.content ?? "";
+    expect(system).toContain("Nearkat #1");
+    expect(system).toContain(STARTER_PERSONALITY);
+    expect(system).toMatch(/Stay in character/);
+    expect(system).toMatch(/never describe yourself as a language model/);
+    // No memory section until there is something to remember.
+    expect(system).not.toMatch(/What you remember/);
   });
 
   test("refuses anyone who is not the owner without calling the model", async () => {
@@ -380,7 +392,10 @@ describe("memory", () => {
 
     await kats.chat("alice.near", "1", "do you remember?");
     expect(inference.calls[11]).toEqual([
-      { role: "system", content: `${STARTER_PERSONALITY}\n\nWhat you remember:\nreply 11` },
+      {
+        role: "system",
+        content: expect.stringMatching(/What you remember from earlier:\nreply 11/),
+      },
       { role: "user", content: "do you remember?" },
     ]);
   });

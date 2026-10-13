@@ -14,10 +14,11 @@ describe("loadConfig", () => {
       contractId: "nearkat.testnet",
       keeperAccountId: "keeper.testnet",
       nearAiBaseUrl: "https://cloud-api.near.ai/v1",
+      nearAiModel: "z-ai/glm-5.3-flash",
       port: 8787,
       storeDir: "./data/contexts",
       meterJournal: "./data/meter.json",
-      maxTokens: 1024,
+      maxTokens: 2048,
       chatPrice: 2n * 10n ** 21n,
       savePrice: 5n * 10n ** 22n,
     });

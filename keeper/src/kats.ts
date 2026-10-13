@@ -363,9 +363,22 @@ export class KatService {
   }
 }
 
+/**
+ * Frames the owner's personality text so the model plays the kat. Without the
+ * frame, hosted models answer as themselves ("I am a language model…").
+ */
 function systemMessage(doc: ContextDoc): ChatMessage {
-  const memory = doc.memory_summary ? `\n\nWhat you remember:\n${doc.memory_summary}` : "";
-  return { role: "system", content: doc.personality + memory };
+  const memory = doc.memory_summary
+    ? `\n\nWhat you remember from earlier:\n${doc.memory_summary}`
+    : "";
+  return {
+    role: "system",
+    content:
+      `You are Nearkat #${doc.token_id}, a meerkat-like creature who lives in a burrow. ` +
+      `This is who you are:\n\n${doc.personality}${memory}\n\n` +
+      "Stay in character at all times. You are not an AI assistant and never describe " +
+      "yourself as a language model. Speak in first person as the kat, and keep replies short.",
+  };
 }
 
 function requireText(value: unknown, field: string): asserts value is string {

@@ -73,6 +73,15 @@ describe("NearAiInference", () => {
     });
   });
 
+  test("trims whitespace the model put around its reply", async () => {
+    const { inference } = setup((url) =>
+      url.includes("/signature/")
+        ? Response.json(signature)
+        : Response.json({ id: "c", choices: [{ message: { content: "\n\n meow \n" } }] }),
+    );
+    expect((await inference.chat(messages)).reply).toBe("meow");
+  });
+
   test("sends the model, messages and the headers signing depends on", async () => {
     const { inference, calls } = setup(ok);
     await inference.chat(messages);
@@ -143,6 +152,18 @@ describe("NearAiInference", () => {
     ["a body that is not JSON", () => new Response("<html>")],
     ["no choices", () => Response.json({ id: "chat-1", choices: [] })],
     ["an empty reply", () => Response.json({ id: "c", choices: [{ message: { content: "" } }] })],
+    [
+      "a reply of only whitespace",
+      () => Response.json({ id: "c", choices: [{ message: { content: " \n " } }] }),
+    ],
+    [
+      "a reasoning model that ran out of tokens before answering",
+      () =>
+        Response.json({
+          id: "c",
+          choices: [{ message: { content: null, reasoning_content: "thinking…" } }],
+        }),
+    ],
     ["no id", () => Response.json({ choices: [{ message: { content: "meow" } }] })],
     ["a network failure", () => Promise.reject(new Error("offline"))],
   ])("throws InferenceError on %s", async (_name, response) => {

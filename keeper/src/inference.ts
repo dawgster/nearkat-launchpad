@@ -58,7 +58,7 @@ export class NearAiInference implements Inference {
   }
 
   async chat(messages: ChatMessage[]): Promise<ChatResult> {
-    const { baseUrl, apiKey, model, maxTokens = 1024, timeoutMs = 60_000 } = this.#options;
+    const { baseUrl, apiKey, model, maxTokens = 2048, timeoutMs = 60_000 } = this.#options;
     // The signature covers the exact bytes sent and received, so both are hashed raw.
     const body = Buffer.from(JSON.stringify({ model, messages, max_tokens: maxTokens }), "utf8");
     let response: Response;
@@ -88,7 +88,8 @@ export class NearAiInference implements Inference {
     try {
       const parsed = JSON.parse(raw.toString("utf8"));
       chatId = parsed.id;
-      reply = parsed.choices?.[0]?.message?.content;
+      const content: unknown = parsed.choices?.[0]?.message?.content;
+      reply = typeof content === "string" ? content.trim() : content;
     } catch {
       throw new InferenceError("Inference returned a body that is not JSON");
     }
