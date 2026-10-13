@@ -7,7 +7,7 @@ import { loadConfig } from "./config.ts";
 import { NearAiInference } from "./inference.ts";
 import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
-import { Meter } from "./meter.ts";
+import { FileJournal, Meter } from "./meter.ts";
 import { FileStore } from "./store.ts";
 
 const WAKE_EVERY_MS = 5_000;
@@ -22,7 +22,7 @@ const near = new Near({
   defaultSignerId: config.keeperAccountId,
 });
 const chain = new NearChain(near, config.contractId);
-const meter = new Meter(chain);
+const meter = new Meter(chain, { journal: new FileJournal(config.meterJournal) });
 const kats = new KatService({
   chain,
   store: new FileStore(config.storeDir),
@@ -31,6 +31,7 @@ const kats = new KatService({
     baseUrl: config.nearAiBaseUrl,
     apiKey: config.nearAiApiKey,
     model: config.nearAiModel,
+    maxTokens: config.maxTokens,
   }),
   meter,
   prices: { chat: config.chatPrice, save: config.savePrice },
@@ -38,7 +39,10 @@ const kats = new KatService({
 const auth = new Auth({
   sessionKey: keys.sessionKey(),
   recipient: config.authRecipient,
-  verify: (signed, params) => verifyNep413Signature(signed, params, { near }),
+  // The signature is checked locally first, so a forged request costs no RPC call.
+  verify: async (signed, params) =>
+    (await verifyNep413Signature(signed, params)) &&
+    (await verifyNep413Signature(signed, params, { near })),
 });
 const app = createApp({
   auth,
@@ -69,6 +73,35 @@ every(WAKE_EVERY_MS, "wake", () => kats.wakeNew());
 every(CONSOLIDATE_EVERY_MS, "consolidate", () => kats.consolidateIdle());
 every(FLUSH_EVERY_MS, "flush", () => meter.flush());
 
-serve({ fetch: app.fetch, port: config.port });
+const server = serve({ fetch: app.fetch, port: config.port });
 console.log(`Keeper listening on :${config.port} for ${config.contractId} (${config.network})`);
 console.log(`Keeper account ${config.keeperAccountId} must hold key ${keys.nearPublicKey()}`);
+
+/** Warns, without stopping, about a setup in which no kat could ever be woken or charged. */
+async function checkSetup(): Promise<void> {
+  const registered = await chain.getKeeperId();
+  if (registered !== config.keeperAccountId) {
+    console.error(
+      `SETUP PROBLEM: the contract accepts keeper calls from ${registered}, not ${config.keeperAccountId}`,
+    );
+  }
+  if (!(await near.getAccessKey(config.keeperAccountId, keys.nearPublicKey()))) {
+    console.error(
+      `SETUP PROBLEM: ${config.keeperAccountId} does not hold the key ${keys.nearPublicKey()}`,
+    );
+  }
+}
+checkSetup().catch((error) => console.error("SETUP PROBLEM: cannot read the contract:", error));
+
+/** Settles what it can before exiting; anything left is in the journal. */
+async function shutdown(): Promise<void> {
+  server.close();
+  try {
+    await meter.flush();
+  } catch (error) {
+    console.error("Final flush failed; charges remain in the journal:", error);
+  }
+  process.exit(0);
+}
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

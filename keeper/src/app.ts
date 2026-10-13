@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { SignedMessage } from "near-kit";
@@ -16,6 +17,9 @@ export interface AppOptions {
 }
 
 type Env = { Variables: { accountId: string } };
+
+/** Largest accepted request body; the biggest legitimate one is a 4,000-character prompt. */
+const MAX_BODY_BYTES = 16 * 1024;
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -37,6 +41,18 @@ export function createApp(options: AppOptions): Hono<Env> {
     "*",
     cors({ origin: options.webOrigin, allowHeaders: ["authorization", "content-type"] }),
   );
+
+  app.use(
+    "*",
+    bodyLimit({
+      maxSize: MAX_BODY_BYTES,
+      onError: () => {
+        throw new HttpError(413, "too_large", "Request body is too large");
+      },
+    }),
+  );
+
+  app.notFound((c) => c.json({ error: "not_found", message: "No such route" }, 404));
 
   app.onError((error, c) => {
     if (error instanceof HttpError) {

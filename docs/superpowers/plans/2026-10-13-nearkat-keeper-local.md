@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Note:** the code listings below predate the whole-branch review. The review's fixes are in the git history and the spec; the repository is the source of truth.
+
 **Goal:** Build the keeper service that verifies NFT ownership, holds each kat's encrypted context, runs inference and meters usage, running locally against the deployed contract.
 
 **Architecture:** One TypeScript package in `keeper/`, run directly by Node with no build step. Each concern is a small module behind an interface (`Chain`, `ContextStore`, `Inference`, `Keys`), so unit tests use in-memory fakes and the TEE and NOVA variants in plan 4 replace one module each. `KatService` holds the rules; `app.ts` is a thin HTTP layer over it.

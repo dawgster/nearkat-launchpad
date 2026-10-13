@@ -19,7 +19,20 @@ interface Call {
   init: RequestInit | undefined;
 }
 
-function setup(respond: (url: string, attempt: number) => Response | Promise<Response>) {
+/** A request that never completes on its own, like a provider that stopped responding. */
+function hangUntilAborted(signal: AbortSignal | null | undefined): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    signal?.addEventListener("abort", () => reject(signal.reason));
+  });
+}
+
+function setup(
+  respond: (
+    url: string,
+    attempt: number,
+    signal: AbortSignal | null | undefined,
+  ) => Response | Promise<Response>,
+) {
   const calls: Call[] = [];
   const attempts = new Map<string, number>();
   const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -27,7 +40,7 @@ function setup(respond: (url: string, attempt: number) => Response | Promise<Res
     const attempt = (attempts.get(url) ?? 0) + 1;
     attempts.set(url, attempt);
     calls.push({ url, init });
-    return respond(url, attempt);
+    return respond(url, attempt, init?.signal);
   }) as typeof fetch;
   const inference = new NearAiInference({
     baseUrl: "https://ai.example/v1",
@@ -35,6 +48,9 @@ function setup(respond: (url: string, attempt: number) => Response | Promise<Res
     model: "test-model",
     fetch: fakeFetch,
     signatureRetryMs: 0,
+    maxTokens: 256,
+    timeoutMs: 30,
+    signatureTimeoutMs: 30,
   });
   return { inference, calls };
 }
@@ -65,6 +81,7 @@ describe("NearAiInference", () => {
     expect(JSON.parse(Buffer.from(init?.body as Uint8Array).toString())).toEqual({
       model: "test-model",
       messages,
+      max_tokens: 256,
     });
     expect(init?.headers).toMatchObject({
       authorization: "Bearer secret",
@@ -91,6 +108,30 @@ describe("NearAiInference", () => {
   ])("still returns the reply when the signature %s", async (_name, signatureResponse) => {
     const { inference } = setup((url) =>
       url.includes("/signature/") ? signatureResponse() : new Response(completion),
+    );
+    const result = await inference.chat(messages);
+    expect(result.reply).toBe("meow");
+    expect(result.verification.signature).toBeNull();
+  });
+
+  test("gives up with InferenceError when the provider does not answer in time", async () => {
+    const { inference } = setup((_url, _attempt, signal) => hangUntilAborted(signal));
+    await expect(inference.chat(messages)).rejects.toThrow(InferenceError);
+  });
+
+  test("throws InferenceError when the connection drops while reading the reply", async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("connection reset"));
+      },
+    });
+    const { inference } = setup(() => new Response(broken));
+    await expect(inference.chat(messages)).rejects.toThrow(InferenceError);
+  });
+
+  test("returns the reply without a signature when the signature request hangs", async () => {
+    const { inference } = setup((url, _attempt, signal) =>
+      url.includes("/signature/") ? hangUntilAborted(signal) : new Response(completion),
     );
     const result = await inference.chat(messages);
     expect(result.reply).toBe("meow");

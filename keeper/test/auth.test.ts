@@ -72,6 +72,41 @@ describe("Auth", () => {
     });
   });
 
+  test("accepts a nonce issued by another instance that shares its key", async () => {
+    const { auth } = setup();
+    const other = setup().auth;
+    const session = await auth.createSession(signed, other.challenge().nonce);
+    expect(session.account_id).toBe("alice.near");
+  });
+
+  test("rejects a nonce whose timestamp was moved forward", async () => {
+    const { auth, advance } = setup();
+    const bytes = Buffer.from(auth.challenge().nonce, "base64");
+    advance(10 * 60 * 1000);
+    bytes.writeBigUInt64BE(BigInt(1_000_000 + 10 * 60 * 1000));
+    await expect(auth.createSession(signed, bytes.toString("base64"))).rejects.toMatchObject({
+      code: "invalid_nonce",
+    });
+  });
+
+  test("rejects a nonce from an instance with a different key", async () => {
+    const { auth } = setup();
+    const other = new Auth({
+      sessionKey: Buffer.alloc(32, 4),
+      recipient: "nearkat.xyz",
+      verify: async () => true,
+      now: () => 1_000_000,
+    });
+    await expect(auth.createSession(signed, other.challenge().nonce)).rejects.toMatchObject({
+      code: "invalid_nonce",
+    });
+  });
+
+  test("puts the issue time in the first eight bytes, as near-kit expects", () => {
+    const bytes = Buffer.from(setup().auth.challenge().nonce, "base64");
+    expect(bytes.readBigUInt64BE()).toBe(1_000_000n);
+  });
+
   test("rejects a nonce it never issued", async () => {
     const { auth } = setup();
     await expect(auth.createSession(signed, "bm9wZQ==")).rejects.toMatchObject({

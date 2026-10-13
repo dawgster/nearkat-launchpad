@@ -7,6 +7,9 @@ export interface Config {
   nearAiApiKey: string;
   nearAiModel: string;
   storeDir: string;
+  meterJournal: string;
+  /** Upper bound on reply length, in tokens. */
+  maxTokens: number;
   port: number;
   authRecipient: string;
   webOrigin: string;
@@ -24,6 +27,14 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
+function yocto(env: NodeJS.ProcessEnv, name: string, fallback: string): bigint {
+  const value = env[name] ?? fallback;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a non-negative whole number of yoctoNEAR`);
+  }
+  return BigInt(value);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const network = env.NEAR_NETWORK ?? "testnet";
   if (network !== "testnet" && network !== "mainnet") {
@@ -32,6 +43,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const port = Number(env.PORT ?? "8787");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
+  }
+  const maxTokens = Number(env.NEAR_AI_MAX_TOKENS ?? "1024");
+  if (!Number.isInteger(maxTokens) || maxTokens < 1) {
+    throw new Error("NEAR_AI_MAX_TOKENS must be a positive whole number");
   }
   return {
     network,
@@ -42,11 +57,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     nearAiApiKey: required(env, "NEAR_AI_API_KEY"),
     nearAiModel: env.NEAR_AI_MODEL ?? "zai-org/GLM-5.1-FP8",
     storeDir: env.STORE_DIR ?? "./data/contexts",
+    meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
+    maxTokens,
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
     webOrigin: env.WEB_ORIGIN ?? "http://localhost:3000",
     // 0.002 NEAR and 0.05 NEAR
-    chatPrice: BigInt(env.CHAT_PRICE_YOCTO ?? "2000000000000000000000"),
-    savePrice: BigInt(env.SAVE_PRICE_YOCTO ?? "50000000000000000000000"),
+    chatPrice: yocto(env, "CHAT_PRICE_YOCTO", "2000000000000000000000"),
+    savePrice: yocto(env, "SAVE_PRICE_YOCTO", "50000000000000000000000"),
   };
 }

@@ -31,6 +31,18 @@ first run downloads a NEAR sandbox binary.
    contract's `keeper_id` is that account.
 5. Restart. New kats are woken within a few seconds of minting.
 
+## Operating notes
+
+- Run one keeper per contract. Sign-in nonces, sessions and unsettled charges
+  are held by the process, and two keepers would overcommit balances.
+- Unsettled charges are journaled to `METER_JOURNAL` and settled on SIGTERM.
+  Keep that file across restarts.
+- There is no rate limiting. Put the keeper behind a proxy that provides it
+  before exposing it publicly.
+- On start the keeper logs `SETUP PROBLEM` if the contract does not name its
+  account as keeper or the account lacks its key. It keeps serving, so the
+  public key stays available at `/attestation`.
+
 ## API
 
 | Route | Auth | Purpose |
@@ -43,6 +55,6 @@ first run downloads a NEAR sandbox binary.
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
 
 Errors are JSON `{ error, message }`: 400 `invalid_input`, 401
-`unauthorized`, 402 `insufficient_balance` (with `balance` and `required`),
+`unauthorized`, 413 `too_large`, 402 `insufficient_balance` (with `balance` and `required`),
 403 `not_owner`, 404 `not_found`, 409 `waking_up`, 500 `corrupted`, 503
 `inference_unavailable`.

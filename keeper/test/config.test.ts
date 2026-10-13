@@ -16,6 +16,8 @@ describe("loadConfig", () => {
       nearAiBaseUrl: "https://cloud-api.near.ai/v1",
       port: 8787,
       storeDir: "./data/contexts",
+      meterJournal: "./data/meter.json",
+      maxTokens: 1024,
       chatPrice: 2n * 10n ** 21n,
       savePrice: 5n * 10n ** 22n,
     });
@@ -46,6 +48,10 @@ describe("loadConfig", () => {
     ["PORT", "0"],
     ["PORT", "http"],
     ["PORT", "70000"],
+    ["CHAT_PRICE_YOCTO", "-5"],
+    ["SAVE_PRICE_YOCTO", "1.5"],
+    ["CHAT_PRICE_YOCTO", "cheap"],
+    ["NEAR_AI_MAX_TOKENS", "0"],
   ])("rejects %s=%s", (name, value) => {
     expect(() => loadConfig({ ...base, [name]: value })).toThrow(name);
   });

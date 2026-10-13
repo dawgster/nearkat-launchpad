@@ -68,7 +68,7 @@ Methods:
 | `mint()` payable | anyone | Requires deposit ≥ `mint_price` + storage cost (measured bytes plus a fixed 600-byte reserve for later context, approval and transfer growth). Mints to the caller. Deposit above that amount is credited to the kat's `balance`. Emits a mint event. |
 | `fund(token_id)` payable | anyone | Adds the deposit to the kat's `balance`. |
 | `set_context(token_id, context_hash, context_ref, version)` | keeper only | Requires `version == context_version + 1`. |
-| `debit_batch(items: Vec<(token_id, amount)>)` | keeper only | Moves each amount from the kat's `balance` to the treasury accrual. Fails the whole batch if any kat has insufficient balance. |
+| `debit_batch(seq, items: Vec<(token_id, amount)>)` | keeper only | Moves each amount from the kat's `balance` to the treasury accrual. Fails the whole batch if any kat has insufficient balance. `seq` must be one more than the last applied batch, so a batch re-sent after a lost confirmation cannot apply twice. |
 | `get_kat(token_id)` view | anyone | Returns owner, the four fields above. |
 | `set_keeper`, `set_mint_price`, `set_treasury`, `withdraw_treasury` | admin only | Administration. Each requires exactly 1 yoctoNEAR attached. A failed treasury transfer restores the accrued amount. |
 
@@ -103,7 +103,7 @@ ownership on every request):
 | `POST /auth/session` | Body: NEP-413 signature over the nonce. Returns a session token. |
 | `GET /kats/:id/context` | Returns personality, memory summary and context version. |
 | `PUT /kats/:id/personality` | Body: `{ prompt }`, at most 4,000 characters. Saves a new context version. |
-| `POST /kats/:id/chat` | Body: `{ message }`. Returns `{ reply, signature, balance }`. |
+| `POST /kats/:id/chat` | Body: `{ message }`, at most 4,000 characters. Returns `{ reply, verification, balance }`, where `verification` holds the chat id, model, request and response hashes, and NEAR AI's signature or `null`. |
 | `GET /attestation` | Public. Returns the TEE quote, the image hash and the keeper's NEAR public key. In local mode returns `{ mode: "local" }`. |
 
 ### 3. Context store (NOVA)
@@ -147,9 +147,10 @@ salt prevents guessing a personality from its public hash.
 
 ## Flows
 
-**Mint.** The wallet calls `mint()`. The keeper sees the mint event (polled
-from the contract), creates a starter context, stores it, and calls
-`set_context` with version 1. Until that lands the kat shows as "waking up".
+**Mint.** The wallet calls `mint()`. The keeper finds new kats by probing
+consecutive token ids, creates a starter context, stores it, and calls
+`set_context` with version 1, free of charge. Until that lands the kat shows
+as "waking up".
 
 **Shape.** The owner edits the personality. The keeper writes a new context
 version, uploads it, and calls `set_context`.
@@ -170,7 +171,13 @@ kat's running total. The meter flushes with `debit_batch` every 5 minutes.
 Initial prices, set in keeper config and adjusted after the probes measure
 real costs: 0.002 NEAR per chat message, 0.05 NEAR per context save. A request
 is refused if the kat's on-chain balance minus unflushed charges would go
-below zero.
+below zero. Unsettled charges are journaled to disk so they survive a
+restart. If a kat still ends up owing more than it holds, the keeper charges
+what it has and writes off the rest, so it cannot hold up other kats.
+
+**Limits.** A memory summary is cut to 2,000 characters. A session keeps at
+most 40 unsaved messages. Request bodies are limited to 16 KB. The keeper
+runs as a single instance.
 
 ## Error handling
 
@@ -183,7 +190,8 @@ below zero.
 | Context store write fails | The save is retried with backoff; the on-chain hash is not updated until the upload succeeds. |
 | `set_context` fails after upload | Retried; the uploaded blob is orphaned, which is harmless. |
 | Keeper restarts mid-session | Unsaved session messages are lost. Saved context is unaffected. |
-| `debit_batch` fails | Charges stay in the meter and are retried on the next flush. |
+| `debit_batch` fails | Charges stay in the meter and the same numbered batch is re-sent on the next flush. |
+| Kat transferred while a reply is being generated | 403; the reply is discarded and nothing is charged. |
 
 ## Trust model: what v1 does and does not guarantee
 

@@ -90,8 +90,9 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       privateKey: keys.nearPrivateKey(),
       defaultSignerId: keeperId,
     });
-    chain = new NearChain(keeperNear, contractId, "optimistic");
-    meter = new Meter(chain);
+    // Final finality, as in production: views lag a few blocks behind transactions.
+    chain = new NearChain(keeperNear, contractId);
+    meter = new Meter(chain, { log: () => {} });
     kats = new KatService({
       chain,
       store: new FileStore(await mkdtemp(join(tmpdir(), "keeper-it-"))),
@@ -99,11 +100,14 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       inference: new FakeInference(),
       meter,
       prices: { chat: CHAT, save: SAVE },
+      log: () => {},
     });
     const auth = new Auth({
       sessionKey: keys.sessionKey(),
       recipient: RECIPIENT,
-      verify: (signed, params) => verifyNep413Signature(signed, params, { near: keeperNear }),
+      verify: async (signed, params) =>
+        (await verifyNep413Signature(signed, params)) &&
+        (await verifyNep413Signature(signed, params, { near: keeperNear })),
     });
     app = createApp({
       auth,
@@ -116,6 +120,29 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
   afterAll(async () => {
     await sandbox?.stop();
   });
+
+  /** Polls until the check passes, because final views trail behind transactions. */
+  async function eventually<T>(check: () => Promise<T | false | null | undefined>): Promise<T> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const result = await check();
+      if (result) {
+        return result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error("Condition was not met in time");
+  }
+
+  /** Mints a kat and waits until the keeper has woken it. Returns its id. */
+  async function mintAwake(owner: { near: Near }, deposit: `${number} NEAR`): Promise<string> {
+    await owner.near.call(contractId, "mint", {}, { attachedDeposit: deposit });
+    const woken = await eventually(async () => {
+      const ids = await kats.wakeNew();
+      return ids.length > 0 && ids;
+    });
+    expect(woken).toHaveLength(1);
+    return woken[0] as string;
+  }
 
   /** Signs the keeper's challenge with a wallet key, as the web app will. */
   async function signIn(signer: Near, claimedAccountId?: string): Promise<Response> {
@@ -142,8 +169,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
     });
 
   test("a kat's shaped personality follows it to a new owner", async () => {
-    await alice.near.call(contractId, "mint", {}, { attachedDeposit: "3 NEAR" });
-    expect(await kats.wakeNew()).toEqual(["1"]);
+    expect(await mintAwake(alice, "3 NEAR")).toBe("1");
 
     const aliceToken = (await (await signIn(alice.near)).json()).token as string;
     const fresh = await call(aliceToken, "/kats/1/context", "GET");
@@ -169,12 +195,45 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       { attachedDeposit: "1 yocto" },
     );
 
+    await eventually(async () => (await chain.getKat("1"))?.owner_id === bob.id);
     expect((await call(aliceToken, "/kats/1/context", "GET")).status).toBe(403);
     expect((await call(aliceToken, "/kats/1/chat", "POST", { message: "hi" })).status).toBe(403);
 
     const bobToken = (await (await signIn(bob.near)).json()).token as string;
     const inherited = await call(bobToken, "/kats/1/context", "GET");
     expect(await inherited.json()).toMatchObject({ personality: "You are grumpy.", version: 2 });
+  }, 120_000);
+
+  test("kats past the ninth are woken as they are minted", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      ids.push(await mintAwake(bob, "1.1 NEAR"));
+    }
+    expect(ids).toEqual(["2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]);
+    await eventually(async () => (await chain.getKat("11"))?.context_version === "1");
+  }, 180_000);
+
+  test("a kat that owes more than it holds does not stop others being charged", async () => {
+    const poor = await mintAwake(alice, "1.1 NEAR");
+    const rich = await mintAwake(alice, "3 NEAR");
+    const poorBalance = BigInt(((await chain.getKat(poor)) as KatView).balance);
+    const richBalance = BigInt(((await chain.getKat(rich)) as KatView).balance);
+    expect(poorBalance).toBeGreaterThan(0n);
+
+    meter.charge(poor, poorBalance + 10n ** 24n);
+    meter.charge(rich, CHAT);
+    await meter.flush();
+
+    expect(((await chain.getKat(poor)) as KatView).balance).toBe("0");
+    expect(BigInt(((await chain.getKat(rich)) as KatView).balance)).toBe(richBalance - CHAT);
+    expect(meter.pending(poor)).toBe(0n);
+
+    // The view already reflects the debit, so the drained kat cannot overdraw.
+    await expect(kats.chat(alice.id, poor, "hello")).rejects.toMatchObject({ status: 402 });
+
+    meter.charge(rich, CHAT);
+    await meter.flush();
+    expect(BigInt(((await chain.getKat(rich)) as KatView).balance)).toBe(richBalance - 2n * CHAT);
   }, 120_000);
 
   test("signing with your own key does not let you claim someone else's account", async () => {

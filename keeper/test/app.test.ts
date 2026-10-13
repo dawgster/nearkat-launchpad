@@ -122,6 +122,23 @@ describe("keeper HTTP API", () => {
     expect(response.status).toBe(400);
   });
 
+  test("answers 413 to a request body larger than 16 KB", async () => {
+    const { app } = await setup();
+    const response = await app.request("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ nonce: "x".repeat(20_000) }),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: "too_large" });
+  });
+
+  test("answers unknown routes in the same JSON shape", async () => {
+    const { app } = await setup();
+    const response = await app.request("/nope");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "not_found" });
+  });
+
   test("answers 403 when a signed-in account does not own the kat", async () => {
     const { app, signIn, as } = await setup();
     const response = await app.request(

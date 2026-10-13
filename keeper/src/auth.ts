@@ -1,10 +1,13 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { generateNonce, type SignedMessage } from "near-kit";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { SignedMessage } from "near-kit";
 import { HttpError } from "./errors.ts";
 
 export const SIGN_IN_MESSAGE = "Sign in to Nearkat";
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 15 * 60 * 1000;
+/** Used nonces remembered at once; sign-in is refused beyond this until some expire. */
+const MAX_USED_NONCES = 100_000;
+const NONCE_BODY_LEN = 16;
 
 export interface SignInParams {
   message: string;
@@ -33,7 +36,8 @@ export class Auth {
   readonly #recipient: string;
   readonly #verify: VerifySignature;
   readonly #now: () => number;
-  readonly #nonces = new Map<string, number>();
+  /** Nonces already exchanged, with their expiry. Issued nonces are not stored. */
+  readonly #used = new Map<string, number>();
 
   constructor(options: AuthOptions) {
     this.#sessionKey = options.sessionKey;
@@ -42,26 +46,42 @@ export class Auth {
     this.#now = options.now ?? Date.now;
   }
 
-  /** Issues a one-time nonce for the wallet to sign. */
+  /**
+   * Issues a one-time nonce for the wallet to sign. Nothing is stored: the
+   * nonce carries its issue time and a MAC, so anyone can ask for nonces
+   * without making the keeper hold state. Layout: time (8, big-endian ms, the
+   * near-kit convention) | random (8) | MAC of the first 16 bytes (16).
+   */
   challenge(): { nonce: string; message: string; recipient: string } {
-    const now = this.#now();
-    for (const [nonce, expiry] of this.#nonces) {
-      if (expiry <= now) {
-        this.#nonces.delete(nonce);
-      }
-    }
-    const nonce = Buffer.from(generateNonce()).toString("base64");
-    this.#nonces.set(nonce, now + NONCE_TTL_MS);
+    const body = Buffer.alloc(NONCE_BODY_LEN);
+    body.writeBigUInt64BE(BigInt(this.#now()));
+    randomBytes(8).copy(body, 8);
+    const nonce = Buffer.concat([body, this.#nonceMac(body)]).toString("base64");
     return { nonce, message: SIGN_IN_MESSAGE, recipient: this.#recipient };
   }
 
   /** Exchanges a signed challenge for a session token. Each nonce works once. */
   async createSession(signed: SignedMessage, nonce: string): Promise<Session> {
-    const expiry = this.#nonces.get(nonce);
-    this.#nonces.delete(nonce);
-    if (expiry === undefined || expiry <= this.#now()) {
+    const now = this.#now();
+    const bytes = Buffer.from(nonce, "base64");
+    const body = bytes.subarray(0, NONCE_BODY_LEN);
+    const issued =
+      bytes.length === 32 && timingSafeEqual(bytes.subarray(NONCE_BODY_LEN), this.#nonceMac(body));
+    const age = issued ? now - Number(body.readBigUInt64BE()) : -1;
+    if (age < 0 || age >= NONCE_TTL_MS || this.#used.has(nonce)) {
       throw new HttpError(401, "invalid_nonce", "Unknown or expired sign-in nonce");
     }
+    if (this.#used.size >= MAX_USED_NONCES) {
+      for (const [used, expiry] of this.#used) {
+        if (expiry <= now) {
+          this.#used.delete(used);
+        }
+      }
+      if (this.#used.size >= MAX_USED_NONCES) {
+        throw new HttpError(503, "busy", "Too many sign-ins in progress, try again shortly");
+      }
+    }
+    this.#used.set(nonce, now + NONCE_TTL_MS - age);
     const valid = await this.#verify(signed, {
       message: SIGN_IN_MESSAGE,
       recipient: this.#recipient,
@@ -103,7 +123,18 @@ export class Auth {
     }
   }
 
+  #nonceMac(body: Uint8Array): Buffer {
+    return createHmac("sha256", this.#sessionKey)
+      .update("nonce:")
+      .update(body)
+      .digest()
+      .subarray(0, 16);
+  }
+
   #mac(payload: string): string {
-    return createHmac("sha256", this.#sessionKey).update(payload).digest("base64url");
+    return createHmac("sha256", this.#sessionKey)
+      .update("session:")
+      .update(payload)
+      .digest("base64url");
   }
 }

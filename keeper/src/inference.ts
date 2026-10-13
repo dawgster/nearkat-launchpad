@@ -36,6 +36,12 @@ export interface NearAiOptions {
   fetch?: typeof fetch;
   /** Delay between attempts to fetch a signature that is not ready yet. */
   signatureRetryMs?: number;
+  /** Upper bound on the length of a reply, in tokens. */
+  maxTokens?: number;
+  /** How long to wait for a completion before giving up. */
+  timeoutMs?: number;
+  /** How long to wait for each signature request. */
+  signatureTimeoutMs?: number;
 }
 
 const SIGNATURE_ATTEMPTS = 3;
@@ -52,11 +58,13 @@ export class NearAiInference implements Inference {
   }
 
   async chat(messages: ChatMessage[]): Promise<ChatResult> {
-    const { baseUrl, apiKey, model } = this.#options;
+    const { baseUrl, apiKey, model, maxTokens = 1024, timeoutMs = 60_000 } = this.#options;
     // The signature covers the exact bytes sent and received, so both are hashed raw.
-    const body = Buffer.from(JSON.stringify({ model, messages }), "utf8");
+    const body = Buffer.from(JSON.stringify({ model, messages, max_tokens: maxTokens }), "utf8");
     let response: Response;
+    let raw: Buffer;
     try {
+      // One deadline covers both the headers and the body.
       response = await this.#fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -66,11 +74,12 @@ export class NearAiInference implements Inference {
           "x-no-aliasing": "true",
         },
         body,
+        signal: AbortSignal.timeout(timeoutMs),
       });
+      raw = Buffer.from(await response.arrayBuffer());
     } catch (error) {
       throw new InferenceError(`Inference request failed: ${String(error)}`);
     }
-    const raw = Buffer.from(await response.arrayBuffer());
     if (!response.ok) {
       throw new InferenceError(`Inference returned HTTP ${response.status}`);
     }
@@ -100,12 +109,13 @@ export class NearAiInference implements Inference {
 
   /** A missing signature never fails the chat; the client sees `null` and can say so. */
   async #signature(chatId: string): Promise<SignatureInfo | null> {
-    const { baseUrl, apiKey, signatureRetryMs = 500 } = this.#options;
+    const { baseUrl, apiKey, signatureRetryMs = 500, signatureTimeoutMs = 10_000 } = this.#options;
     const url = `${baseUrl}/signature/${encodeURIComponent(chatId)}?signing_algo=ecdsa`;
     for (let attempt = 1; attempt <= SIGNATURE_ATTEMPTS; attempt++) {
       try {
         const response = await this.#fetch(url, {
           headers: { authorization: `Bearer ${apiKey}`, accept: "application/json" },
+          signal: AbortSignal.timeout(signatureTimeoutMs),
         });
         if (response.ok) {
           const info = (await response.json()) as Partial<SignatureInfo> & { error_code?: unknown };

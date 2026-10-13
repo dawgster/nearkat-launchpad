@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Note:** the code listings below predate the whole-branch review. The review's fixes are in the git history and the spec; the repository is the source of truth.
+
 **Goal:** Build and test the NEAR NFT contract that owns each kat's identity, context hash and inference balance.
 
 **Architecture:** One Rust crate in `contract/`. The NFT standard is delegated to `near-contract-standards`; kat state lives in a separate map keyed by token id, so transfers need no extra code for context and balance to follow the token. Keeper-only and admin-only methods are split into their own modules.
