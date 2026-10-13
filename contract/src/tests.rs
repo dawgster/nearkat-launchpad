@@ -247,3 +247,70 @@ fn transfer_keeps_context_and_balance_with_the_kat() {
     assert_eq!(after.context_hash, before.context_hash);
     assert_eq!(after.context_version, before.context_version);
 }
+
+#[test]
+fn admin_can_change_keeper_and_price() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.set_keeper(acc("keeper2.near"));
+    c.set_mint_price(NearToken::from_near(2));
+    let cfg = c.get_config();
+    assert_eq!(cfg.keeper_id, acc("keeper2.near"));
+    assert_eq!(cfg.mint_price, NearToken::from_near(2));
+}
+
+#[test]
+#[should_panic(expected = "Only the admin")]
+fn set_keeper_rejects_non_admin() {
+    let mut c = deploy();
+    ctx("alice.near", YOCTO);
+    c.set_keeper(acc("alice.near"));
+}
+
+#[test]
+#[should_panic(expected = "Requires attached deposit of exactly 1 yoctoNEAR")]
+fn set_keeper_requires_one_yocto() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_yoctonear(0));
+    c.set_keeper(acc("keeper2.near"));
+}
+
+#[test]
+fn withdraw_treasury_zeroes_accrued() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("admin.near", YOCTO);
+    let _ = c.withdraw_treasury();
+    assert!(c.get_config().treasury_accrued.is_zero());
+}
+
+#[test]
+#[should_panic(expected = "Nothing to withdraw")]
+fn withdraw_treasury_rejects_empty() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    let _ = c.withdraw_treasury();
+}
+
+#[test]
+#[should_panic(expected = "Deposit too low")]
+fn mint_uses_the_updated_price() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.set_mint_price(NearToken::from_near(5));
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper")]
+fn replaced_keeper_loses_access() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("admin.near", YOCTO);
+    c.set_keeper(acc("keeper2.near"));
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+}
