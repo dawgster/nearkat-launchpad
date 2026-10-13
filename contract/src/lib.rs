@@ -38,6 +38,8 @@ pub struct Contract {
     base_uri: String,
     next_token_id: u64,
     treasury_accrued: NearToken,
+    /// Sequence number of the last applied `debit_batch`.
+    debit_seq: u64,
 }
 
 #[near]
@@ -66,6 +68,7 @@ impl Contract {
             base_uri,
             next_token_id: 1,
             treasury_accrued: NearToken::from_yoctonear(0),
+            debit_seq: 0,
         }
     }
 
@@ -141,6 +144,7 @@ impl Contract {
             treasury_id: self.treasury_id.clone(),
             mint_price: self.mint_price,
             treasury_accrued: self.treasury_accrued,
+            debit_seq: self.debit_seq.into(),
         }
     }
 }

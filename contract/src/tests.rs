@@ -192,7 +192,10 @@ fn debit_batch_moves_balance_to_treasury() {
     c.mint();
     let before = c.get_kat("1".to_string()).unwrap().balance;
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.debit_batch(vec![("1".to_string(), NearToken::from_millinear(5))]);
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
     let after = c.get_kat("1".to_string()).unwrap().balance;
     assert_eq!(after, before.saturating_sub(NearToken::from_millinear(5)));
     assert_eq!(
@@ -208,7 +211,7 @@ fn debit_batch_rejects_overdraw() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.debit_batch(vec![("1".to_string(), NearToken::from_near(50))]);
+    c.debit_batch(1.into(), vec![("1".to_string(), NearToken::from_near(50))]);
 }
 
 #[test]
@@ -218,7 +221,10 @@ fn debit_batch_rejects_admin() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("admin.near", NearToken::from_yoctonear(0));
-    c.debit_batch(vec![("1".to_string(), NearToken::from_millinear(1))]);
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(1))],
+    );
 }
 
 #[test]
@@ -229,10 +235,13 @@ fn debit_batch_counts_repeated_kat_entries_together() {
     c.mint();
     // Balance is just under 2 NEAR: each entry fits alone, both together do not.
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.debit_batch(vec![
-        ("1".to_string(), NearToken::from_millinear(1500)),
-        ("1".to_string(), NearToken::from_millinear(1500)),
-    ]);
+    c.debit_batch(
+        1.into(),
+        vec![
+            ("1".to_string(), NearToken::from_millinear(1500)),
+            ("1".to_string(), NearToken::from_millinear(1500)),
+        ],
+    );
 }
 
 #[test]
@@ -395,7 +404,10 @@ fn set_context_rejects_empty_ref() {
 fn debit_batch_rejects_unknown_kat() {
     let mut c = deploy();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.debit_batch(vec![("99".to_string(), NearToken::from_millinear(1))]);
+    c.debit_batch(
+        1.into(),
+        vec![("99".to_string(), NearToken::from_millinear(1))],
+    );
 }
 
 #[test]
@@ -442,4 +454,52 @@ fn set_treasury_rejects_non_admin() {
     let mut c = deploy();
     ctx("alice.near", YOCTO);
     c.set_treasury(acc("alice.near"));
+}
+
+#[test]
+fn debit_batch_advances_the_sequence_number() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    assert_eq!(c.get_config().debit_seq.0, 0);
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+    c.debit_batch(
+        2.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+    assert_eq!(c.get_config().debit_seq.0, 2);
+}
+
+#[test]
+#[should_panic(expected = "Batch 1 is not next; last applied is 1")]
+fn debit_batch_rejects_a_replayed_batch() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+}
+
+#[test]
+#[should_panic(expected = "Batch 2 is not next; last applied is 0")]
+fn debit_batch_rejects_a_skipped_sequence_number() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        2.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
 }

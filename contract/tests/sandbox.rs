@@ -200,7 +200,7 @@ async fn debit_batch_is_all_or_nothing() -> TestResult {
         &env,
         &env.keeper,
         "debit_batch",
-        json!({ "items": [
+        json!({ "seq": "1", "items": [
             [rich, NearToken::from_near(1)],
             [poor, NearToken::from_near(1)],
         ]}),
@@ -213,6 +213,16 @@ async fn debit_batch_is_all_or_nothing() -> TestResult {
         .contains("Insufficient balance for kat 2"));
     assert_eq!(kat(&env, &rich).await?["balance"], rich_before);
     assert_eq!(kat(&env, &poor).await?["balance"], poor_before);
+
+    // The failed batch did not use up its sequence number.
+    call(
+        &env,
+        &env.keeper,
+        "debit_batch",
+        json!({ "seq": "1", "items": [[rich, NearToken::from_near(1)]] }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
     Ok(())
 }
 
@@ -224,7 +234,7 @@ async fn withdraw_pays_mint_price_and_debits_to_treasury() -> TestResult {
         &env,
         &env.keeper,
         "debit_batch",
-        json!({ "items": [[id, NearToken::from_millinear(500)]] }),
+        json!({ "seq": "1", "items": [[id, NearToken::from_millinear(500)]] }),
         NearToken::from_yoctonear(0),
     )
     .await??;

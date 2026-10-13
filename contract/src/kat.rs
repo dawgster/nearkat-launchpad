@@ -49,4 +49,5 @@ pub struct ConfigView {
     pub treasury_id: AccountId,
     pub mint_price: NearToken,
     pub treasury_accrued: NearToken,
+    pub debit_seq: U64,
 }

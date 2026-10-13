@@ -37,8 +37,19 @@ impl Contract {
 
     /// Moves each amount from a kat's balance to the treasury. Keeper only.
     /// Any kat with insufficient balance fails the whole batch.
-    pub fn debit_batch(&mut self, items: Vec<(TokenId, NearToken)>) {
+    ///
+    /// `seq` must be one more than the last applied batch, so a batch that is
+    /// re-sent after an ambiguous failure can never be applied twice.
+    pub fn debit_batch(&mut self, seq: U64, items: Vec<(TokenId, NearToken)>) {
         self.assert_keeper();
+        require!(
+            seq.0 == self.debit_seq + 1,
+            format!(
+                "Batch {} is not next; last applied is {}",
+                seq.0, self.debit_seq
+            )
+        );
+        self.debit_seq = seq.0;
         for (token_id, amount) in items {
             let kat = self.kat_mut(&token_id);
             kat.balance = kat.balance.checked_sub(amount).unwrap_or_else(|| {
