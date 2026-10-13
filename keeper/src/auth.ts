@@ -13,6 +13,8 @@ export interface SignInParams {
   message: string;
   recipient: string;
   nonce: Uint8Array;
+  /** Present when the wallet signed over the page it was opened from. */
+  callbackUrl?: string;
 }
 
 /** Checks a NEP-413 signature and that its key is a full-access key of the account. */
@@ -23,6 +25,8 @@ export interface AuthOptions {
   recipient: string;
   verify: VerifySignature;
   now?: () => number;
+  /** Origins a signed callback URL may point at: the web app's own. */
+  callbackOrigins?: string[];
 }
 
 export interface Session {
@@ -35,6 +39,7 @@ export class Auth {
   readonly #sessionKey: Uint8Array;
   readonly #recipient: string;
   readonly #verify: VerifySignature;
+  readonly #callbackOrigins: string[];
   readonly #now: () => number;
   /** Nonces already exchanged, with their expiry. Issued nonces are not stored. */
   readonly #used = new Map<string, number>();
@@ -43,6 +48,7 @@ export class Auth {
     this.#sessionKey = options.sessionKey;
     this.#recipient = options.recipient;
     this.#verify = options.verify;
+    this.#callbackOrigins = options.callbackOrigins ?? [];
     this.#now = options.now ?? Date.now;
   }
 
@@ -61,7 +67,16 @@ export class Auth {
   }
 
   /** Exchanges a signed challenge for a session token. Each nonce works once. */
-  async createSession(signed: SignedMessage, nonce: string): Promise<Session> {
+  /**
+   * `callbackUrl` is the page the web app asked the wallet to return to. Web
+   * wallets sign over it, so it has to be part of the check; extension and
+   * app wallets ignore it, so the plain form is accepted too.
+   */
+  async createSession(
+    signed: SignedMessage,
+    nonce: string,
+    callbackUrl?: string,
+  ): Promise<Session> {
     const now = this.#now();
     const bytes = Buffer.from(nonce, "base64");
     const body = bytes.subarray(0, NONCE_BODY_LEN);
@@ -82,11 +97,18 @@ export class Auth {
       }
     }
     this.#used.set(nonce, now + NONCE_TTL_MS - age);
-    const valid = await this.#verify(signed, {
+    // A signature made for another site's page must not open a session here.
+    if (callbackUrl !== undefined && !this.#isOurPage(callbackUrl)) {
+      throw new HttpError(401, "invalid_signature", "Sign-in signature is not valid");
+    }
+    const params = {
       message: SIGN_IN_MESSAGE,
       recipient: this.#recipient,
       nonce: Buffer.from(nonce, "base64"),
-    });
+    };
+    const valid =
+      (callbackUrl !== undefined && (await this.#verify(signed, { ...params, callbackUrl }))) ||
+      (await this.#verify(signed, params));
     if (!valid) {
       throw new HttpError(401, "invalid_signature", "Sign-in signature is not valid");
     }
@@ -120,6 +142,14 @@ export class Auth {
       return typeof a === "string" && typeof e === "number" && e > this.#now() ? a : null;
     } catch {
       return null;
+    }
+  }
+
+  #isOurPage(url: string): boolean {
+    try {
+      return this.#callbackOrigins.includes(new URL(url).origin);
+    } catch {
+      return false;
     }
   }
 

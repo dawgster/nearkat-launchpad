@@ -44,6 +44,7 @@ const kats = new KatService({
 const auth = new Auth({
   sessionKey: keys.sessionKey(),
   recipient: config.authRecipient,
+  callbackOrigins: config.webOrigins,
   // The signature is checked locally first, so a forged request costs no RPC call.
   verify: async (signed, params) =>
     (await verifyNep413Signature(signed, params)) &&
@@ -53,6 +54,11 @@ const app = createApp({
   auth,
   kats,
   attestation: async () => ({ mode: "local", keeper_public_key: keys.nearPublicKey() }),
+  info: {
+    chat_price: config.chatPrice.toString(),
+    save_price: config.savePrice.toString(),
+    model: config.nearAiModel,
+  },
   webOrigins: config.webOrigins,
 });
 

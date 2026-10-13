@@ -12,6 +12,8 @@ export interface AppOptions {
   kats: KatService;
   /** Served at GET /attestation. */
   attestation: () => Promise<Record<string, unknown>>;
+  /** Served at GET /info: what the web app needs to quote costs. Amounts are yoctoNEAR. */
+  info: { chat_price: string; save_price: string; model: string };
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
 }
@@ -70,6 +72,8 @@ export function createApp(options: AppOptions): Hono<Env> {
 
   app.get("/attestation", async (c) => c.json(await options.attestation()));
 
+  app.get("/info", (c) => c.json(options.info));
+
   app.post("/auth/challenge", (c) => c.json(auth.challenge()));
 
   app.post("/auth/session", async (c) => {
@@ -80,11 +84,12 @@ export function createApp(options: AppOptions): Hono<Env> {
       !signed ||
       typeof signed.accountId !== "string" ||
       typeof signed.publicKey !== "string" ||
-      typeof signed.signature !== "string"
+      typeof signed.signature !== "string" ||
+      (body.callback_url !== undefined && typeof body.callback_url !== "string")
     ) {
       throw new HttpError(400, "invalid_input", "nonce and signed_message are required");
     }
-    return c.json(await auth.createSession(signed, body.nonce));
+    return c.json(await auth.createSession(signed, body.nonce, body.callback_url));
   });
 
   app.use("/kats/*", async (c, next) => {

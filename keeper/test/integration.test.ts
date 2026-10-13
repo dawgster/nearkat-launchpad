@@ -105,6 +105,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
     const auth = new Auth({
       sessionKey: keys.sessionKey(),
       recipient: RECIPIENT,
+      callbackOrigins: ["https://app.example"],
       verify: async (signed, params) =>
         (await verifyNep413Signature(signed, params)) &&
         (await verifyNep413Signature(signed, params, { near: keeperNear })),
@@ -113,6 +114,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       auth,
       kats,
       attestation: async () => ({ mode: "local" }),
+      info: { chat_price: CHAT.toString(), save_price: SAVE.toString(), model: "fake" },
       webOrigins: ["http://localhost:3000"],
     });
   }, 180_000);
@@ -235,6 +237,40 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
     await meter.flush();
     expect(BigInt(((await chain.getKat(rich)) as KatView).balance)).toBe(richBalance - 2n * CHAT);
   }, 120_000);
+
+  test("a web wallet that signs over the page URL can sign in, if the keeper is told the URL", async () => {
+    const challenge = await (await app.request("/auth/challenge", { method: "POST" })).json();
+    const callbackUrl = "https://app.example/kat/1";
+    const signed = await bob.near.signMessage({
+      message: challenge.message,
+      recipient: challenge.recipient,
+      nonce: Buffer.from(challenge.nonce, "base64"),
+      callbackUrl,
+    });
+    const withUrl = await app.request("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({
+        nonce: challenge.nonce,
+        signed_message: signed,
+        callback_url: callbackUrl,
+      }),
+    });
+    expect(withUrl.status).toBe(200);
+
+    // The same kind of signature without the URL is what failed before this was handled.
+    const second = await (await app.request("/auth/challenge", { method: "POST" })).json();
+    const signedAgain = await bob.near.signMessage({
+      message: second.message,
+      recipient: second.recipient,
+      nonce: Buffer.from(second.nonce, "base64"),
+      callbackUrl,
+    });
+    const withoutUrl = await app.request("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ nonce: second.nonce, signed_message: signedAgain }),
+    });
+    expect(withoutUrl.status).toBe(401);
+  }, 60_000);
 
   test("signing with your own key does not let you claim someone else's account", async () => {
     const response = await signIn(mallory.near, bob.id);

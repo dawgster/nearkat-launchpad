@@ -33,6 +33,11 @@ async function setup() {
     auth,
     kats,
     attestation: async () => ({ mode: "local" }),
+    info: {
+      chat_price: "2000000000000000000000",
+      save_price: "50000000000000000000000",
+      model: "m",
+    },
     webOrigins: ["http://localhost:3000", "http://localhost:3001"],
   });
   chain.mint("1", "alice.near", NEAR);
@@ -61,6 +66,31 @@ describe("keeper HTTP API", () => {
     const response = await app.request("/attestation");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ mode: "local" });
+  });
+
+  test("publishes its prices and model without a session", async () => {
+    const { app } = await setup();
+    const response = await app.request("/info");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      chat_price: "2000000000000000000000",
+      save_price: "50000000000000000000000",
+      model: "m",
+    });
+  });
+
+  test("rejects a sign-in whose callback URL is not a string", async () => {
+    const { app } = await setup();
+    const { nonce } = await (await app.request("/auth/challenge", { method: "POST" })).json();
+    const response = await app.request("/auth/session", {
+      method: "POST",
+      body: JSON.stringify({
+        nonce,
+        callback_url: 5,
+        signed_message: { accountId: "alice.near", publicKey: "ed25519:pk", signature: "valid" },
+      }),
+    });
+    expect(response.status).toBe(400);
   });
 
   test("lets a signed-in owner read, shape and chat with their kat", async () => {

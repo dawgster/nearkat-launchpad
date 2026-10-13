@@ -15,6 +15,7 @@ function setup(verify: VerifySignature = async () => true) {
     recipient: "nearkat.xyz",
     verify,
     now: () => now,
+    callbackOrigins: ["https://app.example"],
   });
   return { auth, advance: (ms: number) => (now += ms) };
 }
@@ -42,6 +43,50 @@ describe("Auth", () => {
     });
     expect(Buffer.from(challenge.nonce, "base64")).toHaveLength(32);
   });
+
+  test("verifies with the callback URL a web wallet signed over", async () => {
+    // Web wallets such as MyNearWallet include the page URL in what they sign.
+    const verify = vi.fn<VerifySignature>(
+      async (_signed, params) => params.callbackUrl !== undefined,
+    );
+    const { auth } = setup(verify);
+    const session = await auth.createSession(
+      signed,
+      auth.challenge().nonce,
+      "https://app.example/kat/1",
+    );
+    expect(session.account_id).toBe("alice.near");
+    expect(verify).toHaveBeenCalledWith(
+      signed,
+      expect.objectContaining({ callbackUrl: "https://app.example/kat/1" }),
+    );
+  });
+
+  test("still accepts a wallet that ignored the callback URL", async () => {
+    const verify = vi.fn<VerifySignature>(
+      async (_signed, params) => params.callbackUrl === undefined,
+    );
+    const { auth } = setup(verify);
+    const session = await auth.createSession(
+      signed,
+      auth.challenge().nonce,
+      "https://app.example/kat/1",
+    );
+    expect(session.account_id).toBe("alice.near");
+    expect(verify).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(["https://evil.example/kat/1", "https://app.example.evil.com/", "not a url"])(
+    "rejects a sign-in whose callback URL is %j, not this app's",
+    async (callbackUrl) => {
+      const verify = vi.fn<VerifySignature>(async () => true);
+      const { auth } = setup(verify);
+      await expect(
+        auth.createSession(signed, auth.challenge().nonce, callbackUrl),
+      ).rejects.toMatchObject({ status: 401, code: "invalid_signature" });
+      expect(verify).not.toHaveBeenCalled();
+    },
+  );
 
   test("rejects a signature the verifier does not accept", async () => {
     const { auth } = setup(async () => false);
