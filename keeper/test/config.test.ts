@@ -35,7 +35,7 @@ describe("loadConfig", () => {
       network: "mainnet",
       port: 9000,
       chatPrice: 7n,
-      webOrigin: "https://nearkat.xyz",
+      webOrigins: ["https://nearkat.xyz"],
     });
   });
 
@@ -46,6 +46,15 @@ describe("loadConfig", () => {
       NEAR_RPC_URL: "http://127.0.0.1:3030",
     });
     expect(config).toMatchObject({ network: "sandbox", rpcUrl: "http://127.0.0.1:3030" });
+  });
+
+  test("accepts several web origins separated by commas", () => {
+    const config = loadConfig({
+      ...base,
+      WEB_ORIGIN: "https://nearkat.xyz, https://preview.nearkat.xyz",
+    });
+    expect(config.webOrigins).toEqual(["https://nearkat.xyz", "https://preview.nearkat.xyz"]);
+    expect(loadConfig(base).webOrigins).toEqual(["http://localhost:3000"]);
   });
 
   test("leaves the RPC URL unset by default", () => {

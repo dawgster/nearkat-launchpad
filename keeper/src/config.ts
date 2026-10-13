@@ -14,7 +14,8 @@ export interface Config {
   maxTokens: number;
   port: number;
   authRecipient: string;
-  webOrigin: string;
+  /** Origins the web app is served from, for CORS. */
+  webOrigins: string[];
   /** yoctoNEAR */
   chatPrice: bigint;
   /** yoctoNEAR */
@@ -67,7 +68,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     maxTokens,
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
-    webOrigin: env.WEB_ORIGIN ?? "http://localhost:3000",
+    webOrigins: (env.WEB_ORIGIN ?? "http://localhost:3000")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     // 0.002 NEAR and 0.05 NEAR
     chatPrice: yocto(env, "CHAT_PRICE_YOCTO", "2000000000000000000000"),
     savePrice: yocto(env, "SAVE_PRICE_YOCTO", "50000000000000000000000"),

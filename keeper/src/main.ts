@@ -53,7 +53,7 @@ const app = createApp({
   auth,
   kats,
   attestation: async () => ({ mode: "local", keeper_public_key: keys.nearPublicKey() }),
-  webOrigin: config.webOrigin,
+  webOrigins: config.webOrigins,
 });
 
 /** Runs a background job on an interval, never overlapping itself. */

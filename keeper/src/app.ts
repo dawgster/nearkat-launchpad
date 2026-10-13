@@ -12,8 +12,8 @@ export interface AppOptions {
   kats: KatService;
   /** Served at GET /attestation. */
   attestation: () => Promise<Record<string, unknown>>;
-  /** Origin of the web app, for CORS. */
-  webOrigin: string;
+  /** Origins the web app is served from, for CORS. */
+  webOrigins: string[];
 }
 
 type Env = { Variables: { accountId: string } };
@@ -39,7 +39,7 @@ export function createApp(options: AppOptions): Hono<Env> {
 
   app.use(
     "*",
-    cors({ origin: options.webOrigin, allowHeaders: ["authorization", "content-type"] }),
+    cors({ origin: options.webOrigins, allowHeaders: ["authorization", "content-type"] }),
   );
 
   app.use(

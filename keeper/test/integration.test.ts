@@ -113,7 +113,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       auth,
       kats,
       attestation: async () => ({ mode: "local" }),
-      webOrigin: "http://localhost:3000",
+      webOrigins: ["http://localhost:3000"],
     });
   }, 180_000);
 
