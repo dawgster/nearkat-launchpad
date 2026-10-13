@@ -2398,7 +2398,7 @@ git commit -m "feat(keeper): add kat service"
 - Consumes: `Auth`, `KatService`, `HttpError`, `CorruptContextError`, `NearChain`, `NearAiInference`, `FileStore`, `Meter`, key functions.
 - Produces: `createApp({ auth, kats, attestation, webOrigin }): Hono`; `loadConfig(env): Config`; the `npm run dev` entry point.
 
-`config.ts`, `main.ts`, `.env.example` and `README.md` are written in the same step as `app.ts`. `main.ts` has no unit test; Step 6 smoke-tests it over HTTP.
+`config.ts`, `main.ts`, `.env.example` and `README.md` are written in the same step as `app.ts`. `main.ts` has no unit test; Step 5 smoke-tests it over HTTP.
 
 - [ ] **Step 1: Write the failing tests**
 
