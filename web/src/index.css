@@ -1,0 +1,146 @@
+@import "tailwindcss";
+@import "@fontsource/archivo-black/latin-400.css";
+@import "@fontsource/space-grotesk/latin-400.css";
+@import "@fontsource/space-grotesk/latin-500.css";
+@import "@fontsource/space-grotesk/latin-700.css";
+
+/*
+ * Two worlds. The surface (landing, minting) is the night sky from
+ * nearkat.xyz. The burrow (one kat's page) is warm earth lit by a lamp.
+ */
+@theme {
+  --color-night: #030b11;
+  --color-dusk: #0d1c22;
+  --color-cream: #f4ecd9;
+  --color-mist: #9ca9a6;
+  --color-glow: #19f6a1;
+  --color-lamp: #f2bd35;
+  --color-clay: #c8643a;
+  --color-earth: #1c120c;
+  --color-soil: #2a1a10;
+  --color-root: #4a3323;
+  --color-alarm: #ff8a7a;
+
+  --font-display: "Archivo Black", "Arial Black", sans-serif;
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    background: var(--color-night);
+    color: var(--color-cream);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-glow);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: var(--color-glow);
+    color: var(--color-night);
+  }
+}
+
+@layer components {
+  /* The night sky: a few fixed stars and a faint glow where the sun went down. */
+  .surface {
+    background:
+      radial-gradient(2px 2px at 9% 16%, #f4ecd9 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 23% 31%, #f4ecd9aa 50%, transparent 52%),
+      radial-gradient(2.5px 2.5px at 38% 8%, #f4ecd9 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 51% 22%, #f4ecd999 50%, transparent 52%),
+      radial-gradient(2px 2px at 58% 41%, #f4ecd9cc 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 67% 11%, #f4ecd9aa 50%, transparent 52%),
+      radial-gradient(2px 2px at 93% 27%, #f4ecd9 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 81% 5%, #f4ecd988 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 4% 47%, #f4ecd977 50%, transparent 52%),
+      radial-gradient(2px 2px at 45% 52%, #19f6a1aa 50%, transparent 52%), var(--color-night);
+  }
+
+  /* Underground: darker toward the edges, lit from where the kat sits. */
+  .burrow {
+    background:
+      radial-gradient(90% 70% at 30% 0%, #f2bd3514, transparent 60%),
+      radial-gradient(140% 100% at 50% 0%, var(--color-soil), var(--color-earth) 70%);
+  }
+
+  .field {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--field-line, #f4ecd933);
+    background: var(--field-bg, #00000040);
+    padding: 0.625rem 0.75rem;
+    color: var(--color-cream);
+  }
+
+  .field::placeholder {
+    color: var(--color-mist);
+  }
+
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    padding: 0.625rem 1.125rem;
+    font-weight: 700;
+    background: var(--button-bg, var(--color-glow));
+    color: var(--button-ink, var(--color-night));
+    transition: filter 120ms;
+  }
+
+  .button:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .button-quiet {
+    --button-bg: transparent;
+    --button-ink: var(--color-cream);
+    border: 1px solid #f4ecd955;
+  }
+
+  .button-lamp {
+    --button-bg: var(--color-lamp);
+    --button-ink: var(--color-earth);
+  }
+}
+
+/* The one piece of staged motion: arriving in a burrow feels like climbing down. */
+@keyframes descend {
+  from {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+.descend {
+  animation: descend 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .descend {
+    animation: none;
+  }
+}
