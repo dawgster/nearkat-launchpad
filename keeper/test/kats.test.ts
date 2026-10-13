@@ -17,6 +17,7 @@ async function setup(balance: bigint = NEAR) {
   const inference = new FakeInference();
   const meter = new Meter(chain);
   let now = 1_000_000;
+  const logs: string[] = [];
   const kats = new KatService({
     chain,
     store,
@@ -26,10 +27,11 @@ async function setup(balance: bigint = NEAR) {
     prices: { chat: CHAT, save: SAVE },
     now: () => now,
     retryDelayMs: 0,
+    log: (message) => logs.push(message),
   });
   chain.mint("1", "alice.near", balance);
   await kats.wakeNew();
-  return { chain, store, inference, meter, kats, advance: (ms: number) => (now += ms) };
+  return { chain, store, inference, meter, kats, logs, advance: (ms: number) => (now += ms) };
 }
 
 /** Decrypts whatever context the chain currently points at. */
@@ -68,15 +70,55 @@ describe("wakeNew", () => {
     expect(chain.kats.get("1")?.context_version).toBe("1");
   });
 
-  test("wakes a kat on a later pass when the first attempt failed", async () => {
-    const { chain, kats } = await setup();
+  test("wakes a kat on a later pass when the first attempt failed, and says why", async () => {
+    const { chain, kats, logs } = await setup();
     chain.mint("2", "bob.near", NEAR);
     chain.failSetContext = 3;
     expect(await kats.wakeNew()).toEqual([]);
+    expect(logs.join("\n")).toMatch(/kat 2.*RPC unavailable/);
     expect(await kats.wakeNew()).toEqual(["2"]);
   });
 
-  test("wakes more kats than fit in one page", async () => {
+  test("wakes later kats even when an earlier one keeps failing", async () => {
+    const { chain, store, kats } = await setup();
+    chain.mint("2", "bob.near", NEAR);
+    chain.mint("3", "carol.near", NEAR);
+    const realPut = store.put.bind(store);
+    let puts = 0;
+    // Kat 2's three attempts fail; everything after succeeds.
+    store.put = async (blob) => {
+      puts += 1;
+      if (puts <= 3) {
+        throw new Error("disk full");
+      }
+      return realPut(blob);
+    };
+    expect(await kats.wakeNew()).toEqual(["3"]);
+    expect(await kats.wakeNew()).toEqual(["2"]);
+  });
+
+  test("wakes the tenth kat when it is minted after the first nine were woken", async () => {
+    const { chain, kats } = await setup();
+    for (let id = 2; id <= 9; id++) {
+      chain.mint(String(id), "bob.near", NEAR);
+    }
+    await kats.wakeNew();
+    chain.mint("10", "bob.near", NEAR);
+    expect(await kats.wakeNew()).toEqual(["10"]);
+    chain.mint("11", "bob.near", NEAR);
+    expect(await kats.wakeNew()).toEqual(["11"]);
+  });
+
+  test("stops the pass, without spinning, when the chain cannot be read", async () => {
+    const { chain, kats } = await setup();
+    chain.mint("2", "bob.near", NEAR);
+    chain.getKat = async () => {
+      throw new Error("RPC unavailable");
+    };
+    await expect(kats.wakeNew()).rejects.toThrow("RPC unavailable");
+  });
+
+  test("wakes many kats in one pass", async () => {
     const { chain, kats } = await setup();
     for (let id = 2; id <= 120; id++) {
       chain.mint(String(id), "bob.near", NEAR);
@@ -288,6 +330,22 @@ describe("chat", () => {
   });
 });
 
+describe("chat during a transfer", () => {
+  test("refuses the reply and forgets the message when the kat changed hands mid-reply", async () => {
+    const { chain, inference, meter, kats } = await setup();
+    inference.whileThinking = () => chain.transfer("1", "bob.near");
+    await expect(kats.chat("alice.near", "1", "my secret")).rejects.toMatchObject({
+      status: 403,
+      code: "not_owner",
+    });
+    expect(meter.pending("1")).toBe(0n);
+
+    inference.whileThinking = null;
+    await kats.chat("bob.near", "1", "hello");
+    expect(JSON.stringify(inference.calls[1])).not.toContain("my secret");
+  });
+});
+
 describe("memory", () => {
   test("folds the conversation into memory after twenty messages", async () => {
     const { chain, store, inference, meter, kats } = await setup();
@@ -334,6 +392,56 @@ describe("memory", () => {
     };
     expect((await kats.chat("alice.near", "1", "message 10")).reply).toBe("reply 10");
     expect(chain.kats.get("1")?.context_version).toBe("1");
+  });
+
+  test("cuts an over-long memory summary down to 2000 characters", async () => {
+    const { chain, store, inference, kats } = await setup();
+    for (let i = 1; i <= 9; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
+    const original = inference.chat.bind(inference);
+    inference.chat = async (messages) => {
+      if (messages[0]?.content.startsWith("You maintain the long-term memory")) {
+        inference.nextReply = "m".repeat(5000);
+      }
+      return original(messages);
+    };
+    await kats.chat("alice.near", "1", "message 10");
+    expect((await onChainContext(chain, store)).memory_summary).toBe("m".repeat(2000));
+  });
+
+  test("keeps only the latest forty messages when memory can never be saved", async () => {
+    // Enough for thirty messages, but never enough left over for a save.
+    const { inference, kats } = await setup(CHAT * 30n);
+    for (let i = 1; i <= 30; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
+    // System prompt, forty remembered messages, and the new one.
+    expect(inference.calls[29]).toHaveLength(42);
+    expect(inference.calls[29]?.[1]).toEqual({ role: "user", content: "message 10" });
+  });
+
+  test("keeps folding other kats' conversations when one kat's context is unreadable", async () => {
+    const { chain, kats, logs, advance } = await setup();
+    chain.mint("2", "bob.near", NEAR);
+    await kats.wakeNew();
+    await kats.chat("alice.near", "1", "hello");
+    await kats.chat("bob.near", "2", "hello");
+    (chain.kats.get("1") as { context_hash: string }).context_hash =
+      Buffer.alloc(32).toString("base64");
+    advance(10 * 60 * 1000);
+    await kats.consolidateIdle();
+    expect(chain.kats.get("2")?.context_version).toBe("2");
+    expect(logs.join("\n")).toMatch(/kat 1/);
+  });
+
+  test("says why a memory save was skipped", async () => {
+    const { chain, kats, logs, advance } = await setup();
+    await kats.chat("alice.near", "1", "hello");
+    chain.failSetContext = 3;
+    advance(10 * 60 * 1000);
+    await kats.consolidateIdle();
+    expect(logs.join("\n")).toMatch(/kat 1.*RPC unavailable/);
   });
 
   test("folds an idle conversation into memory after ten minutes", async () => {

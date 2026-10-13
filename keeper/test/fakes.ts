@@ -1,4 +1,4 @@
-import type { Chain } from "../src/chain.ts";
+import type { Chain, DebitResult } from "../src/chain.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
@@ -8,8 +8,12 @@ export const NEAR = 10n ** 24n;
 /** In-memory stand-in for the contract, enforcing the same rules. */
 export class FakeChain implements Chain {
   readonly kats = new Map<string, KatView>();
-  readonly debits: Array<Array<[string, string]>> = [];
-  failDebits = false;
+  /** Every applied batch, as `[seq, items]`. */
+  readonly debits: Array<[number, Array<[string, string]>]> = [];
+  keeperId = "keeper.near";
+  debitSeq = 0;
+  /** "lost": the call never reaches the contract. "unconfirmed": it applies, then the reply is lost. */
+  debitFailure: "none" | "lost" | "unconfirmed" = "none";
   failSetContext = 0;
   /** When set, views keep returning the context as it was before the last save. */
   staleViews = false;
@@ -38,10 +42,6 @@ export class FakeChain implements Chain {
     return { ...(stale ?? kat), owner_id: kat.owner_id, balance: kat.balance };
   }
 
-  async listTokenIds(fromIndex: number, limit: number): Promise<string[]> {
-    return [...this.kats.keys()].slice(fromIndex, fromIndex + limit);
-  }
-
   async setContext(tokenId: string, hashB64: string, ref: string, version: number): Promise<void> {
     if (this.failSetContext > 0) {
       this.failSetContext -= 1;
@@ -57,20 +57,40 @@ export class FakeChain implements Chain {
     kat.context_version = String(version);
   }
 
-  async debitBatch(items: Array<[string, string]>): Promise<void> {
-    if (this.failDebits) {
+  async debitBatch(seq: number, items: Array<[string, string]>): Promise<DebitResult> {
+    await Promise.resolve();
+    if (this.debitFailure === "lost") {
       throw new Error("RPC unavailable");
     }
+    if (seq !== this.debitSeq + 1) {
+      return { status: "out_of_sequence", lastApplied: this.debitSeq };
+    }
+    // Like the contract, entries for the same kat are counted together.
+    const left = new Map<string, bigint>();
     for (const [tokenId, amount] of items) {
-      if (BigInt(this.#kat(tokenId).balance) < BigInt(amount)) {
-        throw new Error(`Insufficient balance for kat ${tokenId}`);
+      const balance = (left.get(tokenId) ?? BigInt(this.#kat(tokenId).balance)) - BigInt(amount);
+      if (balance < 0n) {
+        return { status: "insufficient", tokenId };
       }
+      left.set(tokenId, balance);
     }
-    for (const [tokenId, amount] of items) {
-      const kat = this.#kat(tokenId);
-      kat.balance = (BigInt(kat.balance) - BigInt(amount)).toString();
+    for (const [tokenId, balance] of left) {
+      this.#kat(tokenId).balance = balance.toString();
     }
-    this.debits.push(items);
+    this.debitSeq = seq;
+    this.debits.push([seq, items]);
+    if (this.debitFailure === "unconfirmed") {
+      throw new Error("RPC timed out");
+    }
+    return { status: "applied" };
+  }
+
+  async getDebitSeq(): Promise<number> {
+    return this.debitSeq;
+  }
+
+  async getKeeperId(): Promise<string> {
+    return this.keeperId;
   }
 
   #kat(tokenId: string): KatView {
@@ -86,6 +106,10 @@ export class FakeChain implements Chain {
 export class FakeInference implements Inference {
   readonly calls: ChatMessage[][] = [];
   down = false;
+  /** Used once in place of the next "reply N". */
+  nextReply: string | null = null;
+  /** Runs while the model is "thinking", before the reply is returned. */
+  whileThinking: (() => void) | null = null;
 
   async chat(messages: ChatMessage[]): Promise<ChatResult> {
     if (this.down) {
@@ -93,8 +117,11 @@ export class FakeInference implements Inference {
     }
     this.calls.push(messages.map((message) => ({ ...message })));
     const n = this.calls.length;
+    this.whileThinking?.();
+    const reply = this.nextReply ?? `reply ${n}`;
+    this.nextReply = null;
     return {
-      reply: `reply ${n}`,
+      reply,
       verification: {
         chat_id: `chat-${n}`,
         model: "fake-model",

@@ -17,7 +17,9 @@ export const MAX_TEXT_CHARS = 4000;
 const CONSOLIDATE_AFTER_MESSAGES = 20;
 const CONSOLIDATE_AFTER_IDLE_MS = 10 * 60 * 1000;
 const SAVE_ATTEMPTS = 3;
-const WAKE_PAGE = 50;
+/** Unsaved messages kept per kat; the oldest are dropped beyond this. */
+const MAX_SESSION_MESSAGES = 40;
+const MAX_SUMMARY_CHARS = 2000;
 
 const SUMMARY_INSTRUCTIONS =
   "You maintain the long-term memory of an AI character. Rewrite the memory so it includes " +
@@ -41,6 +43,7 @@ export interface KatServiceOptions {
   now?: () => number;
   /** Delay before retrying a failed save; multiplied by the attempt number. */
   retryDelayMs?: number;
+  log?: (message: string) => void;
 }
 
 export interface ContextView {
@@ -79,14 +82,16 @@ interface OwnedKat {
 export class KatService {
   readonly #o: KatServiceOptions;
   readonly #now: () => number;
+  readonly #log: (message: string) => void;
   readonly #sessions = new Map<string, ChatSession>();
   readonly #saved = new Map<string, SavedContext>();
   readonly #locks = new Map<string, Promise<unknown>>();
-  #wakeFrom = 0;
+  #nextToWake = 1;
 
   constructor(options: KatServiceOptions) {
     this.#o = options;
     this.#now = options.now ?? Date.now;
+    this.#log = options.log ?? console.error;
   }
 
   async getContext(accountId: string, tokenId: string): Promise<ContextView> {
@@ -127,9 +132,17 @@ export class KatService {
         result = await this.#o.inference.chat([systemMessage(doc), ...session.messages, user]);
       } catch (error) {
         if (error instanceof InferenceError) {
+          this.#log(`Inference failed for kat ${tokenId}: ${error.message}`);
           throw new HttpError(503, "inference_unavailable", "The kat cannot think right now");
         }
         throw error;
+      }
+      // The kat may have been transferred while the model was thinking. The
+      // reply was built from the previous owner's context, so it is not released.
+      const current = await this.#o.chain.getKat(tokenId);
+      if (current?.owner_id !== accountId) {
+        this.#sessions.delete(tokenId);
+        throw new HttpError(403, "not_owner", `Only the owner of kat ${tokenId} can do this`);
       }
       session.messages.push(user, { role: "assistant", content: result.reply });
       session.lastActive = this.#now();
@@ -137,6 +150,9 @@ export class KatService {
 
       if (session.messages.length >= CONSOLIDATE_AFTER_MESSAGES) {
         await this.#consolidate(tokenId, owned.kat, doc, session);
+      }
+      if (session.messages.length > MAX_SESSION_MESSAGES) {
+        session.messages.splice(0, session.messages.length - MAX_SESSION_MESSAGES);
       }
       return {
         reply: result.reply,
@@ -149,57 +165,69 @@ export class KatService {
   /** Folds sessions that have been idle for 10 minutes into long-term memory. */
   async consolidateIdle(): Promise<void> {
     const cutoff = this.#now() - CONSOLIDATE_AFTER_IDLE_MS;
-    for (const [tokenId, session] of this.#sessions) {
-      if (session.messages.length === 0 || session.lastActive > cutoff) {
-        continue;
+    for (const tokenId of [...this.#sessions.keys()]) {
+      try {
+        await this.#locked(tokenId, async () => {
+          // Read inside the lock: a chat may have replaced the session meanwhile.
+          const session = this.#sessions.get(tokenId);
+          if (!session || session.lastActive > cutoff) {
+            return;
+          }
+          const kat = await this.#o.chain.getKat(tokenId);
+          if (session.messages.length === 0 || !kat || kat.owner_id !== session.owner) {
+            this.#sessions.delete(tokenId);
+            return;
+          }
+          const owned = this.#withSaved(tokenId, kat);
+          if (owned) {
+            await this.#consolidate(tokenId, kat, await this.#load(tokenId, owned), session);
+          }
+        });
+      } catch (error) {
+        // One unreadable kat must not stop the others from being saved.
+        this.#log(`Idle memory save failed for kat ${tokenId}: ${String(error)}`);
       }
-      await this.#locked(tokenId, async () => {
-        const kat = await this.#o.chain.getKat(tokenId);
-        if (!kat || kat.owner_id !== session.owner) {
-          this.#sessions.delete(tokenId);
-          return;
-        }
-        const owned = this.#withSaved(tokenId, kat);
-        if (owned) {
-          await this.#consolidate(tokenId, kat, await this.#load(tokenId, owned), session);
-        }
-      });
     }
   }
 
-  /** Gives every newly minted kat its starter context. Returns the ids it woke. */
+  /**
+   * Gives every newly minted kat its starter context and returns the ids it
+   * woke. Token ids are consecutive integers from 1, so it probes them in
+   * order and stops at the first that does not exist yet.
+   */
   async wakeNew(): Promise<string[]> {
     const woken: string[] = [];
-    let index = this.#wakeFrom;
     let allAwakeSoFar = true;
-    for (;;) {
-      const ids = await this.#o.chain.listTokenIds(index, WAKE_PAGE);
-      for (const tokenId of ids) {
-        const awake = await this.#locked(tokenId, () => this.#wake(tokenId));
-        if (awake === "woken") {
-          woken.push(tokenId);
-        }
-        allAwakeSoFar &&= awake !== "failed";
-        index += 1;
-        if (allAwakeSoFar) {
-          this.#wakeFrom = index;
-        }
-      }
-      if (ids.length < WAKE_PAGE) {
+    for (let id = this.#nextToWake; ; id++) {
+      const tokenId = String(id);
+      const outcome = await this.#locked(tokenId, () => this.#wake(tokenId));
+      if (outcome === "missing") {
         return woken;
+      }
+      if (outcome === "woken") {
+        woken.push(tokenId);
+      }
+      allAwakeSoFar &&= outcome !== "failed";
+      if (allAwakeSoFar) {
+        this.#nextToWake = id + 1;
       }
     }
   }
 
-  async #wake(tokenId: string): Promise<"woken" | "already" | "failed"> {
+  /** A chain read failure propagates and ends the pass; a failed save is retried next pass. */
+  async #wake(tokenId: string): Promise<"woken" | "already" | "missing" | "failed"> {
+    const kat = await this.#o.chain.getKat(tokenId);
+    if (!kat) {
+      return "missing";
+    }
+    if (this.#withSaved(tokenId, kat)) {
+      return "already";
+    }
     try {
-      const kat = await this.#o.chain.getKat(tokenId);
-      if (!kat || this.#withSaved(tokenId, kat)) {
-        return "already";
-      }
       await this.#save(newContext(tokenId, 1, STARTER_PERSONALITY, ""));
       return "woken";
-    } catch {
+    } catch (error) {
+      this.#log(`Could not wake kat ${tokenId}: ${String(error)}`);
       return "failed";
     }
   }
@@ -226,8 +254,10 @@ export class KatService {
           content: `Current memory:\n${doc.memory_summary || "(empty)"}\n\nNew conversation:\n${transcript}`,
         },
       ]);
-      await this.#save(newContext(tokenId, doc.version + 1, doc.personality, summary.reply));
-    } catch {
+      const memory = summary.reply.slice(0, MAX_SUMMARY_CHARS);
+      await this.#save(newContext(tokenId, doc.version + 1, doc.personality, memory));
+    } catch (error) {
+      this.#log(`Memory save skipped for kat ${tokenId}: ${String(error)}`);
       return;
     }
     this.#o.meter.charge(tokenId, this.#o.prices.save);
@@ -259,6 +289,7 @@ export class KatService {
     if (saved && saved.version > chainVersion) {
       return { kat, ...saved };
     }
+    this.#saved.delete(tokenId);
     if (chainVersion === 0 || !kat.context_hash || !kat.context_ref) {
       return null;
     }
