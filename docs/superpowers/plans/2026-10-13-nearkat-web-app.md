@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Note:** the code listings below predate the whole-branch review. The review's fixes are in the git history and the spec; the repository is the source of truth.
+
 **Goal:** Build the web app where owners mint a kat, talk to it, shape its personality, give it away, and verify what the keeper tells them.
 
 **Architecture:** A static single-page app in `web/`. It reads the contract directly through near-kit, sends transactions through the visitor's wallet (NEAR Connect), and calls the keeper for anything touching a kat's mind. Logic lives in small tested modules under `src/lib`; components take plain callbacks; pages do the wiring.

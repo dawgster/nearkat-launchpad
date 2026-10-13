@@ -1,4 +1,6 @@
+import { WalletError } from "../wallet/errors.ts";
 import { KeeperError } from "./keeper.ts";
+import { WalletAccountChanged } from "./session.ts";
 
 /** Turns any failure into one sentence that says what happened and what to do. */
 export function describeProblem(error: unknown): string {
@@ -19,16 +21,20 @@ export function describeProblem(error: unknown): string {
       case "invalid_signature":
       case "invalid_nonce":
         return "Sign-in didn't go through. Try again, and approve the message in your wallet.";
+      case "not_found":
+        return "The keeper doesn't know this kat. It may be watching a different contract.";
       case "too_large":
-      case "invalid_input":
         return "That's too long. Keep it under 4,000 characters.";
       default:
         return error.message;
     }
   }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/reject|cancel|denied|closed/i.test(message)) {
-    return "You cancelled the request in your wallet. Nothing was sent.";
+  if (error instanceof WalletAccountChanged) {
+    return `Your wallet is now on ${error.actual}, not ${error.expected}. Disconnect and connect again.`;
   }
+  if (error instanceof WalletError) {
+    return "Your wallet didn't approve the request. If you declined it by mistake, try again.";
+  }
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   return message || "Something went wrong. Try again.";
 }

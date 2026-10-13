@@ -1,19 +1,19 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Link, useParams } from "react-router";
 import { Shell } from "../components/Shell.tsx";
 import { describeProblem } from "../lib/problems.ts";
 import { recallProof } from "../lib/proof.ts";
 import { useAsync } from "../lib/useAsync.ts";
+import { keyVerdict, recordVerdict, signatureVerdict, type Verdict } from "../lib/verdicts.ts";
 import { checkSignature, contextHash } from "../lib/verify.ts";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
-type Verdict = "pass" | "fail" | "unknown";
-
 const MARK: Record<Verdict, { label: string; className: string }> = {
   pass: { label: "Checked", className: "bg-glow text-night" },
+  partial: { label: "Partly checked", className: "bg-lamp text-earth" },
   fail: { label: "Failed", className: "bg-alarm text-night" },
-  unknown: { label: "Not checked", className: "border border-cream/40 text-cream" },
+  unknown: { label: "Not checked", className: "border border-cream/50 text-cream" },
 };
 
 function Check({
@@ -26,13 +26,13 @@ function Check({
   children: ReactNode;
 }) {
   return (
-    <li className="grid gap-x-6 gap-y-2 border-t border-cream/15 py-6 sm:grid-cols-[8rem_1fr]">
+    <li className="grid gap-x-6 gap-y-2 border-t border-cream/15 py-6 sm:grid-cols-[9rem_1fr]">
       <span
         className={`h-fit w-fit rounded px-2 py-1 text-sm font-bold ${MARK[verdict].className}`}
       >
         {MARK[verdict].label}
       </span>
-      <div>
+      <div className="min-w-0">
         <h2 className="font-sans text-lg font-bold">{title}</h2>
         <div className="mt-1 max-w-prose space-y-2 text-sm leading-relaxed text-mist">
           {children}
@@ -46,17 +46,26 @@ const Mono = ({ children }: { children: ReactNode }) => (
   <span className="break-all font-mono text-cream">{children}</span>
 );
 
+function safeHash(compute: () => string): string | null {
+  try {
+    return compute();
+  } catch {
+    return null;
+  }
+}
+
 export function Verify() {
   const { id = "" } = useParams();
   const wallet = useWallet();
   const { contract, keeper, session } = useServices();
-  const [chain] = useAsync(id, async () => ({
+  const [chain, reloadChain] = useAsync(id, async () => ({
     kat: await contract.getKat(id),
     config: await contract.getConfig(),
   }));
   const [attestation] = useAsync("attestation", () => keeper.attestation());
-  const isOwner = chain.status === "ready" && chain.data.kat?.owner_id === wallet.accountId;
-  const [context] = useAsync(isOwner && session ? id : null, () =>
+  const kat = chain.status === "ready" ? chain.data.kat : null;
+  const isOwner = kat !== null && wallet.accountId !== null && kat.owner_id === wallet.accountId;
+  const [context] = useAsync(isOwner && session ? `${wallet.accountId}/${id}` : null, () =>
     (session as NonNullable<typeof session>).call((token) => keeper.getContext(token, id)),
   );
   const keeperKey =
@@ -67,8 +76,19 @@ export function Verify() {
   const [keyHeld] = useAsync(keeperKey && keeperId ? `${keeperId}/${keeperKey}` : null, () =>
     contract.accountHoldsKey(keeperId as string, keeperKey as string),
   );
-  const proof = recallProof(id);
-  const signature = proof ? checkSignature(proof) : null;
+
+  const record = recordVerdict(context.status === "ready" ? context.data : null, {
+    context_hash: kat?.context_hash ?? null,
+    context_version: kat?.context_version ?? "0",
+  });
+  // The contract was read before or after the keeper's copy was saved. Read it again.
+  useEffect(() => {
+    if (record !== "behind") {
+      return;
+    }
+    const timer = setTimeout(() => void reloadChain(), 2000);
+    return () => clearTimeout(timer);
+  }, [record, reloadChain]);
 
   if (chain.status === "loading") {
     return (
@@ -77,7 +97,7 @@ export function Verify() {
       </Shell>
     );
   }
-  if (chain.status === "error" || !chain.data.kat) {
+  if (chain.status === "error" || !kat) {
     return (
       <Shell world="burrow">
         <p className="text-alarm" role="alert">
@@ -88,10 +108,11 @@ export function Verify() {
       </Shell>
     );
   }
-  const { kat } = chain.data;
-  const matches =
-    context.status === "ready" ? contextHash(context.data) === kat.context_hash : null;
-  const local = attestation.status === "ready" && attestation.data.mode === "local";
+
+  const recomputed = context.status === "ready" ? safeHash(() => contextHash(context.data)) : null;
+  const mode = attestation.status === "ready" ? String(attestation.data.mode ?? "unknown") : null;
+  const proof = isOwner && wallet.accountId ? recallProof(wallet.accountId, id) : null;
+  const signature = proof ? checkSignature(proof) : null;
 
   return (
     <Shell world="burrow">
@@ -123,7 +144,7 @@ export function Verify() {
         </Check>
 
         <Check
-          verdict={matches === null ? "unknown" : matches ? "pass" : "fail"}
+          verdict={record === "match" ? "pass" : record === "mismatch" ? "fail" : "unknown"}
           title="What you see is what's recorded"
         >
           {!isOwner && (
@@ -133,58 +154,81 @@ export function Verify() {
             <p>Fetching your kat's mind from the keeper…</p>
           )}
           {isOwner && context.status === "error" && <p>{describeProblem(context.error)}</p>}
-          {matches === true && (
+          {record === "behind" && (
+            <p>The keeper just saved a newer version. Reading the contract again…</p>
+          )}
+          {record === "match" && (
             <p>
               Your browser recomputed the fingerprint from the personality and memory the keeper
               sent you, and it matches the contract.
             </p>
           )}
-          {matches === false && (
+          {record === "mismatch" && (
             <p>
               The personality and memory the keeper sent you do not produce the fingerprint in the
               contract. Don't trust what this keeper shows you.
             </p>
           )}
+          {recomputed && (record === "match" || record === "mismatch") && (
+            <p>
+              Recomputed <Mono>{recomputed}</Mono>
+            </p>
+          )}
         </Check>
 
         <Check
-          verdict={keyHeld.status === "ready" ? (keyHeld.data ? "pass" : "fail") : "unknown"}
+          verdict={keyVerdict(keyHeld.status === "ready" ? keyHeld.data : null)}
           title="The keeper is the one the contract trusts"
         >
           {attestation.status === "error" && <p>{describeProblem(attestation.error)}</p>}
-          {keeperKey && keeperId && (
+          {keeperId && (
             <p>
-              The contract accepts updates from <Mono>{keeperId}</Mono>.{" "}
-              {keyHeld.status === "ready" &&
-                (keyHeld.data
-                  ? "That account holds the key this keeper reports."
-                  : "That account does not hold the key this keeper reports.")}
+              The contract accepts updates from <Mono>{keeperId}</Mono>.
             </p>
           )}
-        </Check>
-
-        <Check verdict={local ? "fail" : "unknown"} title="Nobody but the owner can read its mind">
-          {local ? (
+          {keyHeld.status === "ready" && keyHeld.data && (
             <p>
-              Not yet. This keeper runs in local mode, so whoever operates it can read every kat's
-              mind. That changes when the keeper moves into a sealed enclave.
+              That account holds the key this keeper reports. Keys are public, so this alone doesn't
+              prove the service you are talking to controls it.
             </p>
-          ) : (
-            <p>This page can't check the keeper's enclave report yet.</p>
+          )}
+          {keyHeld.status === "ready" && !keyHeld.data && (
+            <p>That account does not hold the key this keeper reports.</p>
+          )}
+          {keyHeld.status === "error" && <p>The account's keys couldn't be looked up just now.</p>}
+          {keeperKey && (
+            <p>
+              Reported key <Mono>{keeperKey}</Mono>
+            </p>
           )}
         </Check>
 
         <Check
-          verdict={
-            !signature || signature.status === "missing" || signature.status === "unsupported"
-              ? "unknown"
-              : signature.status === "valid" && signature.coversReply
-                ? "pass"
-                : "fail"
-          }
+          verdict={mode === "local" ? "fail" : "unknown"}
+          title="Nobody but the owner can read its mind"
+        >
+          {mode === "local" ? (
+            <p>
+              Not yet. This keeper reports that it runs in local mode, so whoever operates it can
+              read every kat's mind. That changes when the keeper moves into a sealed enclave.
+            </p>
+          ) : (
+            <p>
+              {mode
+                ? `The keeper reports mode "${mode}". This page can't check an enclave report yet.`
+                : "The keeper's report isn't available."}
+            </p>
+          )}
+        </Check>
+
+        <Check
+          verdict={signatureVerdict(signature)}
           title="Its latest reply was signed by the model's host"
         >
-          {!proof && <p>Talk to this kat in this tab, then come back to check its latest reply.</p>}
+          {!isOwner && <p>Only the owner's own conversation can be checked here.</p>}
+          {isOwner && !proof && (
+            <p>Talk to this kat in this tab, then come back to check its latest reply.</p>
+          )}
           {signature?.status === "missing" && (
             <p>The model's host sent no signature with the latest reply.</p>
           )}
@@ -194,17 +238,17 @@ export function Verify() {
           {signature?.status === "invalid" && (
             <p>The signature on the latest reply is not valid.</p>
           )}
-          {signature?.status === "valid" && (
+          {signature?.status === "valid" && !signature.coversReply && (
+            <p>The signature is valid, but it was made over something other than this reply.</p>
+          )}
+          {signature?.status === "valid" && signature.coversReply && (
             <>
               <p>
-                Signed by <Mono>{signature.signer}</Mono>
-                {signature.coversReply
-                  ? ", and the signed text names this reply."
-                  : ", but the signed text does not name this reply."}
+                The reply's fingerprints were signed by <Mono>{signature.signer}</Mono>.
               </p>
               <p>
-                This page doesn't yet check that this signer is the model's enclave. Compare it with
-                NEAR AI's published attestation for {proof?.model}.
+                What this page can't check yet is whose key that is. To be sure it belongs to the
+                model's enclave, compare it with NEAR AI's published attestation for {proof?.model}.
               </p>
             </>
           )}

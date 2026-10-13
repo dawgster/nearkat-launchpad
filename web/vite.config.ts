@@ -1,9 +1,29 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 
+/**
+ * Stops a production build while a dev wallet key is configured. Vite copies
+ * VITE_ variables into the bundle, where anyone could read the key.
+ */
+function refuseDevWalletInBuild(): Plugin {
+  return {
+    name: "refuse-dev-wallet-in-build",
+    apply: "build",
+    config(_config, { mode }) {
+      const env = { ...loadEnv(mode, process.cwd(), "VITE_"), ...process.env };
+      if (env.VITE_DEV_WALLET_KEY) {
+        throw new Error(
+          "VITE_DEV_WALLET_KEY is set. Remove it before building: the key would be readable in the bundle.",
+        );
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [refuseDevWalletInBuild(), react(), tailwindcss()],
   server: { port: 3000, strictPort: true },
   test: {
     environment: "happy-dom",

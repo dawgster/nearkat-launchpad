@@ -1,15 +1,22 @@
 import type { Verification } from "./keeper.ts";
 
-const key = (tokenId: string) => `nearkat.proof.${tokenId}`;
+// Keyed by account as well as kat, so one owner's proof is never shown to another.
+const key = (accountId: string, tokenId: string) => `nearkat.proof.${accountId}.${tokenId}`;
 
 /** Remembers the proof that came with a kat's latest reply, for the verify page. */
-export function rememberProof(tokenId: string, verification: Verification): void {
-  sessionStorage.setItem(key(tokenId), JSON.stringify(verification));
+export function rememberProof(
+  accountId: string,
+  tokenId: string,
+  verification: Verification,
+): void {
+  sessionStorage.setItem(key(accountId, tokenId), JSON.stringify(verification));
 }
 
-export function recallProof(tokenId: string): Verification | null {
+export function recallProof(accountId: string, tokenId: string): Verification | null {
   try {
-    return JSON.parse(sessionStorage.getItem(key(tokenId)) ?? "null") as Verification | null;
+    return JSON.parse(
+      sessionStorage.getItem(key(accountId, tokenId)) ?? "null",
+    ) as Verification | null;
   } catch {
     return null;
   }

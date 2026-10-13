@@ -3,17 +3,16 @@ import { MINT_STORAGE_ALLOWANCE } from "../lib/contract.ts";
 import { formatNear, parseNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
 
-/** What one chat message costs, for the "about N messages" hint. */
-const CHAT_PRICE = 2n * 10n ** 21n;
-
 export interface MintPanelProps {
   mintPrice: bigint;
+  /** What the keeper charges per message, for the "up to N messages" hint. */
+  chatPrice: bigint;
   /** Null while no wallet is connected. */
   onMint: ((startingBalance: bigint) => Promise<void>) | null;
-  onConnect: () => void;
+  onConnect: () => Promise<void>;
 }
 
-export function MintPanel({ mintPrice, onMint, onConnect }: MintPanelProps) {
+export function MintPanel({ mintPrice, chatPrice, onMint, onConnect }: MintPanelProps) {
   const [amount, setAmount] = useState("1");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -71,7 +70,7 @@ export function MintPanel({ mintPrice, onMint, onConnect }: MintPanelProps) {
       <p id="starting-balance-hint" className="mt-2 text-sm text-mist">
         {startingBalance === null
           ? "Enter an amount in NEAR, like 1 or 0.5."
-          : `Pays for about ${startingBalance / CHAT_PRICE} messages. It stays with the kat, even if you give it away.`}
+          : `Enough for up to ${chatPrice > 0n ? startingBalance / chatPrice : 0n} messages. Long conversations also pay for memory saves. It stays with the kat, even if you give it away.`}
       </p>
       <div className="mt-5 flex items-baseline justify-between border-t border-cream/15 pt-4">
         <span className="text-mist">You pay</span>
@@ -84,7 +83,14 @@ export function MintPanel({ mintPrice, onMint, onConnect }: MintPanelProps) {
           {busy ? "Minting…" : "Mint a kat"}
         </button>
       ) : (
-        <button type="button" className="button mt-5 w-full" onClick={onConnect}>
+        <button
+          type="button"
+          className="button mt-5 w-full"
+          onClick={() => {
+            setProblem(null);
+            onConnect().catch((error) => setProblem(describeProblem(error)));
+          }}
+        >
           Connect wallet to mint
         </button>
       )}

@@ -1,18 +1,29 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
+import { formatNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
 
 const MAX_CHARS = 4000;
 
 export interface PersonalityEditorProps {
   personality: string;
+  /** What the keeper charges per save, in yoctoNEAR. */
+  savePrice: bigint;
   save: (prompt: string) => Promise<void>;
 }
 
-export function PersonalityEditor({ personality, save }: PersonalityEditorProps) {
+export function PersonalityEditor({ personality, savePrice, save }: PersonalityEditorProps) {
   const [draft, setDraft] = useState(personality);
   const [saved, setSaved] = useState(personality);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [problem, setProblem] = useState<string | null>(null);
+  // The stored personality can change underneath (a reload after a memory
+  // save). Follow it, unless the owner is in the middle of editing.
+  useEffect(() => {
+    setSaved((before) => {
+      setDraft((current) => (current === before ? personality : current));
+      return personality;
+    });
+  }, [personality]);
   const changed = draft !== saved;
   const valid = draft.trim().length > 0 && draft.length <= MAX_CHARS;
 
@@ -66,7 +77,7 @@ export function PersonalityEditor({ personality, save }: PersonalityEditorProps)
       <p className="mt-2 text-sm text-mist" aria-live="polite">
         {state === "saved" && !changed
           ? "Personality saved."
-          : "Saving costs 0.05 NEAR from the kat's balance."}
+          : `Saving costs ${formatNear(savePrice)} NEAR from the kat's balance.`}
       </p>
       {problem && (
         <p role="alert" className="mt-2 text-sm text-alarm">

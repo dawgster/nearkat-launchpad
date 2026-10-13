@@ -43,6 +43,17 @@ with `cargo near build non-reproducible-wasm` in `../contract`, and a browser:
 
 ## Notes
 
+- The dev wallet (`VITE_DEV_WALLET_*`) works only on the development server.
+  A build refuses to run while the key is set, because Vite would copy it
+  into the public bundle.
+- A production build needs `VITE_KEEPER_URL`.
+- Wallets come from NEAR Connect's hosted list, minus MyNearWallet, which is
+  deprecated. None has been tried by hand yet; do that on testnet before
+  mainnet. Pinning that list and adding a content security policy are still
+  to do.
+- The app only ever asks a wallet to sign the fixed sign-in message for the
+  configured recipient, with a nonce from the keeper.
+
 - Kat portraits are a placeholder badge until the artwork exists; see
   `src/components/KatBadge.tsx`.
 - The keeper reads finalized blocks, so it trails the chain by a few seconds.

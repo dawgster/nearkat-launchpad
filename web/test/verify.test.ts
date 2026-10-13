@@ -32,9 +32,13 @@ describe("checkSignature", () => {
     signing_algo: "ecdsa",
     signature_kind: "provider_tee",
   };
-  const reply = (signature: Verification["signature"], hashes = ["req", "res"]): Verification => ({
+  const reply = (
+    signature: Verification["signature"],
+    hashes = ["req", "res"],
+    model = "m",
+  ): Verification => ({
     chat_id: "chat-1",
-    model: "m",
+    model,
     request_hash: hashes[0] as string,
     response_hash: hashes[1] as string,
     signature,
@@ -61,7 +65,7 @@ describe("checkSignature", () => {
       signing_algo: "ecdsa",
       signature_kind: "provider_tee",
     };
-    expect(checkSignature(reply(live, [requestHash, responseHash]))).toEqual({
+    expect(checkSignature(reply(live, [requestHash, responseHash], "z-ai/glm-5.3-flash"))).toEqual({
       status: "valid",
       signer: "0x3b753b4406613c5e70ae640508632b600424fa0c",
       kind: "provider_tee",
@@ -91,7 +95,7 @@ describe("checkSignature", () => {
 
   test("accepts an ed25519 signature and notes that it names this reply's hashes", () => {
     const secret = new Uint8Array(32).fill(5);
-    const text = "model:aaa:bbb";
+    const text = "aaa:bbb";
     const signed = {
       text,
       signature: Buffer.from(ed25519.sign(new TextEncoder().encode(text), secret)).toString("hex"),
@@ -108,6 +112,30 @@ describe("checkSignature", () => {
       status: "valid",
       coversReply: false,
     });
+  });
+
+  test("is not fooled by signed text that merely contains the reply's hashes", () => {
+    const secret = new Uint8Array(32).fill(5);
+    const sign = (text: string) => ({
+      text,
+      signature: Buffer.from(ed25519.sign(new TextEncoder().encode(text), secret)).toString("hex"),
+      signing_address: Buffer.from(ed25519.getPublicKey(secret)).toString("hex"),
+      signing_algo: "ed25519",
+      signature_kind: "provider_tee",
+    });
+    expect(checkSignature(reply(sign("m:aaa:bbb"), ["aaa", "bbb"]))).toMatchObject({
+      coversReply: true,
+    });
+    for (const text of ["other-model:aaa:bbb", "m:aaa:bbb:extra", "junk aaa junk bbb", "aaa:bbb"]) {
+      expect(checkSignature(reply(sign(text), ["aaa", "bbb"]))).toMatchObject({
+        status: "valid",
+        coversReply: false,
+      });
+    }
+    // A gateway signature has no model in front.
+    expect(
+      checkSignature(reply({ ...sign("aaa:bbb"), signature_kind: "gateway" }, ["aaa", "bbb"])),
+    ).toMatchObject({ coversReply: true });
   });
 
   test("reports a missing signature and an algorithm it does not know", () => {

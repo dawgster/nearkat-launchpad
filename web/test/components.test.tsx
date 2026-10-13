@@ -7,8 +7,11 @@ import { GiveAwayPanel } from "../src/components/GiveAwayPanel.tsx";
 import { MintPanel } from "../src/components/MintPanel.tsx";
 import { PersonalityEditor } from "../src/components/PersonalityEditor.tsx";
 import { type ChatReply, KeeperError } from "../src/lib/keeper.ts";
+import { WalletError } from "../src/wallet/errors.ts";
 
 const NEAR = 10n ** 24n;
+const CHAT = 2n * 10n ** 21n;
+const SAVE = 5n * 10n ** 22n;
 const reply = (text: string, balance = "5"): ChatReply => ({
   reply: text,
   balance,
@@ -24,9 +27,12 @@ const reply = (text: string, balance = "5"): ChatReply => ({
 describe("MintPanel", () => {
   test("adds the mint price, storage allowance and starting balance", async () => {
     const onMint = vi.fn(async () => {});
-    render(<MintPanel mintPrice={NEAR} onMint={onMint} onConnect={() => {}} />);
+    render(
+      <MintPanel mintPrice={NEAR} chatPrice={CHAT} onMint={onMint} onConnect={async () => {}} />,
+    );
     expect(screen.getByText("2.02 NEAR")).toBeTruthy();
-    expect(screen.getByText(/about 500 messages/)).toBeTruthy();
+    expect(screen.getByText(/up to 500 messages/)).toBeTruthy();
+    expect(screen.getByText(/memory saves/)).toBeTruthy();
 
     const input = screen.getByLabelText("Starting balance");
     await userEvent.clear(input);
@@ -38,7 +44,9 @@ describe("MintPanel", () => {
 
   test("blocks minting and explains when the amount is not a number", async () => {
     const onMint = vi.fn(async () => {});
-    render(<MintPanel mintPrice={NEAR} onMint={onMint} onConnect={() => {}} />);
+    render(
+      <MintPanel mintPrice={NEAR} chatPrice={CHAT} onMint={onMint} onConnect={async () => {}} />,
+    );
     const input = screen.getByLabelText("Starting balance");
     await userEvent.clear(input);
     await userEvent.type(input, "lots");
@@ -47,19 +55,21 @@ describe("MintPanel", () => {
   });
 
   test("offers to connect a wallet instead when none is connected", async () => {
-    const onConnect = vi.fn();
-    render(<MintPanel mintPrice={NEAR} onMint={null} onConnect={onConnect} />);
+    const onConnect = vi.fn(async () => {});
+    render(<MintPanel mintPrice={NEAR} chatPrice={CHAT} onMint={null} onConnect={onConnect} />);
     await userEvent.click(screen.getByRole("button", { name: "Connect wallet to mint" }));
     expect(onConnect).toHaveBeenCalled();
   });
 
-  test("says what went wrong when the wallet request is cancelled", async () => {
+  test("says what went wrong when the wallet does not approve", async () => {
     const onMint = vi.fn(async () => {
-      throw new Error("User rejected the request");
+      throw new WalletError("User rejected the request");
     });
-    render(<MintPanel mintPrice={NEAR} onMint={onMint} onConnect={() => {}} />);
+    render(
+      <MintPanel mintPrice={NEAR} chatPrice={CHAT} onMint={onMint} onConnect={async () => {}} />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Mint a kat" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/cancelled the request/);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/didn't approve the request/);
     expect(screen.getByRole("button", { name: "Mint a kat" })).toHaveProperty("disabled", false);
   });
 });
@@ -69,7 +79,13 @@ describe("Chat", () => {
     const onReply = vi.fn();
     const onOutOfBalance = vi.fn();
     render(
-      <Chat katName="Nearkat #1" send={send} onReply={onReply} onOutOfBalance={onOutOfBalance} />,
+      <Chat
+        katName="Nearkat #1"
+        chatPrice={CHAT}
+        send={send}
+        onReply={onReply}
+        onOutOfBalance={onOutOfBalance}
+      />,
     );
     return { onReply, onOutOfBalance, box: screen.getByLabelText("Message to Nearkat #1") };
   }
@@ -127,7 +143,7 @@ describe("Chat", () => {
 describe("PersonalityEditor", () => {
   test("saves a changed personality and confirms it", async () => {
     const save = vi.fn(async () => {});
-    render(<PersonalityEditor personality="curious" save={save} />);
+    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={save} />);
     const button = screen.getByRole("button", { name: "Save personality" });
     expect(button).toHaveProperty("disabled", true);
 
@@ -142,7 +158,7 @@ describe("PersonalityEditor", () => {
   });
 
   test("will not save an empty or over-long personality", async () => {
-    render(<PersonalityEditor personality="curious" save={async () => {}} />);
+    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />);
     const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
     const button = screen.getByRole("button", { name: "Save personality" });
     await userEvent.clear(box);
@@ -157,12 +173,55 @@ describe("PersonalityEditor", () => {
     const save = vi.fn(async () => {
       throw new KeeperError(402, "insufficient_balance", "needs more");
     });
-    render(<PersonalityEditor personality="curious" save={save} />);
+    render(<PersonalityEditor personality="curious" savePrice={SAVE} save={save} />);
     const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
     await userEvent.type(box, " and bold");
     await userEvent.click(screen.getByRole("button", { name: "Save personality" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/out of NEAR/);
     expect(box.value).toBe("curious and bold");
+  });
+});
+
+describe("PersonalityEditor while the kat's mind changes underneath it", () => {
+  test("keeps an unsaved draft when the stored personality is reloaded", async () => {
+    const { rerender } = render(
+      <PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />,
+    );
+    const box = screen.getByLabelText("Personality") as HTMLTextAreaElement;
+    await userEvent.type(box, " and bold");
+    rerender(<PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />);
+    expect(box.value).toBe("curious and bold");
+  });
+
+  test("follows the stored personality when there is no unsaved draft", () => {
+    const { rerender } = render(
+      <PersonalityEditor personality="curious" savePrice={SAVE} save={async () => {}} />,
+    );
+    rerender(<PersonalityEditor personality="grumpy" savePrice={SAVE} save={async () => {}} />);
+    expect((screen.getByLabelText("Personality") as HTMLTextAreaElement).value).toBe("grumpy");
+  });
+
+  test("quotes the save price it was given", () => {
+    render(<PersonalityEditor personality="curious" savePrice={NEAR / 4n} save={async () => {}} />);
+    expect(screen.getByText(/Saving costs 0.25 NEAR/)).toBeTruthy();
+  });
+});
+
+describe("Chat keyboard handling", () => {
+  test("keeps the cursor in the message box after a reply", async () => {
+    render(
+      <Chat
+        katName="Nearkat #1"
+        chatPrice={CHAT}
+        send={async () => reply("ok")}
+        onReply={() => {}}
+        onOutOfBalance={() => {}}
+      />,
+    );
+    const box = screen.getByLabelText("Message to Nearkat #1");
+    await userEvent.type(box, "hello{Enter}");
+    await screen.findByText("ok");
+    expect(document.activeElement).toBe(box);
   });
 });
 
@@ -190,46 +249,99 @@ describe("FundPanel", () => {
 });
 
 describe("GiveAwayPanel", () => {
-  test("asks for confirmation before giving the kat away", async () => {
+  function setup(
+    options: { exists?: (id: string) => Promise<boolean>; network?: "mainnet" | "testnet" } = {},
+  ) {
     const give = vi.fn(async () => {});
-    render(<GiveAwayPanel katName="Nearkat #1" give={give} />);
-    await userEvent.type(screen.getByLabelText("Account to give Nearkat #1 to"), "bob.near");
-    await userEvent.click(screen.getByRole("button", { name: "Give Nearkat #1 away" }));
+    render(
+      <GiveAwayPanel
+        katName="Nearkat #1"
+        ownerId="alice.near"
+        network={options.network ?? "mainnet"}
+        accountExists={options.exists ?? (async () => true)}
+        give={give}
+      />,
+    );
+    const box = screen.getByLabelText("Account to give Nearkat #1 to");
+    const next = () =>
+      userEvent.click(screen.getByRole("button", { name: "Give Nearkat #1 away" }));
+    return { give, box, next };
+  }
+
+  test("asks for confirmation before giving the kat away", async () => {
+    const { give, box, next } = setup();
+    await userEvent.type(box, "bob.near");
+    await next();
     expect(give).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Yes, give Nearkat #1 to bob.near" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Yes, give Nearkat #1 to bob.near" }),
+    );
     expect(give).toHaveBeenCalledWith("bob.near");
   });
 
   test("lets the owner back out at the confirmation step", async () => {
-    const give = vi.fn(async () => {});
-    render(<GiveAwayPanel katName="Nearkat #1" give={give} />);
-    await userEvent.type(screen.getByLabelText("Account to give Nearkat #1 to"), "bob.near");
-    await userEvent.click(screen.getByRole("button", { name: "Give Nearkat #1 away" }));
-    await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
+    const { give, box, next } = setup();
+    await userEvent.type(box, "bob.near");
+    await next();
+    await userEvent.click(await screen.findByRole("button", { name: "Keep it" }));
     expect(screen.getByRole("button", { name: "Give Nearkat #1 away" })).toBeTruthy();
     expect(give).not.toHaveBeenCalled();
   });
 
-  test.each(["", "B", "Bob.near", "bob..near", "bob near", "a".repeat(65)])(
-    "will not give to the invalid account %j",
-    async (account) => {
-      render(<GiveAwayPanel katName="Nearkat #1" give={async () => {}} />);
-      if (account) {
-        await userEvent.type(screen.getByLabelText("Account to give Nearkat #1 to"), account);
-      }
-      expect(screen.getByRole("button", { name: "Give Nearkat #1 away" })).toHaveProperty(
-        "disabled",
-        true,
-      );
-    },
-  );
+  test("refuses a named account that does not exist, so a typo cannot lose the kat", async () => {
+    const { give, box, next } = setup({ exists: async () => false });
+    await userEvent.type(box, "friend.nearr");
+    await next();
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /friend\.nearr doesn't exist on NEAR/,
+    );
+    expect(screen.queryByRole("button", { name: /^Yes, give/ })).toBeNull();
+    expect(give).not.toHaveBeenCalled();
+  });
 
-  test("accepts an implicit 64-character account", async () => {
-    render(<GiveAwayPanel katName="Nearkat #1" give={async () => {}} />);
-    await userEvent.type(screen.getByLabelText("Account to give Nearkat #1 to"), "a1".repeat(32));
+  test("warns, but allows, an unused implicit address", async () => {
+    const { box, next } = setup({ exists: async () => false });
+    await userEvent.type(box, "a1".repeat(32));
+    await next();
+    expect(await screen.findByText(/hasn't been used yet/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Yes, give Nearkat #1 to/ })).toBeTruthy();
+  });
+
+  test("does not proceed when the account could not be looked up", async () => {
+    const { box, next } = setup({
+      exists: async () => {
+        throw new Error("rpc down");
+      },
+    });
+    await userEvent.type(box, "bob.near");
+    await next();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Couldn't check/);
+    expect(screen.queryByRole("button", { name: /^Yes, give/ })).toBeNull();
+  });
+
+  test.each([
+    ["alice.near", "mainnet", /your own account/],
+    ["bob.testnet", "mainnet", /testnet account/],
+    ["bob.near", "testnet", /mainnet account/],
+    ["Bob.near", "mainnet", /isn't a valid NEAR account/],
+    ["bob..near", "mainnet", /isn't a valid NEAR account/],
+    ["a".repeat(65), "mainnet", /isn't a valid NEAR account/],
+  ] as const)("explains why %j cannot receive the kat on %s", async (account, network, reason) => {
+    const { box } = setup({ network });
+    await userEvent.type(box, account);
+    expect(screen.getByText(reason)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Give Nearkat #1 away" })).toHaveProperty(
       "disabled",
-      false,
+      true,
+    );
+  });
+
+  test("says nothing and stays disabled while the box is empty", () => {
+    setup();
+    expect(screen.queryByText(/isn't a valid/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Give Nearkat #1 away" })).toHaveProperty(
+      "disabled",
+      true,
     );
   });
 });

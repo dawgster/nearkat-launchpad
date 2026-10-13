@@ -13,11 +13,15 @@ function WalletButton() {
   }
   if (wallet.status === "connected" && wallet.accountId) {
     return (
-      <div className="flex items-center gap-3">
-        <span className="font-mono text-sm text-cream" title={wallet.accountId}>
-          {shorten(wallet.accountId, 10)}
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="truncate font-mono text-sm text-cream" title={wallet.accountId}>
+          {shorten(wallet.accountId, 8)}
         </span>
-        <button type="button" className="button button-quiet" onClick={() => wallet.disconnect()}>
+        <button
+          type="button"
+          className="button button-quiet shrink-0"
+          onClick={() => void wallet.disconnect().catch(() => undefined)}
+        >
           Disconnect
         </button>
       </div>
@@ -47,9 +51,9 @@ function WalletButton() {
 /** The frame around every page. `world` picks the surface or the burrow backdrop. */
 export function Shell({ world, children }: { world: "surface" | "burrow"; children: ReactNode }) {
   return (
-    <div className={`${world} relative isolate min-h-dvh overflow-hidden`}>
+    <div className={`${world} relative isolate min-h-dvh overflow-x-clip`}>
       {world === "surface" && <Horizon />}
-      <header className="relative mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-5">
+      <header className="relative mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-5">
         <Link to="/" className="font-display text-xl text-cream">
           Nearkat burrow
         </Link>

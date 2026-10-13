@@ -37,7 +37,7 @@ export function FundPanel({ balance, urgent, fund }: FundPanelProps) {
       onSubmit={submit}
       className={urgent ? "rounded-lg outline outline-2 outline-offset-8 outline-lamp" : undefined}
     >
-      <h3 className="text-lg font-bold">Balance</h3>
+      <h2 className="font-sans text-lg font-bold">Balance</h2>
       <p className="mt-1">
         <span className="text-2xl font-bold">{formatNear(balance)}</span> NEAR
       </p>
@@ -60,6 +60,9 @@ export function FundPanel({ balance, urgent, fund }: FundPanelProps) {
           {busy ? "Adding…" : "Add NEAR"}
         </button>
       </div>
+      {!valid && amount.trim() !== "" && (
+        <p className="mt-2 text-sm text-mist">Enter an amount in NEAR, like 1 or 0.5.</p>
+      )}
       {problem && (
         <p role="alert" className="mt-2 text-sm text-alarm">
           {problem}

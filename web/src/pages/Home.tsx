@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { KatBadge } from "../components/KatBadge.tsx";
 import { MintPanel } from "../components/MintPanel.tsx";
@@ -9,24 +10,27 @@ import { useWallet } from "../wallet/WalletProvider.tsx";
 
 export function Home() {
   const wallet = useWallet();
-  const { contract, signer } = useServices();
+  const { contract, signer, prices } = useServices();
   const navigate = useNavigate();
   const [config] = useAsync("config", () => contract.getConfig());
   const [kats, reloadKats] = useAsync(wallet.accountId, () =>
     contract.katsOf(wallet.accountId as string),
   );
+  const [minted, setMinted] = useState(false);
 
   async function mint(mintPrice: bigint, startingBalance: bigint) {
-    if (!signer || !wallet.accountId) {
+    if (!signer) {
       return;
     }
-    const before = await contract.katsOf(wallet.accountId);
-    await signer.mint(mintPrice, startingBalance);
-    const after = await contract.katsOf(wallet.accountId);
-    await reloadKats();
-    const minted = after.find((id) => !before.includes(id));
-    if (minted) {
-      navigate(`/kat/${minted}`);
+    // The id comes from the mint itself, so a slow or failed follow-up read
+    // can never make a successful mint look like a failed one.
+    const tokenId = await signer.mint(mintPrice, startingBalance);
+    void reloadKats();
+    if (tokenId) {
+      navigate(`/kat/${tokenId}`);
+    } else {
+      // Some wallets do not hand the result back. The mint still happened.
+      setMinted(true);
     }
   }
 
@@ -34,7 +38,7 @@ export function Home() {
     <Shell world="surface">
       <div className="grid gap-12 pt-10 lg:grid-cols-[1.25fr_1fr] lg:items-start lg:pt-20">
         <div>
-          <h1 className="text-5xl leading-[1.02] sm:text-7xl">
+          <h1 className="text-[2.6rem] leading-[1.02] sm:text-7xl">
             Raise a kat.
             <br />
             Give it away.
@@ -48,11 +52,19 @@ export function Home() {
           </p>
         </div>
         {config.status === "ready" ? (
-          <MintPanel
-            mintPrice={BigInt(config.data.mint_price)}
-            onMint={signer ? (balance) => mint(BigInt(config.data.mint_price), balance) : null}
-            onConnect={() => void wallet.connect().catch(() => undefined)}
-          />
+          <div>
+            <MintPanel
+              mintPrice={BigInt(config.data.mint_price)}
+              chatPrice={prices.chat}
+              onMint={signer ? (balance) => mint(BigInt(config.data.mint_price), balance) : null}
+              onConnect={wallet.connect}
+            />
+            {minted && (
+              <p className="mt-3 text-sm text-glow" role="status">
+                Minted. Your new kat is under "Your mob" below.
+              </p>
+            )}
+          </div>
         ) : (
           <p className="rounded-xl border border-cream/15 bg-dusk/80 p-6 text-mist" role="status">
             {config.status === "loading"
@@ -81,7 +93,7 @@ export function Home() {
               {kats.data.map((id) => (
                 <li key={id}>
                   <Link to={`/kat/${id}`} className="group flex items-center gap-3">
-                    <KatBadge tokenId={id} />
+                    <KatBadge tokenId={id} decorative />
                     <span className="font-bold group-hover:text-glow">Nearkat #{id}</span>
                   </Link>
                 </li>

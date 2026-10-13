@@ -1,4 +1,5 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { formatNear } from "../lib/format.ts";
 import { type ChatReply, KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 
@@ -9,6 +10,8 @@ interface Line {
 
 export interface ChatProps {
   katName: string;
+  /** What the keeper charges per message, in yoctoNEAR. */
+  chatPrice: bigint;
   send: (message: string) => Promise<ChatReply>;
   /** Called after each reply, with the kat's new balance and the proof for that reply. */
   onReply: (reply: ChatReply) => void;
@@ -18,12 +21,13 @@ export interface ChatProps {
 
 const MAX_CHARS = 4000;
 
-export function Chat({ katName, send, onReply, onOutOfBalance }: ChatProps) {
+export function Chat({ katName, chatPrice, send, onReply, onOutOfBalance }: ChatProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll whenever the conversation grows.
   useEffect(() => {
@@ -54,11 +58,14 @@ export function Chat({ katName, send, onReply, onOutOfBalance }: ChatProps) {
       }
     } finally {
       setThinking(false);
+      // Back to the box, so the next message can be typed straight away.
+      box.current?.focus();
     }
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Enter while composing (Japanese, Chinese, Korean input) picks a candidate; it must not send.
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void submit();
     }
@@ -69,7 +76,8 @@ export function Chat({ katName, send, onReply, onOutOfBalance }: ChatProps) {
       <div className="flex-1 space-y-5 overflow-y-auto pr-1" aria-live="polite">
         {lines.length === 0 && !thinking && (
           <p className="max-w-prose text-mist">
-            Say something to {katName}. Each message costs 0.002 NEAR from its balance.
+            Say something to {katName}. Each message costs {formatNear(chatPrice)} NEAR from its
+            balance.
           </p>
         )}
         {lines.map((line, index) => (
@@ -99,6 +107,7 @@ export function Chat({ katName, send, onReply, onOutOfBalance }: ChatProps) {
         </label>
         <textarea
           id="chat-message"
+          ref={box}
           className="field min-h-[3rem] flex-1 resize-y"
           rows={2}
           maxLength={MAX_CHARS}
@@ -106,7 +115,8 @@ export function Chat({ katName, send, onReply, onOutOfBalance }: ChatProps) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          disabled={thinking}
+          // Read-only, not disabled, while waiting: a disabled field loses keyboard focus.
+          readOnly={thinking}
         />
         <button type="submit" className="button button-lamp" disabled={thinking || !draft.trim()}>
           Send

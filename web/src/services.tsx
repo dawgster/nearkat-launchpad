@@ -1,14 +1,28 @@
 import { Near } from "near-kit";
-import { createContext, type ReactNode, useContext, useMemo } from "react";
-import type { AppConfig } from "./lib/config.ts";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { type AppConfig, nearNetwork } from "./lib/config.ts";
 import { KatContract } from "./lib/contract.ts";
 import { createKeeper, type Keeper } from "./lib/keeper.ts";
 import { KeeperSession } from "./lib/session.ts";
 import { useWallet } from "./wallet/WalletProvider.tsx";
 
+/** The only sign-in message this app will ask a wallet to sign. */
+const SIGN_IN_MESSAGE = "Sign in to Nearkat";
+
+export interface Prices {
+  /** yoctoNEAR per chat message. */
+  chat: bigint;
+  /** yoctoNEAR per saved personality or memory. */
+  save: bigint;
+}
+
+/** Shown until the keeper reports its own prices. */
+const USUAL_PRICES: Prices = { chat: 2n * 10n ** 21n, save: 5n * 10n ** 22n };
+
 export interface Services {
   config: AppConfig;
   keeper: Keeper;
+  prices: Prices;
   /** Reads the contract without a wallet. */
   contract: KatContract;
   /** Sends transactions as the connected account. Null while disconnected. */
@@ -20,30 +34,46 @@ export interface Services {
 const ServicesContext = createContext<Services | null>(null);
 
 export function ServicesProvider({ config, children }: { config: AppConfig; children: ReactNode }) {
-  const wallet = useWallet();
+  const { near, accountId, signMessage } = useWallet();
   const base = useMemo(
     () => ({
       config,
       keeper: createKeeper(config.keeperUrl),
-      contract: new KatContract(new Near({ network: config.network }), config.contractId),
+      contract: new KatContract(new Near({ network: nearNetwork(config) }), config.contractId),
     }),
     [config],
   );
-  const { near, accountId } = wallet;
+  const [prices, setPrices] = useState(USUAL_PRICES);
+  useEffect(() => {
+    let current = true;
+    base.keeper.info().then(
+      (info) =>
+        current && setPrices({ chat: BigInt(info.chat_price), save: BigInt(info.save_price) }),
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [base]);
+
   const services = useMemo<Services>(() => {
-    if (!near || !accountId) {
-      return { ...base, signer: null, session: null };
+    if (!near || !accountId || !signMessage) {
+      return { ...base, prices, signer: null, session: null };
     }
     return {
       ...base,
+      prices,
       signer: new KatContract(near, config.contractId),
       session: new KeeperSession({
         keeper: base.keeper,
         accountId,
-        signMessage: (params) => near.signMessage(params),
+        signMessage,
+        expect: { message: SIGN_IN_MESSAGE, recipient: config.authRecipient },
+        // Web wallets sign over the page they return to; the keeper checks it is ours.
+        callbackUrl: window.location.origin,
       }),
     };
-  }, [base, near, accountId, config.contractId]);
+  }, [base, prices, near, accountId, signMessage, config]);
   return <ServicesContext.Provider value={services}>{children}</ServicesContext.Provider>;
 }
 

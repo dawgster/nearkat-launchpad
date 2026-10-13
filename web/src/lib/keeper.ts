@@ -57,10 +57,19 @@ export class KeeperError extends Error {
   }
 }
 
+/** What the keeper charges, in yoctoNEAR, and which model it runs. */
+export interface KeeperInfo {
+  chat_price: string;
+  save_price: string;
+  model: string;
+}
+
 export interface Keeper {
+  info(): Promise<KeeperInfo>;
   attestation(): Promise<Record<string, unknown>>;
   challenge(): Promise<{ nonce: string; message: string; recipient: string }>;
-  createSession(nonce: string, signed: SignedMessage): Promise<Session>;
+  /** `callbackUrl` is the page URL given to the wallet, which web wallets sign over. */
+  createSession(nonce: string, signed: SignedMessage, callbackUrl?: string): Promise<Session>;
   getContext(token: string, tokenId: string): Promise<ContextDoc>;
   setPersonality(token: string, tokenId: string, prompt: string): Promise<ContextDoc>;
   chat(token: string, tokenId: string, message: string): Promise<ChatReply>;
@@ -100,10 +109,13 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
 
   const kat = (tokenId: string) => `/kats/${encodeURIComponent(tokenId)}`;
   return {
+    info: () => request("GET", "/info"),
     attestation: () => request("GET", "/attestation"),
     challenge: () => request("POST", "/auth/challenge"),
-    createSession: (nonce, signed) =>
-      request("POST", "/auth/session", { body: { nonce, signed_message: signed } }),
+    createSession: (nonce, signed, callbackUrl) =>
+      request("POST", "/auth/session", {
+        body: { nonce, signed_message: signed, callback_url: callbackUrl },
+      }),
     getContext: (token, tokenId) => request("GET", `${kat(tokenId)}/context`, { token }),
     setPersonality: (token, tokenId, prompt) =>
       request("PUT", `${kat(tokenId)}/personality`, { token, body: { prompt } }),

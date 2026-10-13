@@ -41,7 +41,8 @@ test("an owner mints a kat, shapes it, talks to it, and gives it away", async ({
   const row = (title: string) => page.getByRole("listitem").filter({ hasText: title });
   await expect(row("Its mind is recorded on-chain")).toContainText("Checked");
   await expect(row("What you see is what's recorded")).toContainText("matches the contract");
-  await expect(row("The keeper is the one the contract trusts")).toContainText("Checked");
+  // Holding the reported key is necessary but not sufficient, so this is never a full pass.
+  await expect(row("The keeper is the one the contract trusts")).toContainText("Partly checked");
   await expect(row("Nobody but the owner can read its mind")).toContainText("local mode");
   await shot(page, "3-verify");
 

@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import { type Keeper, KeeperError } from "../src/lib/keeper.ts";
-import { KeeperSession, type SignMessage } from "../src/lib/session.ts";
+import {
+  forgetSessions,
+  KeeperSession,
+  type SignMessage,
+  WalletAccountChanged,
+} from "../src/lib/session.ts";
 
 function setup() {
   let now = 1_000_000;
@@ -11,9 +16,9 @@ function setup() {
       message: "Sign in",
       recipient: "r",
     })),
-    createSession: vi.fn(async () => {
+    createSession: vi.fn(async (_nonce: string, signed: { accountId: string }) => {
       issued += 1;
-      return { token: `token-${issued}`, account_id: "alice.near", expires_at: now + 900_000 };
+      return { token: `token-${issued}`, account_id: signed.accountId, expires_at: now + 900_000 };
     }),
   } as unknown as Keeper;
   const signMessage = vi.fn<SignMessage>(async () => ({
@@ -22,7 +27,14 @@ function setup() {
     signature: "sig",
   }));
   const make = (accountId = "alice.near") =>
-    new KeeperSession({ keeper, accountId, signMessage, now: () => now });
+    new KeeperSession({
+      keeper,
+      accountId,
+      signMessage,
+      now: () => now,
+      expect: { message: "Sign in", recipient: "r" },
+      callbackUrl: "https://app.example/kat/1",
+    });
   return { keeper, signMessage, make, session: make(), advance: (ms: number) => (now += ms) };
 }
 
@@ -34,12 +46,13 @@ describe("KeeperSession", () => {
       message: "Sign in",
       recipient: "r",
       nonce: Uint8Array.from("n".repeat(32), (char) => char.charCodeAt(0)),
+      callbackUrl: "https://app.example/kat/1",
     });
-    expect(keeper.createSession).toHaveBeenCalledWith(btoa("n".repeat(32)), {
-      accountId: "alice.near",
-      publicKey: "ed25519:pk",
-      signature: "sig",
-    });
+    expect(keeper.createSession).toHaveBeenCalledWith(
+      btoa("n".repeat(32)),
+      { accountId: "alice.near", publicKey: "ed25519:pk", signature: "sig" },
+      "https://app.example/kat/1",
+    );
   });
 
   test("asks the wallet once and reuses the token afterwards", async () => {
@@ -100,6 +113,11 @@ describe("KeeperSession", () => {
   test("keeps each account's token separate", async () => {
     const { make, signMessage } = setup();
     await make("alice.near").call(async () => 1);
+    signMessage.mockResolvedValueOnce({
+      accountId: "bob.near",
+      publicKey: "ed25519:pk",
+      signature: "sig",
+    });
     expect(await make("bob.near").call(async (token) => token)).toBe("token-2");
     expect(signMessage).toHaveBeenCalledTimes(2);
   });
@@ -109,5 +127,47 @@ describe("KeeperSession", () => {
     signMessage.mockRejectedValueOnce(new Error("User rejected"));
     await expect(session.call(async () => 1)).rejects.toThrow("User rejected");
     expect(await session.call(async (token) => token)).toBe("token-1");
+  });
+
+  test("asks the wallet only once when the keeper rejects the sign-in itself", async () => {
+    const { session, keeper, signMessage } = setup();
+    vi.mocked(keeper.createSession).mockRejectedValue(
+      new KeeperError(401, "invalid_signature", "no"),
+    );
+    await expect(session.call(async () => 1)).rejects.toMatchObject({ code: "invalid_signature" });
+    expect(signMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ["message", { nonce: btoa("n".repeat(32)), message: "Approve transfer", recipient: "r" }],
+    ["recipient", { nonce: btoa("n".repeat(32)), message: "Sign in", recipient: "other.app" }],
+  ])("refuses to sign a challenge with an unexpected %s", async (_field, challenge) => {
+    const { session, keeper, signMessage } = setup();
+    vi.mocked(keeper.challenge).mockResolvedValue(challenge);
+    await expect(session.call(async () => 1)).rejects.toThrow(/unexpected sign-in request/);
+    expect(signMessage).not.toHaveBeenCalled();
+  });
+
+  test("refuses a signature made by a different account than the one shown", async () => {
+    const { session, signMessage, keeper } = setup();
+    signMessage.mockResolvedValue({
+      accountId: "bob.near",
+      publicKey: "ed25519:pk",
+      signature: "sig",
+    });
+    await expect(session.call(async () => 1)).rejects.toBeInstanceOf(WalletAccountChanged);
+    expect(keeper.createSession).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("nearkat.session.alice.near")).toBeNull();
+  });
+
+  test("forgets every stored session and proof on request", async () => {
+    const { session } = setup();
+    await session.call(async () => 1);
+    sessionStorage.setItem("nearkat.proof.alice.near.1", "{}");
+    sessionStorage.setItem("unrelated", "kept");
+    forgetSessions();
+    expect(sessionStorage.getItem("nearkat.session.alice.near")).toBeNull();
+    expect(sessionStorage.getItem("nearkat.proof.alice.near.1")).toBeNull();
+    expect(sessionStorage.getItem("unrelated")).toBe("kept");
   });
 });

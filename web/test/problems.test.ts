@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { KeeperError } from "../src/lib/keeper.ts";
 import { describeProblem } from "../src/lib/problems.ts";
+import { WalletAccountChanged } from "../src/lib/session.ts";
+import { WalletError } from "../src/wallet/errors.ts";
 
 describe("describeProblem", () => {
   test.each([
@@ -10,7 +12,6 @@ describe("describeProblem", () => {
     ["inference_unavailable", /Nothing was charged/],
     ["corrupted", /doesn't match its on-chain record/],
     ["invalid_signature", /approve the message/],
-    ["invalid_input", /under 4,000 characters/],
   ])("explains the keeper error %s", (code, expected) => {
     expect(describeProblem(new KeeperError(400, code, "raw"))).toMatch(expected);
   });
@@ -21,15 +22,41 @@ describe("describeProblem", () => {
     );
   });
 
-  test.each(["User rejected the request", "Request was cancelled", "Popup closed by user"])(
-    "recognises a cancelled wallet request: %s",
-    (message) => {
-      expect(describeProblem(new Error(message))).toMatch(/cancelled the request/);
-    },
-  );
+  test("explains a wallet that did not sign, without guessing what was sent", () => {
+    const message = describeProblem(new WalletError("User rejected the request"));
+    expect(message).toMatch(/wallet didn't approve/i);
+    expect(message).not.toMatch(/Nothing was sent/);
+  });
 
-  test("never returns an empty message", () => {
+  test("explains a wallet whose account changed", () => {
+    expect(describeProblem(new WalletAccountChanged("alice.near", "bob.near"))).toMatch(
+      /wallet is now on bob\.near/,
+    );
+  });
+
+  test("does not mistake an unrelated failure for a cancelled wallet request", () => {
+    expect(describeProblem(new Error("Connection closed by peer"))).toBe(
+      "Connection closed by peer",
+    );
+  });
+
+  test("tells apart input that is too long from input that is missing", () => {
+    expect(describeProblem(new KeeperError(413, "too_large", "raw"))).toMatch(/too long/);
+    expect(
+      describeProblem(new KeeperError(400, "invalid_input", "prompt must be 1 to 4000 characters")),
+    ).toBe("prompt must be 1 to 4000 characters");
+  });
+
+  test("explains a keeper that does not know the kat", () => {
+    expect(describeProblem(new KeeperError(404, "not_found", "raw"))).toMatch(
+      /keeper doesn't know this kat/,
+    );
+  });
+
+  test("never returns an empty or meaningless message", () => {
     expect(describeProblem(new Error(""))).toMatch(/Something went wrong/);
     expect(describeProblem("plain string")).toBe("plain string");
+    expect(describeProblem({ code: 4001 })).toMatch(/Something went wrong/);
+    expect(describeProblem(undefined)).toMatch(/Something went wrong/);
   });
 });

@@ -4,12 +4,22 @@ const RIMS = ["var(--color-glow)", "var(--color-lamp)", "var(--color-clay)", "va
  * Stands in for a kat's portrait until the artwork exists: the mouth of its
  * burrow, with its number, rimmed in one of four colours chosen by its id.
  */
-export function KatBadge({ tokenId, size = 72 }: { tokenId: string; size?: number }) {
+export function KatBadge({
+  tokenId,
+  size = 72,
+  decorative = false,
+}: {
+  tokenId: string;
+  size?: number;
+  /** Set when text right next to the badge already names the kat. */
+  decorative?: boolean;
+}) {
   const rim = RIMS[Number(tokenId) % RIMS.length] ?? RIMS[0];
   return (
     <span
-      role="img"
-      aria-label={`Nearkat ${tokenId}`}
+      {...(decorative
+        ? { "aria-hidden": true }
+        : { role: "img", "aria-label": `Nearkat ${tokenId}` })}
       className="inline-grid shrink-0 place-items-center rounded-full font-display text-cream"
       style={{
         width: size,

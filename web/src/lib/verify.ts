@@ -31,6 +31,9 @@ export function contextHash(doc: ContextDoc): string {
     memory_summary: doc.memory_summary,
   });
   const salt = fromBase64(doc.salt);
+  if (salt.length !== 32) {
+    throw new Error("A context salt must be 32 bytes");
+  }
   const input = new Uint8Array(salt.length + utf8(canonical).length);
   input.set(salt);
   input.set(utf8(canonical), salt.length);
@@ -45,7 +48,7 @@ export type SignatureCheck =
   | { status: "invalid" }
   /**
    * Signed by `signer`. `coversReply` says whether the signed text names this
-   * reply's request and response hashes.
+   * reply's request and response hashes and nothing else.
    */
   | { status: "valid"; signer: string; kind: string; coversReply: boolean };
 
@@ -78,8 +81,11 @@ export function checkSignature(verification: Verification): SignatureCheck {
   if (!info) {
     return { status: "missing" };
   }
+  // The signed text must be exactly this reply's hashes, with the model id in
+  // front when the model's own enclave signed. Merely containing them is not enough.
+  const hashes = `${verification.request_hash}:${verification.response_hash}`;
   const coversReply =
-    info.text.includes(verification.request_hash) && info.text.includes(verification.response_hash);
+    info.text === (info.signature_kind === "gateway" ? hashes : `${verification.model}:${hashes}`);
   try {
     if (info.signing_algo === "ecdsa") {
       const signer = recoverEthereumSigner(info.text, info.signature);
