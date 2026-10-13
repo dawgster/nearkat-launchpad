@@ -68,3 +68,33 @@ fn get_kat_returns_none_for_unknown_id() {
     let c = deploy();
     assert!(c.get_kat("99".to_string()).is_none());
 }
+
+#[test]
+fn fund_adds_to_balance_from_any_account() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    let before = c.get_kat("1".to_string()).unwrap().balance;
+    ctx("bob.near", NearToken::from_near(5));
+    c.fund("1".to_string());
+    let after = c.get_kat("1".to_string()).unwrap().balance;
+    assert_eq!(after, before.saturating_add(NearToken::from_near(5)));
+}
+
+#[test]
+#[should_panic(expected = "Kat not found")]
+fn fund_rejects_unknown_kat() {
+    let mut c = deploy();
+    ctx("bob.near", NearToken::from_near(1));
+    c.fund("99".to_string());
+}
+
+#[test]
+#[should_panic(expected = "Attach NEAR")]
+fn fund_rejects_zero_deposit() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("bob.near", NearToken::from_yoctonear(0));
+    c.fund("1".to_string());
+}

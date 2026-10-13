@@ -101,6 +101,18 @@ impl Contract {
         token
     }
 
+    /// Adds the attached deposit to a kat's inference balance.
+    #[payable]
+    pub fn fund(&mut self, token_id: TokenId) {
+        let deposit = env::attached_deposit();
+        require!(!deposit.is_zero(), "Attach NEAR to fund a kat");
+        let kat = self.kat_mut(&token_id);
+        kat.balance = kat
+            .balance
+            .checked_add(deposit)
+            .unwrap_or_else(|| env::panic_str("Balance overflow"));
+    }
+
     pub fn get_kat(&self, token_id: TokenId) -> Option<KatView> {
         let kat = self.kats.get(&token_id)?;
         let owner_id = self.tokens.owner_by_id.get(&token_id)?;
@@ -115,6 +127,14 @@ impl Contract {
             mint_price: self.mint_price,
             treasury_accrued: self.treasury_accrued,
         }
+    }
+}
+
+impl Contract {
+    pub(crate) fn kat_mut(&mut self, token_id: &TokenId) -> &mut Kat {
+        self.kats
+            .get_mut(token_id)
+            .unwrap_or_else(|| env::panic_str("Kat not found"))
     }
 }
 
