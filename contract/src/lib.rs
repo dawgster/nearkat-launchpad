@@ -1,8 +1,10 @@
 mod kat;
+mod nft;
 
-use near_contract_standards::non_fungible_token::{NonFungibleToken, TokenId};
+use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
+use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, TokenId};
 use near_sdk::store::LookupMap;
-use near_sdk::{near, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
+use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
 
 pub use kat::{ConfigView, Kat, KatView};
 
@@ -57,6 +59,52 @@ impl Contract {
             next_token_id: 1,
             treasury_accrued: NearToken::from_yoctonear(0),
         }
+    }
+
+    /// Mints the next kat to the caller. The deposit must cover the mint price
+    /// plus storage; anything above that becomes the kat's inference balance.
+    #[payable]
+    pub fn mint(&mut self) -> Token {
+        let deposit = env::attached_deposit();
+        let storage_before = env::storage_usage();
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+
+        let metadata = TokenMetadata {
+            title: Some(format!("Nearkat #{token_id}")),
+            media: Some(format!("{token_id}.png")),
+            ..Default::default()
+        };
+        let token = self.tokens.internal_mint_with_refund(
+            token_id.clone(),
+            env::predecessor_account_id(),
+            Some(metadata),
+            None,
+        );
+        self.kats
+            .insert(token_id, Kat::new(NearToken::from_yoctonear(0)));
+        self.kats.flush();
+
+        let storage_cost =
+            env::storage_byte_cost().saturating_mul((env::storage_usage() - storage_before).into());
+        let required = self.mint_price.saturating_add(storage_cost);
+        require!(
+            deposit >= required,
+            format!("Deposit too low: need at least {required}")
+        );
+        let balance = deposit.saturating_sub(required);
+        self.kats
+            .get_mut(&token.token_id)
+            .unwrap_or_else(|| env::panic_str("Kat not found"))
+            .balance = balance;
+        self.treasury_accrued = self.treasury_accrued.saturating_add(self.mint_price);
+        token
+    }
+
+    pub fn get_kat(&self, token_id: TokenId) -> Option<KatView> {
+        let kat = self.kats.get(&token_id)?;
+        let owner_id = self.tokens.owner_by_id.get(&token_id)?;
+        Some(KatView::new(owner_id, kat))
     }
 
     pub fn get_config(&self) -> ConfigView {
