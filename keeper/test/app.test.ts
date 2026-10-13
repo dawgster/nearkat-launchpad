@@ -33,7 +33,7 @@ async function setup() {
     auth,
     kats,
     attestation: async () => ({ mode: "local" }),
-    webOrigin: "http://localhost:3000",
+    webOrigins: ["http://localhost:3000", "http://localhost:3001"],
   });
   chain.mint("1", "alice.near", NEAR);
   await kats.wakeNew();
@@ -201,6 +201,10 @@ describe("keeper HTTP API", () => {
       headers: { origin: "http://localhost:3000" },
     });
     expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    const second = await app.request("/attestation", {
+      headers: { origin: "http://localhost:3001" },
+    });
+    expect(second.headers.get("access-control-allow-origin")).toBe("http://localhost:3001");
     const other = await app.request("/attestation", {
       headers: { origin: "https://evil.example" },
     });
