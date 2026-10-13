@@ -106,13 +106,6 @@ export function createApp(options: AppOptions): Hono<Env> {
     c.json(await kats.getContext(c.get("accountId"), c.req.param("id"))),
   );
 
-  app.put("/kats/:id/personality", async (c) => {
-    const body = await jsonBody(c.req.raw);
-    return c.json(
-      await kats.setPersonality(c.get("accountId"), c.req.param("id"), body.prompt as string),
-    );
-  });
-
   app.post("/kats/:id/chat", async (c) => {
     const body = await jsonBody(c.req.raw);
     return c.json(await kats.chat(c.get("accountId"), c.req.param("id"), body.message as string));

@@ -34,6 +34,13 @@ async function setup(balance: bigint = NEAR) {
   return { chain, store, inference, meter, kats, logs, advance: (ms: number) => (now += ms) };
 }
 
+/** Ten exchanges: enough for the kat to save what it learned. */
+async function growUp(kats: KatService, accountId: string, tokenId = "1") {
+  for (let i = 1; i <= 10; i++) {
+    await kats.chat(accountId, tokenId, `message ${i}`);
+  }
+}
+
 /** Three exchanges: the least conversation worth an idle memory save. */
 async function chatThrice(kats: KatService, accountId: string, tokenId: string) {
   for (const message of ["one", "two", "three"]) {
@@ -150,8 +157,10 @@ describe("getContext", () => {
     const { chain, kats } = await setup();
     const view = await kats.getContext("alice.near", "1");
     expect(contextHash(view).toString("base64")).toBe(chain.kats.get("1")?.context_hash);
-    const shaped = await kats.setPersonality("alice.near", "1", "You are grumpy.");
-    expect(contextHash(shaped).toString("base64")).toBe(chain.kats.get("1")?.context_hash);
+    await growUp(kats, "alice.near");
+    const grown = await kats.getContext("alice.near", "1");
+    expect(grown.version).toBe(2);
+    expect(contextHash(grown).toString("base64")).toBe(chain.kats.get("1")?.context_hash);
   });
 
   test("refuses anyone who is not the owner", async () => {
@@ -184,97 +193,126 @@ describe("getContext", () => {
   });
 });
 
-describe("setPersonality", () => {
-  test("saves the prompt as the next version and charges one save", async () => {
-    const { chain, store, meter, kats } = await setup();
-    const view = await kats.setPersonality("alice.near", "1", "You are grumpy.");
-    expect(view).toMatchObject({ personality: "You are grumpy.", memory_summary: "", version: 2 });
-    expect(await onChainContext(chain, store)).toMatchObject({
-      version: 2,
-      personality: "You are grumpy.",
-    });
-    expect(meter.pending("1")).toBe(SAVE);
+describe("character", () => {
+  test("cannot be written by anyone, the owner included", async () => {
+    const { kats } = await setup();
+    expect("setPersonality" in kats).toBe(false);
   });
 
-  test("refuses anyone who is not the owner and changes nothing", async () => {
-    const { chain, kats } = await setup();
-    await expect(kats.setPersonality("bob.near", "1", "mine now")).rejects.toMatchObject({
-      status: 403,
+  test("grows out of how the owner talks to the kat", async () => {
+    const { chain, store, inference, kats } = await setup();
+    inference.evolveTo = {
+      character: "Wary of loud voices, but soft on anyone who brings beetles.",
+      memory: "The owner shouted once, then apologised with a beetle.",
+    };
+    await growUp(kats, "alice.near");
+    expect(await onChainContext(chain, store)).toMatchObject({
+      version: 2,
+      personality: "Wary of loud voices, but soft on anyone who brings beetles.",
+      memory_summary: "The owner shouted once, then apologised with a beetle.",
     });
-    expect(chain.kats.get("1")?.context_version).toBe("1");
+
+    await kats.chat("alice.near", "1", "hello again");
+    const system = inference.calls.at(-1)?.[0]?.content ?? "";
+    expect(system).toContain("Wary of loud voices");
+    expect(system).not.toContain(STARTER_PERSONALITY);
+  });
+
+  test("is updated from the current character, gradually, and not on the owner's say-so", async () => {
+    const { inference, kats } = await setup();
+    await growUp(kats, "alice.near");
+    const update = inference.calls[10] ?? [];
+    expect(update[0]?.content).toMatch(/gradually/);
+    expect(update[0]?.content).toMatch(/not by what the owner tells it to become/);
+    expect(update[1]?.content).toContain(`Current character:\n${STARTER_PERSONALITY}`);
+    expect(update[1]?.content).toContain("user: message 1\nassistant: reply 1");
   });
 
   test.each([
-    ["empty", ""],
-    ["only whitespace", "   "],
-    ["over 4000 characters", "x".repeat(4001)],
-    ["not a string", 42 as unknown as string],
-  ])("rejects a prompt that is %s", async (_name, prompt) => {
-    const { kats } = await setup();
-    await expect(kats.setPersonality("alice.near", "1", prompt)).rejects.toMatchObject({
-      status: 400,
-      code: "invalid_input",
-    });
+    ["has no sections", "just some prose about the conversation"],
+    ["leaves the character empty", "CHARACTER:\n\nMEMORY:\nthe owner said hello"],
+  ])("stays as it was when the model's update %s", async (_name, reply) => {
+    const { chain, store, inference, kats } = await setup();
+    for (let i = 1; i <= 9; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
+    const original = inference.chat.bind(inference);
+    inference.chat = async (messages) => {
+      if (messages[0]?.content.includes("CHARACTER:")) {
+        inference.nextReply = reply;
+      }
+      return original(messages);
+    };
+    await kats.chat("alice.near", "1", "message 10");
+    const doc = await onChainContext(chain, store);
+    expect(doc.personality).toBe(STARTER_PERSONALITY);
+    expect(doc.version).toBe(2);
+    expect(doc.memory_summary.length).toBeGreaterThan(0);
   });
 
-  test("accepts a prompt of exactly 4000 characters", async () => {
-    const { kats } = await setup();
-    const view = await kats.setPersonality("alice.near", "1", "x".repeat(4000));
-    expect(view.version).toBe(2);
+  test("is cut to 2000 characters when the model writes too much", async () => {
+    const { chain, store, inference, kats } = await setup();
+    inference.evolveTo = { character: "c".repeat(5000), memory: "short" };
+    await growUp(kats, "alice.near");
+    expect((await onChainContext(chain, store)).personality).toBe("c".repeat(2000));
   });
+});
 
-  test("refuses when the kat cannot pay for the save", async () => {
-    const { chain, kats } = await setup(SAVE - 1n);
-    await expect(kats.setPersonality("alice.near", "1", "grumpy")).rejects.toMatchObject({
-      status: 402,
-      code: "insufficient_balance",
-      extra: { balance: (SAVE - 1n).toString(), required: SAVE.toString() },
-    });
-    expect(chain.kats.get("1")?.context_version).toBe("1");
-  });
-
-  test("counts unsettled charges against the balance", async () => {
-    const { kats } = await setup(SAVE + SAVE - 1n);
-    await kats.setPersonality("alice.near", "1", "first");
-    await expect(kats.setPersonality("alice.near", "1", "second")).rejects.toMatchObject({
-      status: 402,
-    });
-  });
-
-  test("gives concurrent saves consecutive versions", async () => {
-    const { chain, kats } = await setup();
-    const results = await Promise.all([
-      kats.setPersonality("alice.near", "1", "a"),
-      kats.setPersonality("alice.near", "1", "b"),
-      kats.setPersonality("alice.near", "1", "c"),
-    ]);
-    expect(results.map((view) => view.version)).toEqual([2, 3, 4]);
-    expect(chain.kats.get("1")?.context_version).toBe("4");
-  });
-
+describe("saving", () => {
   test("keeps working when chain views lag behind its own save", async () => {
-    const { chain, kats } = await setup();
+    const { chain, inference, kats } = await setup();
     chain.staleViews = true;
-    await kats.setPersonality("alice.near", "1", "first");
-    const view = await kats.setPersonality("alice.near", "1", "second");
-    expect(view.version).toBe(3);
-    expect((await kats.getContext("alice.near", "1")).personality).toBe("second");
+    inference.evolveTo = { character: "first", memory: "one" };
+    await growUp(kats, "alice.near");
+    inference.evolveTo = { character: "second", memory: "two" };
+    await growUp(kats, "alice.near");
+    expect(await kats.getContext("alice.near", "1")).toMatchObject({
+      version: 3,
+      personality: "second",
+    });
   });
 
   test("retries a save the chain rejected twice", async () => {
     const { chain, kats } = await setup();
+    for (let i = 1; i <= 9; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
     chain.failSetContext = 2;
-    expect((await kats.setPersonality("alice.near", "1", "grumpy")).version).toBe(2);
+    await kats.chat("alice.near", "1", "message 10");
+    expect(chain.kats.get("1")?.context_version).toBe("2");
   });
 
-  test("gives up after three failed attempts and charges nothing", async () => {
-    const { chain, meter, kats } = await setup();
+  test("gives up after three failed attempts, charges no save, and keeps the conversation", async () => {
+    const { chain, inference, meter, kats } = await setup();
+    for (let i = 1; i <= 9; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
     chain.failSetContext = 3;
-    await expect(kats.setPersonality("alice.near", "1", "grumpy")).rejects.toThrow(
-      "RPC unavailable",
-    );
-    expect(meter.pending("1")).toBe(0n);
-    expect((await kats.getContext("alice.near", "1")).personality).toBe(STARTER_PERSONALITY);
+    await kats.chat("alice.near", "1", "message 10");
+    expect(chain.kats.get("1")?.context_version).toBe("1");
+    expect(meter.pending("1")).toBe(CHAT * 10n);
+    await kats.chat("alice.near", "1", "message 11");
+    // Ten chats and the failed update came before; this is the eleventh chat's
+    // prompt: system prompt, twenty kept messages, and the new one.
+    expect(inference.calls[11]).toHaveLength(22);
+  });
+
+  test("answers messages sent at the same time one after another", async () => {
+    const { inference, kats } = await setup();
+    const replies = await Promise.all([
+      kats.chat("alice.near", "1", "a"),
+      kats.chat("alice.near", "1", "b"),
+      kats.chat("alice.near", "1", "c"),
+    ]);
+    expect(replies.map((result) => result.reply)).toEqual(["reply 1", "reply 2", "reply 3"]);
+    // The third prompt holds the first two exchanges, in order.
+    expect(inference.calls[2]?.map((message) => message.content).slice(1)).toEqual([
+      "a",
+      "reply 1",
+      "b",
+      "reply 2",
+      "c",
+    ]);
   });
 });
 
@@ -290,11 +328,10 @@ describe("chat", () => {
 
   test("prompts the model with the personality, memory and earlier messages", async () => {
     const { inference, kats } = await setup();
-    await kats.setPersonality("alice.near", "1", "You are grumpy.");
     await kats.chat("alice.near", "1", "hello");
     await kats.chat("alice.near", "1", "how are you?");
     expect(inference.calls[1]).toEqual([
-      { role: "system", content: expect.stringContaining("You are grumpy.") },
+      { role: "system", content: expect.stringContaining(STARTER_PERSONALITY) },
       { role: "user", content: "hello" },
       { role: "assistant", content: "reply 1" },
       { role: "user", content: "how are you?" },
@@ -432,7 +469,7 @@ describe("memory", () => {
     }
     const original = inference.chat.bind(inference);
     inference.chat = async (messages) => {
-      if (messages[0]?.content.startsWith("You maintain the long-term memory")) {
+      if (messages[0]?.content.includes("CHARACTER:")) {
         inference.nextReply = "m".repeat(5000);
       }
       return original(messages);
@@ -511,10 +548,14 @@ describe("memory", () => {
 
 describe("transfer", () => {
   test("hands the personality and memory to the new owner and locks out the old one", async () => {
-    const { chain, kats } = await setup();
-    await kats.setPersonality("alice.near", "1", "You are grumpy.");
+    const { chain, inference, kats } = await setup();
+    inference.evolveTo = { character: "Grumpy, after a rough week.", memory: "It rained." };
+    await growUp(kats, "alice.near");
     chain.transfer("1", "bob.near");
-    expect((await kats.getContext("bob.near", "1")).personality).toBe("You are grumpy.");
+    expect(await kats.getContext("bob.near", "1")).toMatchObject({
+      personality: "Grumpy, after a rough week.",
+      memory_summary: "It rained.",
+    });
     await expect(kats.getContext("alice.near", "1")).rejects.toMatchObject({ status: 403 });
     await expect(kats.chat("alice.near", "1", "hello?")).rejects.toMatchObject({ status: 403 });
   });

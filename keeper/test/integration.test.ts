@@ -33,6 +33,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
   let chain: NearChain;
   let meter: Meter;
   let kats: KatService;
+  const inference = new FakeInference();
   let app: ReturnType<typeof createApp>;
 
   beforeAll(async () => {
@@ -97,7 +98,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       chain,
       store: new FileStore(await mkdtemp(join(tmpdir(), "keeper-it-"))),
       keys,
-      inference: new FakeInference(),
+      inference,
       meter,
       prices: { chat: CHAT, save: SAVE },
       log: () => {},
@@ -170,24 +171,28 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
-  test("a kat's shaped personality follows it to a new owner", async () => {
+  test("the character a kat grew into follows it to a new owner", async () => {
     expect(await mintAwake(alice, "3 NEAR")).toBe("1");
 
     const aliceToken = (await (await signIn(alice.near)).json()).token as string;
     const fresh = await call(aliceToken, "/kats/1/context", "GET");
     expect(await fresh.json()).toMatchObject({ personality: STARTER_PERSONALITY, version: 1 });
 
-    const shaped = await call(aliceToken, "/kats/1/personality", "PUT", {
-      prompt: "You are grumpy.",
-    });
-    expect(await shaped.json()).toMatchObject({ personality: "You are grumpy.", version: 2 });
-    const chat = await call(aliceToken, "/kats/1/chat", "POST", { message: "hello" });
-    expect(await chat.json()).toMatchObject({ reply: "reply 1" });
+    // There is no way to write a character; it grows out of ten exchanges.
+    const written = await call(aliceToken, "/kats/1/personality", "PUT", { prompt: "grumpy" });
+    expect(written.status).toBe(404);
+    inference.evolveTo = { character: "You are grumpy.", memory: "Alice said hello a lot." };
+    for (let i = 1; i <= 10; i++) {
+      const chat = await call(aliceToken, "/kats/1/chat", "POST", { message: `hello ${i}` });
+      expect(await chat.json()).toMatchObject({ reply: `reply ${i}` });
+    }
+    const grown = await call(aliceToken, "/kats/1/context", "GET");
+    expect(await grown.json()).toMatchObject({ personality: "You are grumpy.", version: 2 });
 
     const before = BigInt(((await chain.getKat("1")) as KatView).balance);
     await meter.flush();
     const after = (await chain.getKat("1")) as KatView;
-    expect(before - BigInt(after.balance)).toBe(SAVE + CHAT);
+    expect(before - BigInt(after.balance)).toBe(SAVE + 10n * CHAT);
     expect(after.context_version).toBe("2");
 
     await alice.near.call(
@@ -203,7 +208,11 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
 
     const bobToken = (await (await signIn(bob.near)).json()).token as string;
     const inherited = await call(bobToken, "/kats/1/context", "GET");
-    expect(await inherited.json()).toMatchObject({ personality: "You are grumpy.", version: 2 });
+    expect(await inherited.json()).toMatchObject({
+      personality: "You are grumpy.",
+      memory_summary: "Alice said hello a lot.",
+      version: 2,
+    });
   }, 120_000);
 
   test("kats past the ninth are woken as they are minted", async () => {

@@ -93,7 +93,7 @@ describe("keeper HTTP API", () => {
     expect(response.status).toBe(400);
   });
 
-  test("lets a signed-in owner read, shape and chat with their kat", async () => {
+  test("lets a signed-in owner read and chat with their kat, but not rewrite it", async () => {
     const { app, signIn, as } = await setup();
     const token = await signIn("alice.near");
 
@@ -104,8 +104,12 @@ describe("keeper HTTP API", () => {
       version: 1,
     });
 
-    const shaped = await app.request("/kats/1/personality", as(token, { prompt: "grumpy" }, "PUT"));
-    expect(await shaped.json()).toMatchObject({ personality: "grumpy", version: 2 });
+    // A kat's character grows from conversation; there is no route to write it.
+    const written = await app.request(
+      "/kats/1/personality",
+      as(token, { prompt: "grumpy" }, "PUT"),
+    );
+    expect(written.status).toBe(404);
 
     const chat = await app.request("/kats/1/chat", as(token, { message: "hello" }));
     expect(chat.status).toBe(200);

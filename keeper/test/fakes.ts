@@ -110,6 +110,8 @@ export class FakeInference implements Inference {
   nextReply: string | null = null;
   /** Runs while the model is "thinking", before the reply is returned. */
   whileThinking: (() => void) | null = null;
+  /** What the model writes when asked to update a kat's character and memory. */
+  evolveTo: { character: string; memory: string } | null = null;
 
   async chat(messages: ChatMessage[]): Promise<ChatResult> {
     if (this.down) {
@@ -118,7 +120,12 @@ export class FakeInference implements Inference {
     this.calls.push(messages.map((message) => ({ ...message })));
     const n = this.calls.length;
     this.whileThinking?.();
-    const reply = this.nextReply ?? `reply ${n}`;
+    const updating = messages[0]?.content.includes("CHARACTER:") ?? false;
+    const reply =
+      this.nextReply ??
+      (updating && this.evolveTo
+        ? `CHARACTER:\n${this.evolveTo.character}\nMEMORY:\n${this.evolveTo.memory}`
+        : `reply ${n}`);
     this.nextReply = null;
     return {
       reply,
