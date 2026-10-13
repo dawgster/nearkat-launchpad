@@ -3,12 +3,18 @@ mod kat;
 mod keeper;
 mod nft;
 
+use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
 use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, TokenId};
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
 
 pub use kat::{ConfigView, Kat, KatView};
+
+/// Bytes charged at mint on top of the measured usage. Covers later growth no
+/// caller pays for: the context hash and ref, first-approval bookkeeping, and
+/// a longer owner id after a transfer.
+pub const KAT_STORAGE_RESERVE_BYTES: u64 = 600;
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -64,7 +70,8 @@ impl Contract {
     }
 
     /// Mints the next kat to the caller. The deposit must cover the mint price
-    /// plus storage; anything above that becomes the kat's inference balance.
+    /// plus storage (measured usage and a fixed reserve); anything above that
+    /// becomes the kat's inference balance.
     #[payable]
     pub fn mint(&mut self) -> Token {
         let deposit = env::attached_deposit();
@@ -87,8 +94,8 @@ impl Contract {
             .insert(token_id, Kat::new(NearToken::from_yoctonear(0)));
         self.kats.flush();
 
-        let storage_cost =
-            env::storage_byte_cost().saturating_mul((env::storage_usage() - storage_before).into());
+        let storage_bytes = env::storage_usage() - storage_before + KAT_STORAGE_RESERVE_BYTES;
+        let storage_cost = env::storage_byte_cost().saturating_mul(storage_bytes.into());
         let required = self.mint_price.saturating_add(storage_cost);
         require!(
             deposit >= required,
@@ -100,6 +107,12 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Kat not found"))
             .balance = balance;
         self.treasury_accrued = self.treasury_accrued.saturating_add(self.mint_price);
+        NftMint {
+            owner_id: &token.owner_id,
+            token_ids: &[token.token_id.as_str()],
+            memo: None,
+        }
+        .emit();
         token
     }
 

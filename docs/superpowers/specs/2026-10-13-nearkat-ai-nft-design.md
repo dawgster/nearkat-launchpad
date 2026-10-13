@@ -65,12 +65,12 @@ Methods:
 | Method | Caller | Behaviour |
 |---|---|---|
 | `new(admin_id, keeper_id, treasury_id, mint_price, base_uri)` | deployer | Initialise. |
-| `mint()` payable | anyone | Requires deposit ≥ `mint_price` + storage cost. Mints to the caller. Deposit above that amount is credited to the kat's `balance`. Emits a mint event. |
+| `mint()` payable | anyone | Requires deposit ≥ `mint_price` + storage cost (measured bytes plus a fixed 600-byte reserve for later context, approval and transfer growth). Mints to the caller. Deposit above that amount is credited to the kat's `balance`. Emits a mint event. |
 | `fund(token_id)` payable | anyone | Adds the deposit to the kat's `balance`. |
 | `set_context(token_id, context_hash, context_ref, version)` | keeper only | Requires `version == context_version + 1`. |
 | `debit_batch(items: Vec<(token_id, amount)>)` | keeper only | Moves each amount from the kat's `balance` to the treasury accrual. Fails the whole batch if any kat has insufficient balance. |
 | `get_kat(token_id)` view | anyone | Returns owner, the four fields above. |
-| `set_keeper`, `set_mint_price`, `withdraw_treasury` | admin only | Administration. |
+| `set_keeper`, `set_mint_price`, `set_treasury`, `withdraw_treasury` | admin only | Administration. Each requires exactly 1 yoctoNEAR attached. A failed treasury transfer restores the accrued amount. |
 
 A kat's `balance` stays with the token on transfer and is not withdrawable by
 its owner.

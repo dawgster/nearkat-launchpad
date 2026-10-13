@@ -1,6 +1,7 @@
+use near_contract_standards::non_fungible_token::approval::NonFungibleTokenApproval;
 use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
-use near_sdk::test_utils::VMContextBuilder;
-use near_sdk::{testing_env, AccountId, NearToken};
+use near_sdk::test_utils::{get_logs, VMContextBuilder};
+use near_sdk::{env, testing_env, AccountId, NearToken};
 
 use crate::Contract;
 
@@ -9,9 +10,12 @@ fn acc(s: &str) -> AccountId {
 }
 
 fn ctx(predecessor: &str, deposit: NearToken) {
+    // Carry the storage counter over, so usage can be compared across calls.
+    let storage_usage = env::storage_usage();
     testing_env!(VMContextBuilder::new()
         .predecessor_account_id(acc(predecessor))
         .attached_deposit(deposit)
+        .storage_usage(storage_usage)
         .build());
 }
 
@@ -313,4 +317,129 @@ fn replaced_keeper_loses_access() {
     c.set_keeper(acc("keeper2.near"));
     ctx("keeper.near", NearToken::from_yoctonear(0));
     c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+}
+
+#[test]
+fn mint_emits_nft_mint_event() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    let logs = get_logs();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].starts_with("EVENT_JSON:"));
+    assert!(logs[0].contains(r#""event":"nft_mint""#));
+    assert!(logs[0].contains(r#""owner_id":"alice.near""#));
+    assert!(logs[0].contains(r#""token_ids":["1"]"#));
+}
+
+#[test]
+fn mint_charges_price_measured_storage_and_reserve() {
+    let mut c = deploy();
+    let deposit = NearToken::from_near(3);
+    ctx("alice.near", deposit);
+    let before = env::storage_usage();
+    c.mint();
+    let written = env::storage_usage() - before;
+    let storage_cost = env::storage_byte_cost()
+        .saturating_mul((written + crate::KAT_STORAGE_RESERVE_BYTES).into());
+    assert_eq!(
+        c.get_kat("1".to_string()).unwrap().balance,
+        deposit.saturating_sub(PRICE).saturating_sub(storage_cost)
+    );
+}
+
+#[test]
+fn storage_growth_after_mint_fits_in_the_reserve() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    let after_mint = env::storage_usage();
+
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), "x".repeat(256), 1.into());
+    c.kats.flush();
+    ctx("alice.near", NearToken::from_millinear(10));
+    let _ = c.nft_approve("1".to_string(), acc("market.near"), None);
+    ctx("alice.near", YOCTO);
+    c.nft_transfer(acc(&"b".repeat(64)), "1".to_string(), None, None);
+
+    // Growth beyond what callers paid for; approval deposits cover only part of it.
+    let grown = env::storage_usage() - after_mint;
+    assert!(
+        grown <= crate::KAT_STORAGE_RESERVE_BYTES,
+        "{grown} bytes of growth exceed the reserve"
+    );
+}
+
+#[test]
+fn mint_numbers_tokens_sequentially() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    assert_eq!(c.mint().token_id, "1");
+    ctx("bob.near", NearToken::from_near(2));
+    assert_eq!(c.mint().token_id, "2");
+}
+
+#[test]
+#[should_panic(expected = "context_ref must be 1 to 256 bytes")]
+fn set_context_rejects_empty_ref() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), String::new(), 1.into());
+}
+
+#[test]
+#[should_panic(expected = "Kat not found")]
+fn debit_batch_rejects_unknown_kat() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(vec![("99".to_string(), NearToken::from_millinear(1))]);
+}
+
+#[test]
+fn replacement_keeper_can_set_context() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("admin.near", YOCTO);
+    c.set_keeper(acc("keeper2.near"));
+    ctx("keeper2.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    assert_eq!(c.get_kat("1".to_string()).unwrap().context_version.0, 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the admin")]
+fn withdraw_treasury_rejects_non_admin() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("alice.near", YOCTO);
+    let _ = c.withdraw_treasury();
+}
+
+#[test]
+#[should_panic(expected = "Only the admin")]
+fn set_mint_price_rejects_non_admin() {
+    let mut c = deploy();
+    ctx("keeper.near", YOCTO);
+    c.set_mint_price(NearToken::from_yoctonear(0));
+}
+
+#[test]
+fn admin_can_change_treasury() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.set_treasury(acc("treasury2.near"));
+    assert_eq!(c.get_config().treasury_id, acc("treasury2.near"));
+}
+
+#[test]
+#[should_panic(expected = "Only the admin")]
+fn set_treasury_rejects_non_admin() {
+    let mut c = deploy();
+    ctx("alice.near", YOCTO);
+    c.set_treasury(acc("alice.near"));
 }

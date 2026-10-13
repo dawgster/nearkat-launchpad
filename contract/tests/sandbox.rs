@@ -183,7 +183,7 @@ async fn previous_owner_cannot_transfer_back() -> TestResult {
 
     let result = transfer(&env, &env.alice, &env.alice, &id).await?;
 
-    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Sender not approved"));
     assert_eq!(kat(&env, &id).await?["owner_id"], env.bob.id.as_str());
     Ok(())
 }
@@ -248,21 +248,71 @@ async fn withdraw_pays_mint_price_and_debits_to_treasury() -> TestResult {
 }
 
 #[tokio::test]
-async fn mint_storage_is_paid_by_the_minter() -> TestResult {
+async fn contract_stays_solvent_through_context_approval_and_transfer() -> TestResult {
     let env = setup().await?;
-    let id = mint(&env, &env.alice, NearToken::from_near(2)).await?;
+    let contract_balance = || Tokens::account(env.contract.0.clone()).near_balance();
+    let before = contract_balance().fetch_from(&env.network).await?;
 
-    let account = Tokens::account(env.contract.0.clone())
-        .near_balance()
-        .fetch_from(&env.network)
-        .await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(2)).await?;
+    call(
+        &env,
+        &env.keeper,
+        "set_context",
+        json!({
+            "token_id": id, "context_hash": hash_b64(7), "context_ref": "x".repeat(256), "version": "1",
+        }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+    call(
+        &env,
+        &env.alice,
+        "nft_approve",
+        json!({ "token_id": id, "account_id": env.keeper.id }),
+        NearToken::from_millinear(10),
+    )
+    .await??;
+    transfer(&env, &env.alice, &env.bob, &id).await??;
+
+    let after = contract_balance().fetch_from(&env.network).await?;
     let kat_balance: NearToken = serde_json::from_value(kat(&env, &id).await?["balance"].clone())?;
-    // The contract must hold enough to cover its storage, the kat's balance and
-    // the accrued treasury at the same time.
-    let owed = account
-        .storage_locked
-        .saturating_add(kat_balance)
-        .saturating_add(PRICE);
-    assert!(account.total >= owed, "{} < {}", account.total, owed);
+    // What the contract gained, minus what storage staking now locks, must
+    // cover everything it owes: the kat's balance and the accrued mint price.
+    let free_gain = after
+        .total
+        .saturating_sub(before.total)
+        .saturating_sub(after.storage_locked.saturating_sub(before.storage_locked));
+    let owed = kat_balance.saturating_add(PRICE);
+    assert!(free_gain >= owed, "{free_gain} < {owed}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_treasury_transfer_restores_the_accrual() -> TestResult {
+    let env = setup().await?;
+    mint(&env, &env.alice, NearToken::from_near(2)).await?;
+    call(
+        &env,
+        &env.admin,
+        "set_treasury",
+        json!({ "treasury_id": "ghost" }),
+        YOCTO,
+    )
+    .await??;
+
+    // "ghost" does not exist, so the transfer receipt fails.
+    let _ = call(&env, &env.admin, "withdraw_treasury", json!({}), YOCTO).await?;
+
+    let config: Value = env
+        .contract
+        .call_function("get_config", json!({}))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    assert_eq!(
+        serde_json::from_value::<NearToken>(config["treasury_accrued"].clone())?,
+        PRICE
+    );
     Ok(())
 }
