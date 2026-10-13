@@ -158,8 +158,10 @@ version, uploads it, and calls `set_context`.
 **Chat.** The keeper loads the context, builds the prompt from personality,
 memory summary and the current session's messages, calls NEAR AI, and returns
 the reply. Session messages live only in the keeper's memory. After every 20
-messages, or after 10 minutes of inactivity, the keeper asks the model to fold
-the session into `memory_summary` and saves a new context version.
+messages, or after 10 minutes of inactivity once the session holds at least 6
+messages, the keeper asks the model to fold the session into `memory_summary`
+and saves a new context version. A shorter idle conversation stays in the
+session and is not saved on its own.
 
 **Transfer.** A standard `nft_transfer`. No keeper action. The next request
 from the old owner fails the ownership check; the new owner's first request

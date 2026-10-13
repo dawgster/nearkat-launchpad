@@ -34,6 +34,13 @@ async function setup(balance: bigint = NEAR) {
   return { chain, store, inference, meter, kats, logs, advance: (ms: number) => (now += ms) };
 }
 
+/** Three exchanges: the least conversation worth an idle memory save. */
+async function chatThrice(kats: KatService, accountId: string, tokenId: string) {
+  for (const message of ["one", "two", "three"]) {
+    await kats.chat(accountId, tokenId, message);
+  }
+}
+
 /** Decrypts whatever context the chain currently points at. */
 async function onChainContext(chain: FakeChain, store: MemoryStore, tokenId = "1") {
   const kat = chain.kats.get(tokenId);
@@ -425,8 +432,8 @@ describe("memory", () => {
     const { chain, kats, logs, advance } = await setup();
     chain.mint("2", "bob.near", NEAR);
     await kats.wakeNew();
-    await kats.chat("alice.near", "1", "hello");
-    await kats.chat("bob.near", "2", "hello");
+    await chatThrice(kats, "alice.near", "1");
+    await chatThrice(kats, "bob.near", "2");
     (chain.kats.get("1") as { context_hash: string }).context_hash =
       Buffer.alloc(32).toString("base64");
     advance(10 * 60 * 1000);
@@ -437,7 +444,7 @@ describe("memory", () => {
 
   test("says why a memory save was skipped", async () => {
     const { chain, kats, logs, advance } = await setup();
-    await kats.chat("alice.near", "1", "hello");
+    await chatThrice(kats, "alice.near", "1");
     chain.failSetContext = 3;
     advance(10 * 60 * 1000);
     await kats.consolidateIdle();
@@ -446,7 +453,7 @@ describe("memory", () => {
 
   test("folds an idle conversation into memory after ten minutes", async () => {
     const { chain, store, kats, advance } = await setup();
-    await kats.chat("alice.near", "1", "hello");
+    await chatThrice(kats, "alice.near", "1");
     advance(10 * 60 * 1000 - 1);
     await kats.consolidateIdle();
     expect(chain.kats.get("1")?.context_version).toBe("1");
@@ -454,8 +461,25 @@ describe("memory", () => {
     await kats.consolidateIdle();
     expect(await onChainContext(chain, store)).toMatchObject({
       version: 2,
-      memory_summary: "reply 2",
+      memory_summary: "reply 4",
     });
+    await kats.consolidateIdle();
+    expect(chain.kats.get("1")?.context_version).toBe("2");
+  });
+
+  test("does not spend a save on an idle conversation shorter than three exchanges", async () => {
+    const { chain, inference, meter, kats, advance } = await setup();
+    await kats.chat("alice.near", "1", "one");
+    await kats.chat("alice.near", "1", "two");
+    advance(60 * 60 * 1000);
+    await kats.consolidateIdle();
+    expect(chain.kats.get("1")?.context_version).toBe("1");
+    expect(meter.pending("1")).toBe(CHAT * 2n);
+
+    // The short conversation is still there when the owner comes back.
+    await kats.chat("alice.near", "1", "three");
+    expect(inference.calls[2]).toHaveLength(6);
+    advance(10 * 60 * 1000);
     await kats.consolidateIdle();
     expect(chain.kats.get("1")?.context_version).toBe("2");
   });

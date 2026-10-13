@@ -16,6 +16,8 @@ import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
 export const MAX_TEXT_CHARS = 4000;
 const CONSOLIDATE_AFTER_MESSAGES = 20;
 const CONSOLIDATE_AFTER_IDLE_MS = 10 * 60 * 1000;
+/** An idle conversation is saved only once it has this many messages (three exchanges). */
+const MIN_IDLE_SAVE_MESSAGES = 6;
 const SAVE_ATTEMPTS = 3;
 /** Unsaved messages kept per kat; the oldest are dropped beyond this. */
 const MAX_SESSION_MESSAGES = 40;
@@ -176,6 +178,10 @@ export class KatService {
           const kat = await this.#o.chain.getKat(tokenId);
           if (session.messages.length === 0 || !kat || kat.owner_id !== session.owner) {
             this.#sessions.delete(tokenId);
+            return;
+          }
+          // Too short to be worth a paid save: it waits in the session instead.
+          if (session.messages.length < MIN_IDLE_SAVE_MESSAGES) {
             return;
           }
           const owned = this.#withSaved(tokenId, kat);
