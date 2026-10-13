@@ -116,7 +116,7 @@ TEE-held per-kat key before upload. The operators create the NOVA account and
 so hold its API key, which is why NOVA's own encryption cannot be the privacy
 boundary.
 
-### 4. Web app (`web/`, Next.js)
+### 4. Web app (`web/`, Vite and React)
 
 Pages: mint; my kats; kat detail (chat, edit personality, fund, transfer);
 verify. Wallet connection through NEAR Connect. Contract calls go directly
