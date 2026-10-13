@@ -1,4 +1,5 @@
 mod kat;
+mod keeper;
 mod nft;
 
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;

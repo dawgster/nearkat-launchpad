@@ -1,0 +1,62 @@
+use near_contract_standards::non_fungible_token::TokenId;
+use near_sdk::json_types::{Base64VecU8, U64};
+use near_sdk::{env, near, require, NearToken};
+
+use crate::{Contract, ContractExt};
+
+const MAX_CONTEXT_REF_LEN: usize = 256;
+
+#[near]
+impl Contract {
+    /// Records a new encrypted-context version for a kat. Keeper only.
+    pub fn set_context(
+        &mut self,
+        token_id: TokenId,
+        context_hash: Base64VecU8,
+        context_ref: String,
+        version: U64,
+    ) {
+        self.assert_keeper();
+        let hash: [u8; 32] = context_hash
+            .0
+            .try_into()
+            .unwrap_or_else(|_| env::panic_str("context_hash must be 32 bytes"));
+        require!(
+            !context_ref.is_empty() && context_ref.len() <= MAX_CONTEXT_REF_LEN,
+            "context_ref must be 1 to 256 bytes"
+        );
+        let kat = self.kat_mut(&token_id);
+        require!(
+            version.0 == kat.context_version + 1,
+            format!("Version must be {}", kat.context_version + 1)
+        );
+        kat.context_hash = Some(hash);
+        kat.context_ref = Some(context_ref);
+        kat.context_version = version.0;
+    }
+
+    /// Moves each amount from a kat's balance to the treasury. Keeper only.
+    /// Any kat with insufficient balance fails the whole batch.
+    pub fn debit_batch(&mut self, items: Vec<(TokenId, NearToken)>) {
+        self.assert_keeper();
+        for (token_id, amount) in items {
+            let kat = self.kat_mut(&token_id);
+            kat.balance = kat.balance.checked_sub(amount).unwrap_or_else(|| {
+                env::panic_str(&format!("Insufficient balance for kat {token_id}"))
+            });
+            self.treasury_accrued = self
+                .treasury_accrued
+                .checked_add(amount)
+                .unwrap_or_else(|| env::panic_str("Treasury overflow"));
+        }
+    }
+}
+
+impl Contract {
+    fn assert_keeper(&self) {
+        require!(
+            env::predecessor_account_id() == self.keeper_id,
+            "Only the keeper can call this method"
+        );
+    }
+}
