@@ -64,7 +64,7 @@ Methods:
 
 | Method | Caller | Behaviour |
 |---|---|---|
-| `new(admin_id, keeper_id, treasury_id, mint_price, base_uri)` | deployer | Initialise. |
+| `new(admin_id, keeper_id, treasury_id, mint_price, collection)` | deployer | Initialise. `collection` is `{ name, symbol, base_uri }`: the public name and symbol, used in token titles, and where images live (empty until artwork exists). |
 | `mint()` payable | anyone | Requires deposit ≥ `mint_price` + storage cost (measured bytes plus a fixed 600-byte reserve for later context, approval and transfer growth). Mints to the caller. Deposit above that amount is credited to the kat's `balance`. Emits a mint event. |
 | `fund(token_id)` payable | anyone | Adds the deposit to the kat's `balance`. |
 | `set_context(token_id, context_hash, context_ref, version)` | keeper only | Requires `version == context_version + 1`. |

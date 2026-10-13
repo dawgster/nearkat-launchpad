@@ -9,7 +9,7 @@ use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, Token
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
 
-pub use kat::{ConfigView, Kat, KatView};
+pub use kat::{Collection, ConfigView, Kat, KatView};
 
 /// Bytes charged at mint on top of the measured usage. Covers later growth no
 /// caller pays for: the context hash and ref, first-approval bookkeeping, and
@@ -35,7 +35,11 @@ pub struct Contract {
     keeper_id: AccountId,
     treasury_id: AccountId,
     mint_price: NearToken,
+    /// Where token images live. Empty until the artwork exists.
     base_uri: String,
+    /// Collection name, also used in each token's title.
+    name: String,
+    symbol: String,
     next_token_id: u64,
     treasury_accrued: NearToken,
     /// Sequence number of the last applied `debit_batch`.
@@ -50,8 +54,17 @@ impl Contract {
         keeper_id: AccountId,
         treasury_id: AccountId,
         mint_price: NearToken,
-        base_uri: String,
+        collection: Collection,
     ) -> Self {
+        let Collection {
+            name,
+            symbol,
+            base_uri,
+        } = collection;
+        require!(
+            !name.trim().is_empty() && !symbol.trim().is_empty(),
+            "name and symbol must not be empty"
+        );
         Self {
             tokens: NonFungibleToken::new(
                 StorageKey::OwnerById,
@@ -66,6 +79,8 @@ impl Contract {
             treasury_id,
             mint_price,
             base_uri,
+            name,
+            symbol,
             next_token_id: 1,
             treasury_accrued: NearToken::from_yoctonear(0),
             debit_seq: 0,
@@ -83,8 +98,8 @@ impl Contract {
         self.next_token_id += 1;
 
         let metadata = TokenMetadata {
-            title: Some(format!("Nearkat #{token_id}")),
-            media: Some(format!("{token_id}.png")),
+            title: Some(format!("{} #{token_id}", self.name)),
+            media: (!self.base_uri.is_empty()).then(|| format!("{token_id}.png")),
             ..Default::default()
         };
         let token = self.tokens.internal_mint_with_refund(

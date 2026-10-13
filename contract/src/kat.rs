@@ -42,6 +42,15 @@ impl KatView {
     }
 }
 
+/// How the collection presents itself, fixed at deployment.
+#[near(serializers = [json])]
+pub struct Collection {
+    pub name: String,
+    pub symbol: String,
+    /// Where token images live. Empty until the artwork exists.
+    pub base_uri: String,
+}
+
 #[near(serializers = [json])]
 pub struct ConfigView {
     pub admin_id: AccountId,

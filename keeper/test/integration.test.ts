@@ -81,7 +81,7 @@ describe.skipIf(!existsSync(WASM))("keeper against the contract in a sandbox", (
         keeper_id: keeperId,
         treasury_id: root,
         mint_price: (10n ** 24n).toString(),
-        base_uri: "https://art.example/",
+        collection: { name: "Nearkat", symbol: "KAT", base_uri: "https://art.example/" },
       })
       .send();
 

@@ -79,7 +79,11 @@ async fn setup() -> TestResult<Env> {
                 "keeper_id": env.keeper.id,
                 "treasury_id": env.treasury.id,
                 "mint_price": PRICE,
-                "base_uri": "https://art.example/",
+                "collection": {
+                    "name": "Nearkat",
+                    "symbol": "KAT",
+                    "base_uri": "https://art.example/",
+                },
             }),
         )?
         .with_signer(owner.signer.clone())

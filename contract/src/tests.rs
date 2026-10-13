@@ -1,9 +1,10 @@
 use near_contract_standards::non_fungible_token::approval::NonFungibleTokenApproval;
 use near_contract_standards::non_fungible_token::core::NonFungibleTokenCore;
+use near_contract_standards::non_fungible_token::metadata::NonFungibleTokenMetadataProvider;
 use near_sdk::test_utils::{get_logs, VMContextBuilder};
 use near_sdk::{env, testing_env, AccountId, NearToken};
 
-use crate::Contract;
+use crate::{Collection, Contract};
 
 fn acc(s: &str) -> AccountId {
     s.parse().unwrap()
@@ -29,7 +30,26 @@ fn deploy() -> Contract {
         acc("keeper.near"),
         acc("treasury.near"),
         PRICE,
-        "https://art.example/".to_string(),
+        Collection {
+            name: "Nearkat".to_string(),
+            symbol: "KAT".to_string(),
+            base_uri: "https://art.example/".to_string(),
+        },
+    )
+}
+
+fn deploy_as(name: &str, symbol: &str, base_uri: &str) -> Contract {
+    ctx("admin.near", NearToken::from_yoctonear(0));
+    Contract::new(
+        acc("admin.near"),
+        acc("keeper.near"),
+        acc("treasury.near"),
+        PRICE,
+        Collection {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            base_uri: base_uri.to_string(),
+        },
     )
 }
 
@@ -502,4 +522,39 @@ fn debit_batch_rejects_a_skipped_sequence_number() {
         2.into(),
         vec![("1".to_string(), NearToken::from_millinear(5))],
     );
+}
+
+#[test]
+fn collection_and_tokens_carry_the_configured_name() {
+    let mut c = deploy_as("Pocket Pals", "PAL", "https://art.example/");
+    let meta = c.nft_metadata();
+    assert_eq!(meta.name, "Pocket Pals");
+    assert_eq!(meta.symbol, "PAL");
+    assert_eq!(meta.base_uri.as_deref(), Some("https://art.example/"));
+
+    ctx("alice.near", NearToken::from_near(2));
+    let token = c.mint();
+    let metadata = token.metadata.unwrap();
+    assert_eq!(metadata.title.as_deref(), Some("Pocket Pals #1"));
+    assert_eq!(metadata.media.as_deref(), Some("1.png"));
+}
+
+#[test]
+fn a_collection_without_artwork_has_no_media_links() {
+    let mut c = deploy_as("Pocket Pals", "PAL", "");
+    assert!(c.nft_metadata().base_uri.is_none());
+    ctx("alice.near", NearToken::from_near(2));
+    assert!(c.mint().metadata.unwrap().media.is_none());
+}
+
+#[test]
+#[should_panic(expected = "name and symbol must not be empty")]
+fn new_rejects_an_empty_name() {
+    deploy_as("", "PAL", "");
+}
+
+#[test]
+#[should_panic(expected = "name and symbol must not be empty")]
+fn new_rejects_an_empty_symbol() {
+    deploy_as("Pocket Pals", " ", "");
 }

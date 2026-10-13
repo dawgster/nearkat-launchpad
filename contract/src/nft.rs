@@ -127,10 +127,10 @@ impl NonFungibleTokenMetadataProvider for Contract {
     fn nft_metadata(&self) -> NFTContractMetadata {
         NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
-            name: "Nearkat".to_string(),
-            symbol: "KAT".to_string(),
+            name: self.name.clone(),
+            symbol: self.symbol.clone(),
             icon: None,
-            base_uri: Some(self.base_uri.clone()),
+            base_uri: (!self.base_uri.is_empty()).then(|| self.base_uri.clone()),
             reference: None,
             reference_hash: None,
         }

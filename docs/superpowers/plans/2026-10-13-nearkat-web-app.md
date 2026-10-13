@@ -3548,7 +3548,7 @@ export default async function globalSetup() {
       keeper_id: names.keeper,
       treasury_id: root,
       mint_price: (10n ** 24n).toString(),
-      base_uri: "https://art.example/",
+      collection: { name: "Nearkat", symbol: "KAT", base_uri: "" },
     })
     .send();
 
