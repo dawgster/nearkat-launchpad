@@ -6,10 +6,15 @@ mod nft;
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
 use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, TokenId};
+use near_sdk::json_types::U64;
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
 
-pub use kat::{Collection, ConfigView, Kat, KatView};
+pub use kat::{
+    Collection, CollectionView, ConfigView, Kat, KatView, TeeRequirement, DEFAULT_PROMPT,
+    DEFAULT_STARTER,
+};
+use kat::{MAX_PROMPT_LEN, MAX_STARTER_LEN};
 
 /// Bytes charged at mint on top of the measured usage. Covers later growth no
 /// caller pays for: the context hash and ref, first-approval bookkeeping, and
@@ -40,8 +45,18 @@ pub struct Contract {
     /// Collection name, also used in each token's title.
     name: String,
     symbol: String,
+    /// Instructions shared by every token. Public, fixed at deployment.
+    prompt: String,
+    /// The context every token starts from. Public, fixed at deployment.
+    starter: String,
+    max_supply: Option<u64>,
+    /// Where contexts may be opened. Fixed at deployment.
+    tee: Option<TeeRequirement>,
     next_token_id: u64,
+    /// Mint revenue, owed to the treasury.
     treasury_accrued: NearToken,
+    /// Inference charges, owed to the keeper that pays for inference.
+    inference_accrued: NearToken,
     /// Sequence number of the last applied `debit_batch`.
     debit_seq: u64,
 }
@@ -60,10 +75,38 @@ impl Contract {
             name,
             symbol,
             base_uri,
+            prompt,
+            starter,
+            max_supply,
+            tee,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
             "name and symbol must not be empty"
+        );
+        let or_default = |text: String, default: &str| {
+            if text.trim().is_empty() {
+                default.to_string()
+            } else {
+                text
+            }
+        };
+        let prompt = or_default(prompt, DEFAULT_PROMPT);
+        let starter = or_default(starter, DEFAULT_STARTER);
+        require!(
+            prompt.chars().count() <= MAX_PROMPT_LEN,
+            format!("prompt must be at most {MAX_PROMPT_LEN} characters")
+        );
+        require!(
+            starter.chars().count() <= MAX_STARTER_LEN,
+            format!("starter must be at most {MAX_STARTER_LEN} characters")
+        );
+        if let Some(tee) = &tee {
+            tee.validate();
+        }
+        require!(
+            max_supply.is_none_or(|max| max.0 > 0),
+            "max_supply must be at least 1"
         );
         Self {
             tokens: NonFungibleToken::new(
@@ -81,8 +124,13 @@ impl Contract {
             base_uri,
             name,
             symbol,
+            prompt,
+            starter,
+            max_supply: max_supply.map(|max| max.0),
+            tee,
             next_token_id: 1,
             treasury_accrued: NearToken::from_yoctonear(0),
+            inference_accrued: NearToken::from_yoctonear(0),
             debit_seq: 0,
         }
     }
@@ -93,6 +141,10 @@ impl Contract {
     #[payable]
     pub fn mint(&mut self) -> Token {
         let deposit = env::attached_deposit();
+        require!(
+            self.max_supply.is_none_or(|max| self.next_token_id <= max),
+            "Sold out"
+        );
         let storage_before = env::storage_usage();
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
@@ -152,6 +204,21 @@ impl Contract {
         Some(KatView::new(owner_id, kat))
     }
 
+    /// How the collection presents itself: its public prompt, the context
+    /// every token starts from, and where contexts may be opened.
+    pub fn get_collection(&self) -> CollectionView {
+        CollectionView {
+            name: self.name.clone(),
+            symbol: self.symbol.clone(),
+            base_uri: self.base_uri.clone(),
+            prompt: self.prompt.clone(),
+            starter: self.starter.clone(),
+            max_supply: self.max_supply.map(U64),
+            tee: self.tee.clone(),
+            minted: U64(self.next_token_id - 1),
+        }
+    }
+
     pub fn get_config(&self) -> ConfigView {
         ConfigView {
             admin_id: self.admin_id.clone(),
@@ -159,6 +226,7 @@ impl Contract {
             treasury_id: self.treasury_id.clone(),
             mint_price: self.mint_price,
             treasury_accrued: self.treasury_accrued,
+            inference_accrued: self.inference_accrued,
             debit_seq: self.debit_seq.into(),
         }
     }

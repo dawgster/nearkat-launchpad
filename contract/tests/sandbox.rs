@@ -231,7 +231,7 @@ async fn debit_batch_is_all_or_nothing() -> TestResult {
 }
 
 #[tokio::test]
-async fn withdraw_pays_mint_price_and_debits_to_treasury() -> TestResult {
+async fn mint_revenue_goes_to_the_treasury_and_inference_to_the_keeper() -> TestResult {
     let env = setup().await?;
     let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
     call(
@@ -243,20 +243,43 @@ async fn withdraw_pays_mint_price_and_debits_to_treasury() -> TestResult {
     )
     .await??;
     let balance_of = |user: &User| Tokens::account(user.id.clone()).near_balance();
-    let before = balance_of(&env.treasury)
+    let treasury_before = balance_of(&env.treasury)
+        .fetch_from(&env.network)
+        .await?
+        .total;
+    let keeper_before = balance_of(&env.keeper)
         .fetch_from(&env.network)
         .await?
         .total;
 
     call(&env, &env.admin, "withdraw_treasury", json!({}), YOCTO).await??;
+    call(
+        &env,
+        &env.keeper,
+        "withdraw_inference",
+        json!({}),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
 
-    let after = balance_of(&env.treasury)
+    let treasury_after = balance_of(&env.treasury)
         .fetch_from(&env.network)
         .await?
         .total;
-    assert_eq!(
-        after.saturating_sub(before),
-        NearToken::from_millinear(1500)
+    let keeper_after = balance_of(&env.keeper)
+        .fetch_from(&env.network)
+        .await?
+        .total;
+    assert_eq!(treasury_after.saturating_sub(treasury_before), PRICE);
+    // The keeper paid gas for its call, so it gains a little less than the debit.
+    let keeper_gain = keeper_after.saturating_sub(keeper_before);
+    assert!(
+        keeper_gain > NearToken::from_millinear(400),
+        "{keeper_gain}"
+    );
+    assert!(
+        keeper_gain <= NearToken::from_millinear(500),
+        "{keeper_gain}"
     );
     Ok(())
 }

@@ -30,11 +30,7 @@ fn deploy() -> Contract {
         acc("keeper.near"),
         acc("treasury.near"),
         PRICE,
-        Collection {
-            name: "Nearkat".to_string(),
-            symbol: "KAT".to_string(),
-            base_uri: "https://art.example/".to_string(),
-        },
+        collection("Nearkat", "KAT", "https://art.example/"),
     )
 }
 
@@ -45,11 +41,30 @@ fn deploy_as(name: &str, symbol: &str, base_uri: &str) -> Contract {
         acc("keeper.near"),
         acc("treasury.near"),
         PRICE,
-        Collection {
-            name: name.to_string(),
-            symbol: symbol.to_string(),
-            base_uri: base_uri.to_string(),
-        },
+        collection(name, symbol, base_uri),
+    )
+}
+
+fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
+    Collection {
+        name: name.to_string(),
+        symbol: symbol.to_string(),
+        base_uri: base_uri.to_string(),
+        prompt: String::new(),
+        starter: String::new(),
+        max_supply: None,
+        tee: None,
+    }
+}
+
+fn deploy_with(collection: Collection) -> Contract {
+    ctx("admin.near", NearToken::from_yoctonear(0));
+    Contract::new(
+        acc("admin.near"),
+        acc("keeper.near"),
+        acc("treasury.near"),
+        PRICE,
+        collection,
     )
 }
 
@@ -206,7 +221,7 @@ fn set_context_rejects_unknown_kat() {
 }
 
 #[test]
-fn debit_batch_moves_balance_to_treasury() {
+fn debit_batch_moves_balance_to_the_inference_account() {
     let mut c = deploy();
     ctx("alice.near", NearToken::from_near(3));
     c.mint();
@@ -218,10 +233,10 @@ fn debit_batch_moves_balance_to_treasury() {
     );
     let after = c.get_kat("1".to_string()).unwrap().balance;
     assert_eq!(after, before.saturating_sub(NearToken::from_millinear(5)));
-    assert_eq!(
-        c.get_config().treasury_accrued,
-        PRICE.saturating_add(NearToken::from_millinear(5))
-    );
+    let cfg = c.get_config();
+    assert_eq!(cfg.inference_accrued, NearToken::from_millinear(5));
+    // Mint revenue and inference charges are owed to different accounts.
+    assert_eq!(cfg.treasury_accrued, PRICE);
 }
 
 #[test]
@@ -557,4 +572,147 @@ fn new_rejects_an_empty_name() {
 #[should_panic(expected = "name and symbol must not be empty")]
 fn new_rejects_an_empty_symbol() {
     deploy_as("Pocket Pals", " ", "");
+}
+
+#[test]
+fn an_unconfigured_collection_is_the_original_nearkat() {
+    let c = deploy();
+    let view = c.get_collection();
+    assert_eq!(view.prompt, crate::DEFAULT_PROMPT);
+    assert_eq!(view.starter, crate::DEFAULT_STARTER);
+    assert_eq!(view.max_supply, None);
+    assert_eq!(view.tee, None);
+    assert_eq!(view.minted.0, 0);
+}
+
+#[test]
+fn a_collection_publishes_its_own_prompt() {
+    let c = deploy_with(Collection {
+        prompt: "You are {name} #{token_id}, a patient Latin tutor.".to_string(),
+        starter: "Your student has not told you anything yet.".to_string(),
+        max_supply: Some(3.into()),
+        ..collection("Magister", "LAT", "")
+    });
+    let view = c.get_collection();
+    assert_eq!(view.name, "Magister");
+    assert_eq!(
+        view.prompt,
+        "You are {name} #{token_id}, a patient Latin tutor."
+    );
+    assert_eq!(view.starter, "Your student has not told you anything yet.");
+    assert_eq!(view.max_supply, Some(3.into()));
+}
+
+#[test]
+fn a_collection_can_require_a_phala_app() {
+    let tee = crate::TeeRequirement::Phala {
+        app_id: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567".to_string(),
+    };
+    let c = deploy_with(Collection {
+        tee: Some(tee.clone()),
+        ..collection("Magister", "LAT", "")
+    });
+    assert_eq!(c.get_collection().tee, Some(tee));
+}
+
+#[test]
+#[should_panic(expected = "app_id must be 1 to 64 lowercase hex characters")]
+fn new_rejects_a_malformed_phala_app_id() {
+    deploy_with(Collection {
+        tee: Some(crate::TeeRequirement::Phala {
+            app_id: "not-hex".to_string(),
+        }),
+        ..collection("Magister", "LAT", "")
+    });
+}
+
+#[test]
+#[should_panic(expected = "prompt must be at most 4000 characters")]
+fn new_rejects_an_overlong_prompt() {
+    deploy_with(Collection {
+        prompt: "a".repeat(4001),
+        ..collection("Magister", "LAT", "")
+    });
+}
+
+#[test]
+#[should_panic(expected = "starter must be at most 2000 characters")]
+fn new_rejects_an_overlong_starter() {
+    deploy_with(Collection {
+        starter: "a".repeat(2001),
+        ..collection("Magister", "LAT", "")
+    });
+}
+
+#[test]
+#[should_panic(expected = "max_supply must be at least 1")]
+fn new_rejects_a_zero_supply() {
+    deploy_with(Collection {
+        max_supply: Some(0.into()),
+        ..collection("Lantern", "LNT", "")
+    });
+}
+
+#[test]
+fn mint_counts_tokens_up_to_the_supply_cap() {
+    let mut c = deploy_with(Collection {
+        max_supply: Some(2.into()),
+        ..collection("Lantern", "LNT", "")
+    });
+    for _ in 0..2 {
+        ctx("alice.near", NearToken::from_near(2));
+        c.mint();
+    }
+    assert_eq!(c.get_collection().minted.0, 2);
+}
+
+#[test]
+#[should_panic(expected = "Sold out")]
+fn mint_refuses_past_the_supply_cap() {
+    let mut c = deploy_with(Collection {
+        max_supply: Some(1.into()),
+        ..collection("Lantern", "LNT", "")
+    });
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("bob.near", NearToken::from_near(2));
+    c.mint();
+}
+
+#[test]
+fn withdraw_inference_zeroes_what_the_keeper_is_owed() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+    let _ = c.withdraw_inference();
+    assert!(c.get_config().inference_accrued.is_zero());
+    assert_eq!(c.get_config().treasury_accrued, PRICE);
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper can call this method")]
+fn withdraw_inference_rejects_the_admin() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(5))],
+    );
+    ctx("admin.near", YOCTO);
+    let _ = c.withdraw_inference();
+}
+
+#[test]
+#[should_panic(expected = "Nothing to withdraw")]
+fn withdraw_inference_rejects_empty() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.withdraw_inference();
 }

@@ -35,7 +35,8 @@ impl Contract {
         kat.context_version = version.0;
     }
 
-    /// Moves each amount from a kat's balance to the treasury. Keeper only.
+    /// Moves each amount from a kat's balance to the inference account, which
+    /// the keeper withdraws to pay for inference. Keeper only.
     /// Any kat with insufficient balance fails the whole batch.
     ///
     /// `seq` must be one more than the last applied batch, so a batch that is
@@ -55,10 +56,10 @@ impl Contract {
             kat.balance = kat.balance.checked_sub(amount).unwrap_or_else(|| {
                 env::panic_str(&format!("Insufficient balance for kat {token_id}"))
             });
-            self.treasury_accrued = self
-                .treasury_accrued
+            self.inference_accrued = self
+                .inference_accrued
                 .checked_add(amount)
-                .unwrap_or_else(|| env::panic_str("Treasury overflow"));
+                .unwrap_or_else(|| env::panic_str("Inference overflow"));
         }
     }
 }
