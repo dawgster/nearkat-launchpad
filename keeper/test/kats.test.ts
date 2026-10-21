@@ -579,3 +579,55 @@ describe("transfer", () => {
     expect(inference.calls).toHaveLength(1);
   });
 });
+
+describe("a launched collection", () => {
+  const tutor = {
+    name: "Magister",
+    prompt: "You are {name} #{token_id}, a patient Latin tutor. Answer in English.",
+    starter: "Your student has not told you anything yet.",
+    tee: null,
+  };
+
+  async function setupTutor() {
+    const chain = new FakeChain();
+    const store = new MemoryStore();
+    const inference = new FakeInference();
+    const kats = new KatService({
+      chain,
+      store,
+      keys,
+      inference,
+      meter: new Meter(chain),
+      prices: { chat: CHAT, save: SAVE },
+      collection: tutor,
+      retryDelayMs: 0,
+      log: () => undefined,
+    });
+    chain.mint("1", "alice.near", NEAR);
+    await kats.wakeNew();
+    return { chain, store, inference, kats };
+  }
+
+  test("starts every token from the collection's own starter", async () => {
+    const { chain, store } = await setupTutor();
+    expect((await onChainContext(chain, store)).personality).toBe(tutor.starter);
+  });
+
+  test("frames the model with the collection's prompt, not the nearkat one", async () => {
+    const { inference, kats } = await setupTutor();
+    await kats.chat("alice.near", "1", "salve");
+    const system = inference.calls[0]?.[0]?.content ?? "";
+    expect(system).toContain("You are Magister #1, a patient Latin tutor.");
+    expect(system).toContain(tutor.starter);
+    expect(system).not.toContain("meerkat");
+  });
+
+  test("shows the fixed prompt when saving, so the character stays consistent with it", async () => {
+    const { inference, kats } = await setupTutor();
+    await growUp(kats, "alice.near");
+    const update = inference.calls.find((call) => call[0]?.content.includes("CHARACTER:"));
+    expect(update?.[1]?.content).toContain(
+      "Fixed instructions:\nYou are Magister #1, a patient Latin tutor.",
+    );
+  });
+});

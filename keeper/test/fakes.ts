@@ -1,4 +1,5 @@
 import type { Chain, DebitResult } from "../src/chain.ts";
+import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
@@ -11,6 +12,7 @@ export class FakeChain implements Chain {
   /** Every applied batch, as `[seq, items]`. */
   readonly debits: Array<[number, Array<[string, string]>]> = [];
   keeperId = "keeper.near";
+  collection: CollectionInfo = DEFAULT_COLLECTION;
   debitSeq = 0;
   /** "lost": the call never reaches the contract. "unconfirmed": it applies, then the reply is lost. */
   debitFailure: "none" | "lost" | "unconfirmed" = "none";
@@ -91,6 +93,10 @@ export class FakeChain implements Chain {
 
   async getKeeperId(): Promise<string> {
     return this.keeperId;
+  }
+
+  async getCollection(): Promise<CollectionInfo> {
+    return this.collection;
   }
 
   #kat(tokenId: string): KatView {

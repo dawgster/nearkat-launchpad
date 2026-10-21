@@ -83,3 +83,30 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, [name]: value })).toThrow(name);
   });
 });
+
+describe("keeper mode", () => {
+  const env = {
+    CONTRACT_ID: "nearkat.near",
+    KEEPER_ACCOUNT_ID: "keeper.near",
+    NEAR_AI_API_KEY: "key",
+  };
+
+  test("defaults to local", () => {
+    expect(loadConfig(env).mode).toBe("local");
+  });
+
+  test("accepts phala and a simulator endpoint", () => {
+    const config = loadConfig({ ...env, KEEPER_MODE: "phala", DSTACK_ENDPOINT: "http://sim:8090" });
+    expect(config).toMatchObject({ mode: "phala", dstackEndpoint: "http://sim:8090" });
+  });
+
+  test("refuses a root secret in phala mode, since the operator would know it", () => {
+    expect(() =>
+      loadConfig({ ...env, KEEPER_MODE: "phala", KEEPER_ROOT_SECRET: "07".repeat(32) }),
+    ).toThrow(/must not be set in phala mode/);
+  });
+
+  test("rejects an unknown mode", () => {
+    expect(() => loadConfig({ ...env, KEEPER_MODE: "sgx" })).toThrow(/local or phala/);
+  });
+});

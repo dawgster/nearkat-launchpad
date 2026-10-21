@@ -1,4 +1,5 @@
 import { FunctionCallError, type Near } from "near-kit";
+import type { CollectionInfo } from "./collection.ts";
 import type { KatView } from "./types.ts";
 
 /** How the contract answered a `debit_batch` call. */
@@ -21,6 +22,8 @@ export interface Chain {
   getDebitSeq(): Promise<number>;
   /** The account the contract accepts keeper calls from. */
   getKeeperId(): Promise<string>;
+  /** The collection's public prompt, starter and TEE requirement. */
+  getCollection(): Promise<CollectionInfo>;
 }
 
 export class NearChain implements Chain {
@@ -83,6 +86,19 @@ export class NearChain implements Chain {
 
   async getKeeperId(): Promise<string> {
     return (await this.#config()).keeper_id;
+  }
+
+  async getCollection(): Promise<CollectionInfo> {
+    const view = await this.#near.view<CollectionInfo>(
+      this.#contractId,
+      "get_collection",
+      {},
+      { finality: this.#finality },
+    );
+    if (!view) {
+      throw new Error(`Contract ${this.#contractId} returned no collection`);
+    }
+    return { name: view.name, prompt: view.prompt, starter: view.starter, tee: view.tee ?? null };
   }
 
   async #config(): Promise<{ keeper_id: string; debit_seq: string }> {

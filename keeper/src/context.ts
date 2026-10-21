@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
+import { DEFAULT_COLLECTION } from "./collection.ts";
 import { open, seal } from "./crypto.ts";
 import { CorruptContextError } from "./errors.ts";
 import type { Keys } from "./keys.ts";
 import type { ContextDoc } from "./types.ts";
 
-export const STARTER_PERSONALITY =
-  "You are a newly hatched nearkat: curious, playful and a little mischievous. " +
-  "You do not know much about the world yet, and you are eager to learn from your owner.";
+/** The original collection's starter context. */
+export const STARTER_PERSONALITY = DEFAULT_COLLECTION.starter;
 
 /** The JSON that is hashed: every field except the salt, in a fixed order. */
 export function canonicalJson(doc: ContextDoc): string {

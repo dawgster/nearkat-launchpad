@@ -1,4 +1,8 @@
 export interface Config {
+  /** "local": root secret from the environment. "phala": from dstack's KMS, inside a Phala app. */
+  mode: "local" | "phala";
+  /** The dstack guest agent. Defaults to its unix socket; a URL reaches the simulator. */
+  dstackEndpoint: string | undefined;
   network: "testnet" | "mainnet" | "sandbox";
   /** Overrides the network's default RPC endpoint. Required for a sandbox. */
   rpcUrl: string | undefined;
@@ -58,6 +62,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (network === "sandbox" && !env.NEAR_RPC_URL) {
     throw new Error("NEAR_RPC_URL is required when NEAR_NETWORK is sandbox");
   }
+  const mode = env.KEEPER_MODE ?? "local";
+  if (mode !== "local" && mode !== "phala") {
+    throw new Error("KEEPER_MODE must be local or phala");
+  }
+  if (mode === "phala" && env.KEEPER_ROOT_SECRET) {
+    // A secret from the environment is one the operator knows: refuse rather than ignore it.
+    throw new Error("KEEPER_ROOT_SECRET must not be set in phala mode; keys come from dstack");
+  }
   const port = Number(env.PORT ?? "8787");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
@@ -67,6 +79,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     throw new Error("NEAR_AI_MAX_TOKENS must be a positive whole number");
   }
   return {
+    mode,
+    dstackEndpoint: env.DSTACK_ENDPOINT || undefined,
     network,
     rpcUrl: env.NEAR_RPC_URL || undefined,
     contractId: required(env, "CONTRACT_ID"),
