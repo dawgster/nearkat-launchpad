@@ -1,13 +1,18 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { base58 } from "@scure/base";
 import { generateKey, Near, type PrivateKey } from "near-kit";
 import { Sandbox } from "near-kit/sandbox";
 
 const KEEPER_DIR = resolve(process.env.KEEPER_DIR ?? "../keeper");
 const WASM = resolve(process.env.CONTRACT_WASM ?? "../contract/target/near/nearkat_nft.wasm");
+const LAUNCHPAD_WASM = resolve(
+  process.env.LAUNCHPAD_WASM ?? "../launchpad/target/near/nearkat_launchpad.wasm",
+);
 const KEEPER_PORT = 8788;
 const MODEL_PORT = 8789;
 export const ALICE_URL = "http://localhost:3000";
@@ -81,8 +86,10 @@ async function requireFree(url: string): Promise<void> {
 }
 
 export default async function globalSetup() {
-  if (!existsSync(WASM)) {
-    throw new Error(`Build the contract first: ${WASM} is missing`);
+  for (const wasm of [WASM, LAUNCHPAD_WASM]) {
+    if (!existsSync(wasm)) {
+      throw new Error(`Build the contracts first: ${wasm} is missing`);
+    }
   }
   for (const url of [ALICE_URL, BOB_URL, `http://127.0.0.1:${KEEPER_PORT}/attestation`]) {
     await requireFree(url);
@@ -93,6 +100,7 @@ export default async function globalSetup() {
   const stamp = Date.now();
   const names = {
     contract: `nearkat-${stamp}.${root}`,
+    launchpad: `launch-${stamp}.${root}`,
     keeper: `keeper-${stamp}.${root}`,
     alice: `alice-${stamp}.${root}`,
     bob: `bob-${stamp}.${root}`,
@@ -131,6 +139,7 @@ export default async function globalSetup() {
   await account(names.alice, alice.publicKey.toString());
   await account(names.bob, bob.publicKey.toString());
   await account(names.contract, owner.publicKey.toString());
+  await account(names.launchpad, owner.publicKey.toString());
   await new Near({
     network: sandbox,
     privateKey: owner.secretKey as PrivateKey,
@@ -147,6 +156,33 @@ export default async function globalSetup() {
     })
     .send();
 
+  // The launchpad launches collections from the same contract code, published once by hash.
+  const code = readFileSync(WASM);
+  await rootNear.transaction(root).publishContract(code, { identifiedBy: "hash" }).send();
+  await new Near({
+    network: sandbox,
+    privateKey: owner.secretKey as PrivateKey,
+    defaultSignerId: names.launchpad,
+  })
+    .transaction(names.launchpad)
+    .deployContract(names.launchpad, readFileSync(LAUNCHPAD_WASM))
+    .functionCall(names.launchpad, "new", {
+      admin_id: root,
+      keeper_id: names.keeper,
+      launch_fee: (10n ** 24n).toString(),
+      collection_funding: (5n * 10n ** 23n).toString(),
+    })
+    .send();
+  await rootNear
+    .transaction(root)
+    .functionCall(
+      names.launchpad,
+      "set_collection_code_hash",
+      { code_hash: base58.encode(createHash("sha256").update(code).digest()) },
+      { attachedDeposit: "1 yocto" },
+    )
+    .send();
+
   // One web server per person: the dev wallet's key is fixed when the server starts.
   const web = (port: number, id: string, key: string) =>
     // Started with node directly, not through npx, so stopping it stops the server itself.
@@ -159,6 +195,7 @@ export default async function globalSetup() {
         VITE_NEAR_RPC_URL: sandbox.rpcUrl,
         VITE_CONTRACT_ID: names.contract,
         VITE_KEEPER_URL: `http://127.0.0.1:${KEEPER_PORT}`,
+        VITE_FACTORY_ID: names.launchpad,
         VITE_DEV_WALLET_ID: id,
         VITE_DEV_WALLET_KEY: key,
       },
@@ -168,6 +205,7 @@ export default async function globalSetup() {
   await waitFor(ALICE_URL);
   await waitFor(BOB_URL);
   process.env.E2E_BOB_ID = names.bob;
+  process.env.E2E_LAUNCHPAD_ID = names.launchpad;
 
   return async () => {
     for (const child of children) {

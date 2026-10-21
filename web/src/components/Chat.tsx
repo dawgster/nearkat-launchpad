@@ -17,11 +17,20 @@ export interface ChatProps {
   onReply: (reply: ChatReply) => void;
   /** Called when the kat has run out of NEAR. */
   onOutOfBalance: () => void;
+  /** Openers offered before the first message, so nobody faces a blank box. */
+  starters?: string[];
 }
 
 const MAX_CHARS = 4000;
 
-export function Chat({ katName, chatPrice, send, onReply, onOutOfBalance }: ChatProps) {
+export function Chat({
+  katName,
+  chatPrice,
+  send,
+  onReply,
+  onOutOfBalance,
+  starters = [],
+}: ChatProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -34,9 +43,9 @@ export function Chat({ katName, chatPrice, send, onReply, onOutOfBalance }: Chat
     end.current?.scrollIntoView?.({ block: "end" });
   }, [lines.length, thinking]);
 
-  async function submit(event?: FormEvent) {
+  async function submit(event?: FormEvent, text?: string) {
     event?.preventDefault();
-    const message = draft.trim();
+    const message = (text ?? draft).trim();
     if (!message || thinking) {
       return;
     }
@@ -75,10 +84,27 @@ export function Chat({ katName, chatPrice, send, onReply, onOutOfBalance }: Chat
     <section aria-label={`Conversation with ${katName}`} className="flex min-h-[28rem] flex-col">
       <div className="flex-1 space-y-5 overflow-y-auto pr-1" aria-live="polite">
         {lines.length === 0 && !thinking && (
-          <p className="max-w-prose text-mist">
-            Say something to {katName}. Each message costs {formatNear(chatPrice)} NEAR from its
-            balance.
-          </p>
+          <div>
+            <p className="max-w-prose text-mist">
+              Say something to {katName}. Each message costs {formatNear(chatPrice)} NEAR from its
+              balance.
+            </p>
+            {starters.length > 0 && (
+              <ul className="mt-4 flex flex-wrap gap-2" aria-label="Ways to start">
+                {starters.map((starter) => (
+                  <li key={starter}>
+                    <button
+                      type="button"
+                      className="rounded-full border border-lamp/40 px-3.5 py-1.5 text-sm text-cream hover:border-lamp hover:bg-lamp/10"
+                      onClick={() => void submit(undefined, starter)}
+                    >
+                      {starter}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
         {lines.map((line, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: lines are only ever appended.

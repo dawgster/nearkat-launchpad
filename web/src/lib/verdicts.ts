@@ -1,4 +1,5 @@
 import type { ContextDoc } from "./keeper.ts";
+import type { PhalaCheck } from "./tdx.ts";
 import { contextHash, type SignatureCheck } from "./verify.ts";
 
 /**
@@ -46,4 +47,29 @@ export function signatureVerdict(check: SignatureCheck | null): Verdict {
  */
 export function keyVerdict(held: boolean | null): Verdict {
   return held === null ? "unknown" : held ? "partial" : "fail";
+}
+
+/**
+ * Whether only the owner can read a token's mind, as far as the browser can
+ * tell. A Phala report that holds up in every way this page can check is
+ * still "partial": Intel's signature on the quote, and which compose hashes
+ * the app's KMS allows, are checked elsewhere.
+ */
+export function privacyVerdict(
+  mode: string | null,
+  check: PhalaCheck | null,
+  requiredAppId: string | null,
+): Verdict {
+  if (mode === "local") {
+    return "fail";
+  }
+  if (mode !== "phala" || !check) {
+    return "unknown";
+  }
+  if (check.status === "unreadable") {
+    return "fail";
+  }
+  const holds = check.bindsKey && check.logMatchesQuote && check.claimMatchesLog;
+  const rightApp = requiredAppId === null || check.appId === requiredAppId.toLowerCase();
+  return holds && rightApp ? "partial" : "fail";
 }

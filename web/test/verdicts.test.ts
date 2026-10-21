@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { ContextDoc } from "../src/lib/keeper.ts";
-import { keyVerdict, recordVerdict, signatureVerdict } from "../src/lib/verdicts.ts";
+import {
+  keyVerdict,
+  privacyVerdict,
+  recordVerdict,
+  signatureVerdict,
+} from "../src/lib/verdicts.ts";
 import { contextHash } from "../src/lib/verify.ts";
 
 const doc: ContextDoc = {
@@ -76,5 +81,38 @@ describe("keyVerdict", () => {
 
   test("is unknown when the lookup could not be made", () => {
     expect(keyVerdict(null)).toBe("unknown");
+  });
+});
+
+describe("privacyVerdict", () => {
+  const good = {
+    status: "read",
+    bindsKey: true,
+    logMatchesQuote: true,
+    appId: "0a1b",
+    claimMatchesLog: true,
+  } as const;
+
+  test("fails a local keeper, whose operator can read every mind", () => {
+    expect(privacyVerdict("local", null, null)).toBe("fail");
+  });
+
+  test("is only partial for a Phala report that holds up, since Intel's signature is checked elsewhere", () => {
+    expect(privacyVerdict("phala", good, null)).toBe("partial");
+    expect(privacyVerdict("phala", good, "0A1B")).toBe("partial");
+  });
+
+  test("fails a keeper running as an app the collection doesn't name", () => {
+    expect(privacyVerdict("phala", good, "ffff")).toBe("fail");
+  });
+
+  test("fails a report that doesn't hold up", () => {
+    expect(privacyVerdict("phala", { ...good, bindsKey: false }, null)).toBe("fail");
+    expect(privacyVerdict("phala", { ...good, logMatchesQuote: false }, null)).toBe("fail");
+    expect(privacyVerdict("phala", { status: "unreadable", reason: "x" }, null)).toBe("fail");
+  });
+
+  test("can't say anything about a mode it doesn't know", () => {
+    expect(privacyVerdict("sgx", null, null)).toBe("unknown");
   });
 });

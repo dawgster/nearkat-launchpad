@@ -6,6 +6,8 @@ export interface AppConfig {
   keeperUrl: string;
   /** The recipient the keeper's sign-in message must name. Anything else is not signed. */
   authRecipient: string;
+  /** The launchpad contract. Null hides the launchpad. */
+  factoryId: string | null;
   /** Development only: sign with this key instead of a browser wallet. */
   devWallet: { accountId: string; privateKey: string } | null;
 }
@@ -43,6 +45,7 @@ export function loadConfig(env: Env, options: { production?: boolean } = {}): Ap
     contractId,
     keeperUrl: (env.VITE_KEEPER_URL ?? "http://localhost:8787").replace(/\/+$/, ""),
     authRecipient: env.VITE_AUTH_RECIPIENT ?? "nearkat.xyz",
+    factoryId: env.VITE_FACTORY_ID || null,
     devWallet,
   };
 }

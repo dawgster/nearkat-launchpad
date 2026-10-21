@@ -3,8 +3,15 @@ import { Link, useParams } from "react-router";
 import { Shell } from "../components/Shell.tsx";
 import { describeProblem } from "../lib/problems.ts";
 import { recallProof } from "../lib/proof.ts";
+import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
-import { keyVerdict, recordVerdict, signatureVerdict, type Verdict } from "../lib/verdicts.ts";
+import {
+  keyVerdict,
+  privacyVerdict,
+  recordVerdict,
+  signatureVerdict,
+  type Verdict,
+} from "../lib/verdicts.ts";
 import { checkSignature, contextHash } from "../lib/verify.ts";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
@@ -61,6 +68,8 @@ export function Verify() {
   const [chain, reloadChain] = useAsync(id, async () => ({
     kat: await contract.getKat(id),
     config: await contract.getConfig(),
+    // Older contracts have no collection view; that only means no TEE requirement.
+    collection: await contract.getCollection().catch(() => null),
   }));
   const [attestation] = useAsync("attestation", () => keeper.attestation());
   const kat = chain.status === "ready" ? chain.data.kat : null;
@@ -112,6 +121,19 @@ export function Verify() {
   const recomputed = context.status === "ready" ? safeHash(() => contextHash(context.data)) : null;
   const mode = attestation.status === "ready" ? String(attestation.data.mode ?? "unknown") : null;
   const proof = isOwner && wallet.accountId ? recallProof(wallet.accountId, id) : null;
+  const requiredApp = chain.data.collection?.tee?.Phala.app_id ?? null;
+  const phala =
+    mode === "phala" && attestation.status === "ready"
+      ? checkPhalaReport(attestation.data as unknown as PhalaReport)
+      : null;
+  const reportedApp =
+    attestation.status === "ready" && typeof attestation.data.app_id === "string"
+      ? attestation.data.app_id
+      : null;
+  const composeHash =
+    attestation.status === "ready" && typeof attestation.data.compose_hash === "string"
+      ? attestation.data.compose_hash
+      : null;
   const signature = proof ? checkSignature(proof) : null;
 
   return (
@@ -204,18 +226,69 @@ export function Verify() {
         </Check>
 
         <Check
-          verdict={mode === "local" ? "fail" : "unknown"}
+          verdict={privacyVerdict(mode, phala, requiredApp)}
           title="Nobody but the owner can read its mind"
         >
-          {mode === "local" ? (
+          {requiredApp && (
+            <p>
+              This collection allows its minds to be opened only inside Phala app{" "}
+              <Mono>{requiredApp}</Mono>.
+            </p>
+          )}
+          {mode === "local" && (
             <p>
               Not yet. This keeper reports that it runs in local mode, so whoever operates it can
               read every kat's mind. That changes when the keeper moves into a sealed enclave.
             </p>
-          ) : (
+          )}
+          {mode === "phala" && phala?.status === "unreadable" && (
+            <p>The keeper's enclave report can't be read: {phala.reason}.</p>
+          )}
+          {mode === "phala" && phala?.status === "read" && (
+            <>
+              <p>
+                The keeper reports that it runs as Phala app <Mono>{reportedApp ?? "?"}</Mono>,
+                whose keys come from dstack's key service and are never seen by its operator.
+              </p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>
+                  {phala.bindsKey
+                    ? "Its TDX quote commits to the key the keeper signs with."
+                    : "Its TDX quote does not commit to the key the keeper reports."}
+                </li>
+                <li>
+                  {phala.logMatchesQuote
+                    ? "Its event log replays to the measurement in the quote."
+                    : "Its event log does not match the measurement in the quote."}
+                </li>
+                <li>
+                  {phala.appId === null
+                    ? "Its event log has no intact app id."
+                    : phala.claimMatchesLog
+                      ? `The measured app id is ${phala.appId}.`
+                      : `The measured app id is ${phala.appId}, not the one it reports.`}
+                </li>
+                {requiredApp && phala.appId !== null && phala.appId !== requiredApp && (
+                  <li>That is not the app this collection requires.</li>
+                )}
+              </ul>
+              <p>
+                Not checked here: Intel's signature on the quote, and which code versions (compose
+                hashes) the app's key service allows. Paste the quote into Phala's attestation
+                explorer to check those.
+                {composeHash && (
+                  <>
+                    {" "}
+                    Running compose hash <Mono>{composeHash}</Mono>.
+                  </>
+                )}
+              </p>
+            </>
+          )}
+          {mode !== "local" && mode !== "phala" && (
             <p>
               {mode
-                ? `The keeper reports mode "${mode}". This page can't check an enclave report yet.`
+                ? `The keeper reports mode "${mode}", which this page can't check.`
                 : "The keeper's report isn't available."}
             </p>
           )}

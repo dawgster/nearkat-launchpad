@@ -1,8 +1,10 @@
 import { BrowserRouter, Route, Routes } from "react-router";
 import { Shell } from "./components/Shell.tsx";
 import type { AppConfig } from "./lib/config.ts";
+import { Collection } from "./pages/Collection.tsx";
 import { Home } from "./pages/Home.tsx";
 import { Kat } from "./pages/Kat.tsx";
+import { Launch } from "./pages/Launch.tsx";
 import { Verify } from "./pages/Verify.tsx";
 import { ServicesProvider } from "./services.tsx";
 import type { WalletBackend } from "./wallet/backend.ts";
@@ -26,6 +28,8 @@ export function App({ config, backend }: { config: AppConfig; backend: WalletBac
             <Route path="/" element={<Home />} />
             <Route path="/kat/:id" element={<Kat />} />
             <Route path="/kat/:id/verify" element={<Verify />} />
+            <Route path="/launch" element={<Launch />} />
+            <Route path="/c/:contractId" element={<Collection />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

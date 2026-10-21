@@ -89,6 +89,25 @@ describe("Chat", () => {
     return { onReply, onOutOfBalance, box: screen.getByLabelText("Message to Nearkat #1") };
   }
 
+  test("offers openers before the first message, and sends one when picked", async () => {
+    const send = vi.fn(async () => reply("I don't have a name yet"));
+    render(
+      <Chat
+        katName="Nearkat #1"
+        chatPrice={CHAT}
+        send={send}
+        onReply={vi.fn()}
+        onOutOfBalance={vi.fn()}
+        starters={["Hello! Do you have a name?"]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Hello! Do you have a name?" }));
+    expect(send).toHaveBeenCalledWith("Hello! Do you have a name?");
+    expect(await screen.findByText("I don't have a name yet")).toBeTruthy();
+    // Once the conversation has started, the openers are gone.
+    expect(screen.queryByRole("list", { name: "Ways to start" })).toBeNull();
+  });
+
   test("shows the message and the kat's reply, and reports the reply", async () => {
     const send = vi.fn(async () => reply("meow back"));
     const { onReply, box } = setup(send);

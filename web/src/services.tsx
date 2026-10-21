@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo, useState
 import { type AppConfig, nearNetwork } from "./lib/config.ts";
 import { KatContract } from "./lib/contract.ts";
 import { createKeeper, type Keeper } from "./lib/keeper.ts";
+import { Launchpad } from "./lib/launchpad.ts";
 import { KeeperSession } from "./lib/session.ts";
 import { useWallet } from "./wallet/WalletProvider.tsx";
 
@@ -21,6 +22,10 @@ const USUAL_PRICES: Prices = { chat: 2n * 10n ** 21n, save: 5n * 10n ** 22n };
 
 export interface Services {
   config: AppConfig;
+  /** Reads any contract without a wallet. */
+  reader: Near;
+  /** The launchpad, read-only. Null when this deployment has none. */
+  launchpad: Launchpad | null;
   keeper: Keeper;
   prices: Prices;
   /** Reads the contract without a wallet. */
@@ -35,14 +40,16 @@ const ServicesContext = createContext<Services | null>(null);
 
 export function ServicesProvider({ config, children }: { config: AppConfig; children: ReactNode }) {
   const { near, accountId, signMessage } = useWallet();
-  const base = useMemo(
-    () => ({
+  const base = useMemo(() => {
+    const reader = new Near({ network: nearNetwork(config) });
+    return {
       config,
+      reader,
+      launchpad: config.factoryId ? new Launchpad(reader, config.factoryId) : null,
       keeper: createKeeper(config.keeperUrl),
-      contract: new KatContract(new Near({ network: nearNetwork(config) }), config.contractId),
-    }),
-    [config],
-  );
+      contract: new KatContract(reader, config.contractId),
+    };
+  }, [config]);
   const [prices, setPrices] = useState(USUAL_PRICES);
   useEffect(() => {
     let current = true;

@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { CharacterPanel } from "../components/CharacterPanel.tsx";
 import { Chat } from "../components/Chat.tsx";
 import { FundPanel } from "../components/FundPanel.tsx";
 import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
-import { KatBadge } from "../components/KatBadge.tsx";
+import { Growth } from "../components/Growth.tsx";
 import { Shell } from "../components/Shell.tsx";
+import { TokenArt } from "../components/TokenArt.tsx";
 import { formatNear, shorten } from "../lib/format.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
@@ -26,12 +27,15 @@ function Den({
   ownerId,
   chainBalance,
   recheckOwner,
+  onVersion,
 }: {
   tokenId: string;
   ownerId: string;
   chainBalance: bigint;
   /** Re-reads the kat from the contract, in case it has changed hands. */
   recheckOwner: () => Promise<void>;
+  /** Told the context version each time the mind is read, so the kat can be drawn grown. */
+  onVersion: (version: number) => void;
 }) {
   const { config, contract, keeper, prices, signer, session } = useServices();
   const navigate = useNavigate();
@@ -56,6 +60,12 @@ function Den({
       ? context.error.code
       : null;
   const [waits, setWaits] = useState(0);
+  const version = context.status === "ready" ? context.data.version : null;
+  useEffect(() => {
+    if (version !== null) {
+      onVersion(version);
+    }
+  }, [version, onVersion]);
   const settling = behind !== null && waits < SETTLE_WAITS;
   useEffect(() => {
     // Each failed attempt bumps `waits`, which schedules the next one.
@@ -121,6 +131,15 @@ function Den({
           void reloadContext();
         }}
         onOutOfBalance={() => setOutOfBalance(true)}
+        starters={
+          context.data.version === 1
+            ? [
+                "Hello! Do you have a name?",
+                "What can you see from your burrow?",
+                "Want to hear about my day?",
+              ]
+            : ["What do you remember about me?", "How have you been?"]
+        }
       />
       <aside className="min-w-0 space-y-10 lg:border-l lg:border-cream/10 lg:pl-10">
         <CharacterPanel character={context.data.personality} />
@@ -171,8 +190,18 @@ export function Kat() {
   const { id = "" } = useParams();
   const wallet = useWallet();
   const { contract } = useServices();
+  const { config } = useServices();
   const [kat, reloadKat] = useAsync(id, () => contract.getKat(id));
   const name = `Nearkat #${id}`;
+  // The keeper may have saved a newer version than the chain view shows yet.
+  const [seenVersion, setSeenVersion] = useState(0);
+  const onVersion = useCallback((version: number) => {
+    setSeenVersion((current) => Math.max(current, version));
+  }, []);
+  const version =
+    kat.status === "ready" && kat.data
+      ? Math.max(Number(kat.data.context_version), seenVersion)
+      : seenVersion;
 
   return (
     <Shell world="burrow">
@@ -195,7 +224,14 @@ export function Kat() {
         {kat.status === "ready" && kat.data && (
           <>
             <header className="mt-6 flex flex-wrap items-center gap-5">
-              <KatBadge tokenId={id} size={88} decorative />
+              <TokenArt
+                contractId={config.contractId}
+                tokenId={id}
+                contextVersion={version}
+                style="kat"
+                size={120}
+                decorative
+              />
               <div className="min-w-0">
                 <h1 className="text-4xl sm:text-5xl">{name}</h1>
                 <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-mist">
@@ -209,6 +245,11 @@ export function Kat() {
                     Verify this kat
                   </Link>
                 </p>
+                {version > 0 && (
+                  <div className="mt-3">
+                    <Growth contextVersion={version} />
+                  </div>
+                )}
               </div>
             </header>
             {wallet.accountId === kat.data.owner_id ? (
@@ -218,6 +259,7 @@ export function Kat() {
                 ownerId={kat.data.owner_id}
                 chainBalance={BigInt(kat.data.balance)}
                 recheckOwner={reloadKat}
+                onVersion={onVersion}
               />
             ) : (
               <p className="mt-10 max-w-prose text-mist">

@@ -27,11 +27,11 @@ npm run lint
 npm run e2e         # the whole story in a real browser
 ```
 
-`npm run e2e` starts a local NEAR sandbox, deploys the contract, starts the
-keeper from `../keeper` with a stand-in for the AI model, and serves this app
-twice, once per test wallet. It needs the contract wasm, so build that first
-with `cargo near build non-reproducible-wasm` in `../contract`, and a browser:
-`npx playwright install chromium`.
+`npm run e2e` starts a local NEAR sandbox, deploys the contract and the
+launchpad, starts the keeper from `../keeper` with a stand-in for the AI
+model, and serves this app twice, once per test wallet. It needs both wasms,
+so first run `cargo near build non-reproducible-wasm` in `../contract` and in
+`../launchpad`, and a browser: `npx playwright install chromium`.
 
 ## Pages
 
@@ -39,7 +39,9 @@ with `cargo near build non-reproducible-wasm` in `../contract`, and a browser:
 |---|---|
 | `/` | The surface: what a nearkat is, minting, and the kats in your wallet |
 | `/kat/:id` | The burrow: talk to a kat, read its character and memory, add NEAR, give it away |
-| `/kat/:id/verify` | What the browser can check about the kat and its keeper |
+| `/kat/:id/verify` | What the browser can check about the kat and its keeper, including a Phala keeper's TDX quote |
+| `/launch` | The launchpad: launch a collection with its own prompt (shown when `VITE_FACTORY_ID` is set) |
+| `/c/:contract` | A collection: its public prompt and starter, who can open minds, and minting |
 
 ## Notes
 
@@ -54,8 +56,10 @@ with `cargo near build non-reproducible-wasm` in `../contract`, and a browser:
 - The app only ever asks a wallet to sign the fixed sign-in message for the
   configured recipient, with a nonce from the keeper.
 
-- Kat portraits are a placeholder badge until the artwork exists; see
-  `src/components/KatBadge.tsx`.
+- Token art is generated in the browser (`src/lib/art.ts`): kat portraits for
+  the home collection, abstract sigils for launched ones. Each look comes
+  from the contract and token id; the stage (how far it has grown) comes from
+  the on-chain context version.
 - The keeper reads finalized blocks, so it trails the chain by a few seconds.
   After a mint or a transfer the kat page waits for it instead of showing an
   error.

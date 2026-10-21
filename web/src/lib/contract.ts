@@ -1,4 +1,5 @@
 import type { Near } from "near-kit";
+import type { CollectionView } from "./launchpad.ts";
 
 /** A kat as the contract's `get_kat` view returns it. */
 export interface KatView {
@@ -56,6 +57,19 @@ export class KatContract {
     return (await this.#view<KatView | null>("get_kat", { token_id: tokenId })) ?? null;
   }
 
+  get id(): string {
+    return this.#contractId;
+  }
+
+  /** The collection's public prompt, starter, supply and TEE requirement. */
+  async getCollection(): Promise<CollectionView> {
+    const collection = await this.#view<CollectionView>("get_collection", {});
+    if (!collection) {
+      throw new Error("The contract returned no collection");
+    }
+    return collection;
+  }
+
   async getConfig(): Promise<ContractConfig> {
     const config = await this.#view<ContractConfig>("get_config", {});
     if (!config) {
@@ -71,6 +85,18 @@ export class KatContract {
       limit: 100,
     });
     return (tokens ?? []).map((token) => token.token_id).sort((a, b) => Number(a) - Number(b));
+  }
+
+  /** An account's tokens with their context versions, which set how grown each one is drawn. */
+  async tokensWithGrowthOf(accountId: string): Promise<Array<{ id: string; version: number }>> {
+    const ids = await this.katsOf(accountId);
+    return Promise.all(
+      ids.map(async (id) => {
+        // A failed read only costs the picture its growth, never the listing.
+        const kat = await this.getKat(id).catch(() => null);
+        return { id, version: Number(kat?.context_version ?? 1) };
+      }),
+    );
   }
 
   /**

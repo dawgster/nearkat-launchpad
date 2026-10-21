@@ -82,3 +82,43 @@ test("the new owner finds the kat with the character it grew into", async ({ pag
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hmph. You said: who are you?")).toBeVisible();
 });
+
+test("a creator launches a collection with its own prompt, and mints from it", async ({ page }) => {
+  await page.goto(`${ALICE_URL}/launch`);
+  await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+  await page.getByLabel("Name").fill("Magister");
+  await page.getByLabel("Symbol").fill("lat");
+  // Any kind of prompt: here, a tutor rather than a creature.
+  await page.getByRole("button", { name: "Tutor" }).click();
+  await expect(page.getByLabel("Prompt")).toHaveValue(/patient Spanish tutor/);
+  await page.getByLabel("Mint price (NEAR)").fill("0.5");
+  await page.getByLabel("Supply").fill("2");
+  await page.getByLabel("Only inside a Phala TEE app").check();
+  await page.getByLabel("Phala app id").fill("0a1b2c3d");
+  await expect(page.getByRole("complementary", { name: "Preview" })).toContainText(
+    "You are Magister #1, a patient Spanish tutor.",
+  );
+  await shot(page, "4-launch");
+  await page.getByRole("button", { name: "Launch collection" }).click();
+
+  const launchpad = process.env.E2E_LAUNCHPAD_ID as string;
+  await expect(page).toHaveURL(`${ALICE_URL}/c/magister.${launchpad}`, { timeout: 60_000 });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Magister");
+  await expect(page.getByRole("region", { name: "The prompt every token shares" })).toContainText(
+    "You are {name} #{token_id}, a patient Spanish tutor.",
+  );
+  await expect(page.getByRole("region", { name: "Who can open the tokens' minds" })).toContainText(
+    "only Phala app 0a1b2c3d",
+  );
+  await expect(page.getByText("0 minted of 2")).toBeVisible();
+
+  await page.getByRole("button", { name: "Mint a token" }).click();
+  await expect(page.getByText("Minted Magister #1.")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("region", { name: "Yours" })).toContainText("Magister #1");
+  await expect(page.getByText("1 minted of 2")).toBeVisible();
+  await shot(page, "5-collection");
+
+  // The launchpad lists it for everyone.
+  await page.goto(`${ALICE_URL}/launch`);
+  await expect(page.getByRole("link", { name: /Magister/ })).toBeVisible();
+});

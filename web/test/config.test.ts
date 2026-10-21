@@ -11,6 +11,7 @@ describe("loadConfig", () => {
       contractId: "nearkat.testnet",
       keeperUrl: "http://localhost:8787",
       authRecipient: "nearkat.xyz",
+      factoryId: null,
       devWallet: null,
     });
   });
