@@ -121,6 +121,7 @@ export default async function globalSetup() {
     METER_JOURNAL: join(data, "meter.json"),
     PORT: String(KEEPER_PORT),
     WEB_ORIGIN: `${ALICE_URL},${BOB_URL}`,
+    LAUNCHPAD_ID: names.launchpad,
   });
   const attestation = await (await waitFor(`http://127.0.0.1:${KEEPER_PORT}/attestation`)).json();
 

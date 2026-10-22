@@ -118,7 +118,42 @@ test("a creator launches a collection with its own prompt, and mints from it", a
   await expect(page.getByText("1 minted of 2")).toBeVisible();
   await shot(page, "5-collection");
 
+  // This keeper runs in local mode, so it must refuse a collection that requires a Phala app.
+  await expect(
+    page.getByText(/This app's keeper doesn't serve this collection: refused/),
+  ).toBeVisible({
+    timeout: 60_000,
+  });
+
   // The launchpad lists it for everyone.
   await page.goto(`${ALICE_URL}/launch`);
   await expect(page.getByRole("link", { name: /Magister/ })).toBeVisible();
+});
+
+test("an owner talks to a token from a launched collection", async ({ page }) => {
+  await page.goto(`${ALICE_URL}/launch`);
+  await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+  await page.getByLabel("Name").fill("Lantern");
+  await page.getByLabel("Symbol").fill("LNT");
+  await page.getByRole("button", { name: "Game master" }).click();
+  await page.getByRole("button", { name: "Launch collection" }).click();
+  const launchpad = process.env.E2E_LAUNCHPAD_ID as string;
+  await expect(page).toHaveURL(`${ALICE_URL}/c/lantern.${launchpad}`, { timeout: 60_000 });
+
+  await page.getByRole("button", { name: "Mint a token" }).click();
+  await page.getByRole("link", { name: /Lantern #1/ }).click();
+  await expect(page).toHaveURL(`${ALICE_URL}/c/lantern.${launchpad}/kat/1`);
+
+  // The keeper finds the new launch and wakes the token with the collection's starter.
+  const character = page.getByRole("region", { name: "Character" });
+  await expect(character).toContainText("The adventure has not started.", { timeout: 90_000 });
+  await page.getByRole("button", { name: "Hello! Who are you?" }).click();
+  await expect(page.getByText("Meow! You said: Hello! Who are you?")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Growth" })).toContainText("New");
+  await shot(page, "6-launched-token");
+
+  await page.getByRole("link", { name: "Verify this token" }).click();
+  await expect(page.getByRole("heading", { name: "Verify Lantern #1" })).toBeVisible();
+  const row = (title: string) => page.getByRole("listitem").filter({ hasText: title });
+  await expect(row("What you see is what's recorded")).toContainText("matches the contract");
 });

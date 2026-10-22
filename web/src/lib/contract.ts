@@ -151,6 +151,13 @@ export class KatContract {
     );
   }
 
+  /** Whether the contract has verified a TDX quote proving this key runs in its TEE app. */
+  async isKeeperKeyAttested(publicKey: string): Promise<boolean> {
+    return (
+      (await this.#view<boolean>("is_keeper_key_attested", { public_key: publicKey })) === true
+    );
+  }
+
   /**
    * Resolves once finalized blocks show at least this balance for the kat.
    * The keeper reads finalized blocks, so a top-up only counts for it then.

@@ -7,9 +7,11 @@ export interface FundPanelProps {
   /** Draws attention to the panel after the kat ran out of NEAR. */
   urgent: boolean;
   fund: (amount: bigint) => Promise<void>;
+  /** What one token is called, as in "It stays with the kat". */
+  noun?: string;
 }
 
-export function FundPanel({ balance, urgent, fund }: FundPanelProps) {
+export function FundPanel({ balance, urgent, fund, noun = "kat" }: FundPanelProps) {
   const [amount, setAmount] = useState("1");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export function FundPanel({ balance, urgent, fund }: FundPanelProps) {
         <span className="text-2xl font-bold">{formatNear(balance)}</span> NEAR
       </p>
       <p className="mt-1 text-sm text-mist">
-        Pays for messages and memory. It stays with the kat and can't be withdrawn.
+        Pays for messages and memory. It stays with the {noun} and can't be withdrawn.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <label htmlFor="fund-amount" className="sr-only">

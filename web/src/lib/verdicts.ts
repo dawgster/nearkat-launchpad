@@ -52,13 +52,15 @@ export function keyVerdict(held: boolean | null): Verdict {
 /**
  * Whether only the owner can read a token's mind, as far as the browser can
  * tell. A Phala report that holds up in every way this page can check is
- * still "partial": Intel's signature on the quote, and which compose hashes
- * the app's KMS allows, are checked elsewhere.
+ * "partial": this page can't check Intel's signature on the quote. It is a
+ * pass only when the collection requires the app and its contract has itself
+ * verified the quote, Intel's signature included, for the keeper's key.
  */
 export function privacyVerdict(
   mode: string | null,
   check: PhalaCheck | null,
   requiredAppId: string | null,
+  attestedOnChain: boolean | null = null,
 ): Verdict {
   if (mode === "local") {
     return "fail";
@@ -71,5 +73,12 @@ export function privacyVerdict(
   }
   const holds = check.bindsKey && check.logMatchesQuote && check.claimMatchesLog;
   const rightApp = requiredAppId === null || check.appId === requiredAppId.toLowerCase();
-  return holds && rightApp ? "partial" : "fail";
+  if (!holds || !rightApp) {
+    return "fail";
+  }
+  if (requiredAppId !== null && attestedOnChain === false) {
+    // The contract would refuse this keeper's writes.
+    return "fail";
+  }
+  return requiredAppId !== null && attestedOnChain === true ? "pass" : "partial";
 }

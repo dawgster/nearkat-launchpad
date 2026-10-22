@@ -112,7 +112,15 @@ const auth = new Auth({
 const app = createApp({
   auth,
   homeContractId: config.contractId,
-  collection: (contractId) => collections.get(contractId)?.kats,
+  collection: (contractId) => {
+    const served = collections.get(contractId)?.kats;
+    // A launch this keeper hasn't found yet is checked as soon as someone asks
+    // for it. Only launchpad accounts, so arbitrary ids can't make it read the chain.
+    if (!served && config.launchpadId && contractId.endsWith(`.${config.launchpadId}`)) {
+      void collections.add(contractId);
+    }
+    return served;
+  },
   collections: () => ({
     home: config.contractId,
     served: collections.all().map(({ contractId, info }) => ({

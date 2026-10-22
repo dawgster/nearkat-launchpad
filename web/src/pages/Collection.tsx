@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { MintPanel } from "../components/MintPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
@@ -157,14 +157,7 @@ export function Collection() {
               {minted ? `Minted ${c.name} #${minted}.` : "Minted."} It's listed under "Yours" below.
             </p>
           )}
-          {!home && (
-            <p className="mt-4 text-sm leading-relaxed text-mist">
-              Conversations with this collection go through its keeper,{" "}
-              <span className="font-mono">{shorten(s.keeper_id, 12)}</span>. This app's chat talks
-              to the Nearkat keeper only for now; chatting with launched collections here comes with
-              the multi-collection keeper.
-            </p>
-          )}
+          {!home && <KeeperNote contractId={contractId} keeperId={s.keeper_id} />}
         </div>
       </div>
 
@@ -201,13 +194,12 @@ export function Collection() {
                 );
                 return (
                   <li key={id}>
-                    {home ? (
-                      <Link to={`/kat/${id}`} className="flex items-center gap-3 hover:text-glow">
-                        {art}
-                      </Link>
-                    ) : (
-                      <div className="flex items-center gap-3">{art}</div>
-                    )}
+                    <Link
+                      to={home ? `/kat/${id}` : `/c/${contractId}/kat/${id}`}
+                      className="flex items-center gap-3 hover:text-glow"
+                    >
+                      {art}
+                    </Link>
                   </li>
                 );
               })}
@@ -216,5 +208,42 @@ export function Collection() {
         </section>
       )}
     </Shell>
+  );
+}
+
+/**
+ * Whether this app's keeper serves the collection, so its tokens can be
+ * talked to here. A new launch is picked up within about half a minute.
+ */
+function KeeperNote({ contractId, keeperId }: { contractId: string; keeperId: string }) {
+  const { keeper } = useServices();
+  const [collections, reload] = useAsync(`keeper-collections/${contractId}`, () =>
+    keeper.collections(),
+  );
+  const data = collections.status === "ready" ? collections.data : null;
+  const served = data?.served?.some((entry) => entry.contract_id === contractId) ?? false;
+  const waiting = data?.waiting?.find((entry) => entry.contract_id === contractId);
+  const undecided = data !== null && !served && !waiting;
+  // Ask again until the keeper has looked at this collection.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new answer schedules the next ask.
+  useEffect(() => {
+    if (!undecided) {
+      return;
+    }
+    const timer = setTimeout(() => void reload(), 5000);
+    return () => clearTimeout(timer);
+  }, [undecided, reload, data]);
+  if (!data) {
+    return null;
+  }
+  return (
+    <p className="mt-4 text-sm leading-relaxed text-mist">
+      {served
+        ? "This app's keeper serves this collection: open one of your tokens to talk to it."
+        : waiting
+          ? `This app's keeper doesn't serve this collection: ${waiting.reason}.`
+          : "This app's keeper hasn't picked this collection up yet. New launches are found within a minute."}{" "}
+      Its keeper is <span className="font-mono">{shorten(keeperId, 12)}</span>.
+    </p>
   );
 }

@@ -116,3 +116,26 @@ describe("privacyVerdict", () => {
     expect(privacyVerdict("sgx", null, null)).toBe("unknown");
   });
 });
+
+describe("privacyVerdict with on-chain attestation", () => {
+  const good = {
+    status: "read",
+    bindsKey: true,
+    logMatchesQuote: true,
+    appId: "0a1b",
+    claimMatchesLog: true,
+  } as const;
+
+  test("passes when the contract itself verified the keeper's quote for the required app", () => {
+    expect(privacyVerdict("phala", good, "0a1b", true)).toBe("pass");
+  });
+
+  test("fails when the contract has not accepted the keeper's key", () => {
+    expect(privacyVerdict("phala", good, "0a1b", false)).toBe("fail");
+  });
+
+  test("stays partial while the contract's answer is unknown, or nothing is required", () => {
+    expect(privacyVerdict("phala", good, "0a1b", null)).toBe("partial");
+    expect(privacyVerdict("phala", good, null, true)).toBe("partial");
+  });
+});

@@ -3,6 +3,8 @@ import { describeProblem } from "../lib/problems.ts";
 
 export interface GiveAwayPanelProps {
   katName: string;
+  /** What one token is called, as in "this kat lives on mainnet". */
+  noun?: string;
   /** The current owner, who cannot give the kat to themselves. */
   ownerId: string;
   network: "mainnet" | "testnet" | "sandbox";
@@ -17,7 +19,12 @@ const ACCOUNT_ID = /^(?=.{2,64}$)[a-z0-9]+([._-][a-z0-9]+)*$/;
 const IMPLICIT = /^([0-9a-f]{64}|0x[0-9a-f]{40})$/;
 
 /** Why this receiver cannot be used, or null if it can be looked up. */
-function objection(receiver: string, ownerId: string, network: GiveAwayPanelProps["network"]) {
+function objection(
+  receiver: string,
+  ownerId: string,
+  network: GiveAwayPanelProps["network"],
+  noun: string,
+) {
   if (!ACCOUNT_ID.test(receiver)) {
     return "That isn't a valid NEAR account name. Names are lowercase, like friend.near.";
   }
@@ -25,16 +32,17 @@ function objection(receiver: string, ownerId: string, network: GiveAwayPanelProp
     return "That's your own account.";
   }
   if (network === "mainnet" && receiver.endsWith(".testnet")) {
-    return "That's a testnet account, and this kat lives on mainnet.";
+    return `That's a testnet account, and this ${noun} lives on mainnet.`;
   }
   if (network === "testnet" && receiver.endsWith(".near")) {
-    return "That's a mainnet account, and this kat lives on testnet.";
+    return `That's a mainnet account, and this ${noun} lives on testnet.`;
   }
   return null;
 }
 
 export function GiveAwayPanel({
   katName,
+  noun = "kat",
   ownerId,
   network,
   accountExists,
@@ -45,7 +53,7 @@ export function GiveAwayPanel({
   const [unused, setUnused] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const receiver = text.trim();
-  const blocked = receiver ? objection(receiver, ownerId, network) : null;
+  const blocked = receiver ? objection(receiver, ownerId, network, noun) : null;
   const usable = receiver !== "" && blocked === null;
 
   async function submit(event: FormEvent) {
@@ -114,7 +122,7 @@ export function GiveAwayPanel({
         <div className="mt-1">
           {unused && (
             <p className="mb-3 text-sm text-lamp">
-              This address hasn't been used yet. Check every character: a kat sent to a wrong
+              This address hasn't been used yet. Check every character: a {noun} sent to a wrong
               address can't be recovered.
             </p>
           )}

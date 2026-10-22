@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { sha384 } from "@noble/hashes/sha2.js";
 import { describe, expect, test } from "vitest";
 import {
   checkPhalaReport,
@@ -104,4 +107,58 @@ describe("checkPhalaReport", () => {
   test("says why an unreadable report can't be checked", () => {
     expect(checkPhalaReport({ ...report(), quote: "zz" })).toMatchObject({ status: "unreadable" });
   });
+});
+
+describe("a real dstack quote", () => {
+  const fixture = JSON.parse(
+    readFileSync(join(process.cwd(), "test/fixtures/dstack-quote-report.json"), "utf8"),
+  ) as { quote: string; event_log: string; report_data: string };
+  const events = JSON.parse(fixture.event_log) as DstackEvent[];
+
+  test("parses to the report data dstack reported", () => {
+    expect(toHex(parseQuote(fixture.quote).reportData)).toBe(
+      fixture.report_data.replace(/^0x/, ""),
+    );
+  });
+
+  test("replays its event log to the RTMR3 in its quote", () => {
+    expect(toHex(replayRtmr(events, 3))).toBe(toHex(parseQuote(fixture.quote).rtmr3));
+  });
+
+  test("recomputes every runtime event's digest", () => {
+    for (const e of events.filter((e) => e.imr === 3)) {
+      expect(toHex(dstackEventDigest(e)), e.event).toBe(e.digest);
+    }
+  });
+
+  test("names the app it ran as", () => {
+    const check = checkPhalaReport({
+      quote: fixture.quote,
+      event_log: fixture.event_log,
+      keeper_public_key: "ed25519:x",
+      app_id: "3763bc34552cf3a27ff71ad5f7a90471562a1a2d",
+    });
+    // Its report data wasn't made for a keeper key, but the app and log hold up.
+    expect(check).toMatchObject({
+      bindsKey: false,
+      logMatchesQuote: true,
+      appId: "3763bc34552cf3a27ff71ad5f7a90471562a1a2d",
+      claimMatchesLog: true,
+    });
+  });
+});
+
+test("computes dstack v2 digests over canonical JSON", () => {
+  // The vector from dstack's own test of v2 events.
+  const digest = dstackEventDigest({
+    imr: 3,
+    event_type: 0x08000001,
+    digest: "",
+    event: "compose-hash",
+    event_payload: "abcd",
+    version: 2,
+  });
+  expect(digest).toEqual(
+    sha384(new TextEncoder().encode('{"name":"compose-hash","payload":"abcd","type":134217729}')),
+  );
 });

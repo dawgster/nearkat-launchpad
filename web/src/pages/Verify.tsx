@@ -13,6 +13,7 @@ import {
   type Verdict,
 } from "../lib/verdicts.ts";
 import { checkSignature, contextHash } from "../lib/verify.ts";
+import { proofId, useScope } from "../scope.tsx";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
@@ -64,8 +65,11 @@ function safeHash(compute: () => string): string | null {
 export function Verify() {
   const { id = "" } = useParams();
   const wallet = useWallet();
-  const { contract, keeper, session } = useServices();
-  const [chain, reloadChain] = useAsync(id, async () => ({
+  const { keeper, session } = useServices();
+  const scope = useScope();
+  const { contract } = scope;
+  const name = `${scope.name} #${id}`;
+  const [chain, reloadChain] = useAsync(`${scope.contractId}/${id}`, async () => ({
     kat: await contract.getKat(id),
     config: await contract.getConfig(),
     // Older contracts have no collection view; that only means no TEE requirement.
@@ -74,8 +78,12 @@ export function Verify() {
   const [attestation] = useAsync("attestation", () => keeper.attestation());
   const kat = chain.status === "ready" ? chain.data.kat : null;
   const isOwner = kat !== null && wallet.accountId !== null && kat.owner_id === wallet.accountId;
-  const [context] = useAsync(isOwner && session ? `${wallet.accountId}/${id}` : null, () =>
-    (session as NonNullable<typeof session>).call((token) => keeper.getContext(token, id)),
+  const [context] = useAsync(
+    isOwner && session ? `${scope.contractId}/${wallet.accountId}/${id}` : null,
+    () =>
+      (session as NonNullable<typeof session>).call((token) =>
+        keeper.getContext(token, id, scope.keeperCollection),
+      ),
   );
   const keeperKey =
     attestation.status === "ready" && typeof attestation.data.keeper_public_key === "string"
@@ -84,6 +92,11 @@ export function Verify() {
   const keeperId = chain.status === "ready" ? chain.data.config.keeper_id : null;
   const [keyHeld] = useAsync(keeperKey && keeperId ? `${keeperId}/${keeperKey}` : null, () =>
     contract.accountHoldsKey(keeperId as string, keeperKey as string),
+  );
+  const requiresTee = chain.status === "ready" && chain.data.collection?.tee != null;
+  const [keyAttested] = useAsync(
+    requiresTee && keeperKey ? `${scope.contractId}/attested/${keeperKey}` : null,
+    () => contract.isKeeperKeyAttested(keeperKey as string),
   );
 
   const record = recordVerdict(context.status === "ready" ? context.data : null, {
@@ -112,7 +125,7 @@ export function Verify() {
         <p className="text-alarm" role="alert">
           {chain.status === "error"
             ? `Can't read the contract. ${describeProblem(chain.error)}`
-            : `There is no Nearkat #${id}.`}
+            : `There is no ${name}.`}
         </p>
       </Shell>
     );
@@ -120,7 +133,8 @@ export function Verify() {
 
   const recomputed = context.status === "ready" ? safeHash(() => contextHash(context.data)) : null;
   const mode = attestation.status === "ready" ? String(attestation.data.mode ?? "unknown") : null;
-  const proof = isOwner && wallet.accountId ? recallProof(wallet.accountId, id) : null;
+  const proof =
+    isOwner && wallet.accountId ? recallProof(wallet.accountId, proofId(scope, id)) : null;
   const requiredApp = chain.data.collection?.tee?.Phala.app_id ?? null;
   const phala =
     mode === "phala" && attestation.status === "ready"
@@ -138,10 +152,13 @@ export function Verify() {
 
   return (
     <Shell world="burrow">
-      <Link to={`/kat/${id}`} className="text-sm text-mist underline-offset-4 hover:underline">
-        Back to Nearkat #{id}
+      <Link
+        to={scope.tokenPath(id)}
+        className="text-sm text-mist underline-offset-4 hover:underline"
+      >
+        Back to {name}
       </Link>
-      <h1 className="mt-6 text-4xl sm:text-5xl">Verify Nearkat #{id}</h1>
+      <h1 className="mt-6 text-4xl sm:text-5xl">Verify {name}</h1>
       <p className="mt-4 max-w-prose text-mist">
         What this page can check for itself, in your browser, and what it can't.
       </p>
@@ -153,8 +170,8 @@ export function Verify() {
           {kat.context_hash ? (
             <>
               <p>
-                The contract holds a fingerprint of version {kat.context_version} of this kat's
-                mind. The keeper can't swap in a different mind without changing it.
+                The contract holds a fingerprint of version {kat.context_version} of this{" "}
+                {scope.noun}'s mind. The keeper can't swap in a different mind without changing it.
               </p>
               <p>
                 Fingerprint <Mono>{kat.context_hash}</Mono>
@@ -172,9 +189,7 @@ export function Verify() {
           {!isOwner && (
             <p>Only the owner can check this, because only the owner can read the mind.</p>
           )}
-          {isOwner && context.status === "loading" && (
-            <p>Fetching your kat's mind from the keeper…</p>
-          )}
+          {isOwner && context.status === "loading" && <p>Fetching its mind from the keeper…</p>}
           {isOwner && context.status === "error" && <p>{describeProblem(context.error)}</p>}
           {record === "behind" && (
             <p>The keeper just saved a newer version. Reading the contract again…</p>
@@ -226,7 +241,12 @@ export function Verify() {
         </Check>
 
         <Check
-          verdict={privacyVerdict(mode, phala, requiredApp)}
+          verdict={privacyVerdict(
+            mode,
+            phala,
+            requiredApp,
+            keyAttested.status === "ready" ? keyAttested.data : null,
+          )}
           title="Nobody but the owner can read its mind"
         >
           {requiredApp && (
@@ -238,7 +258,7 @@ export function Verify() {
           {mode === "local" && (
             <p>
               Not yet. This keeper reports that it runs in local mode, so whoever operates it can
-              read every kat's mind. That changes when the keeper moves into a sealed enclave.
+              read every mind it holds. That changes when the keeper moves into a sealed enclave.
             </p>
           )}
           {mode === "phala" && phala?.status === "unreadable" && (
@@ -272,10 +292,21 @@ export function Verify() {
                   <li>That is not the app this collection requires.</li>
                 )}
               </ul>
+              {keyAttested.status === "ready" && keyAttested.data && (
+                <p>
+                  The contract itself has verified this keeper's TDX quote, Intel's signature
+                  included, and only accepts updates signed with its key.
+                </p>
+              )}
+              {keyAttested.status === "ready" && !keyAttested.data && (
+                <p>
+                  The contract has not accepted this keeper's key, so it would refuse its updates.
+                </p>
+              )}
               <p>
-                Not checked here: Intel's signature on the quote, and which code versions (compose
-                hashes) the app's key service allows. Paste the quote into Phala's attestation
-                explorer to check those.
+                {keyAttested.status === "ready" && keyAttested.data
+                  ? "Not checked here: which code versions (compose hashes) the app's key service allows. Its owner controls that list."
+                  : "Not checked here: Intel's signature on the quote, and which code versions (compose hashes) the app's key service allows. Paste the quote into Phala's attestation explorer to check those."}
                 {composeHash && (
                   <>
                     {" "}
@@ -300,7 +331,7 @@ export function Verify() {
         >
           {!isOwner && <p>Only the owner's own conversation can be checked here.</p>}
           {isOwner && !proof && (
-            <p>Talk to this kat in this tab, then come back to check its latest reply.</p>
+            <p>Talk to it in this tab, then come back to check its latest reply.</p>
           )}
           {signature?.status === "missing" && (
             <p>The model's host sent no signature with the latest reply.</p>

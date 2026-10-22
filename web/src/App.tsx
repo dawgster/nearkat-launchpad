@@ -6,6 +6,7 @@ import { Home } from "./pages/Home.tsx";
 import { Kat } from "./pages/Kat.tsx";
 import { Launch } from "./pages/Launch.tsx";
 import { Verify } from "./pages/Verify.tsx";
+import { ContractScope, HomeScope } from "./scope.tsx";
 import { ServicesProvider } from "./services.tsx";
 import type { WalletBackend } from "./wallet/backend.ts";
 import { WalletProvider } from "./wallet/WalletProvider.tsx";
@@ -26,10 +27,40 @@ export function App({ config, backend }: { config: AppConfig; backend: WalletBac
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/kat/:id" element={<Kat />} />
-            <Route path="/kat/:id/verify" element={<Verify />} />
+            <Route
+              path="/kat/:id"
+              element={
+                <HomeScope>
+                  <Kat />
+                </HomeScope>
+              }
+            />
+            <Route
+              path="/kat/:id/verify"
+              element={
+                <HomeScope>
+                  <Verify />
+                </HomeScope>
+              }
+            />
             <Route path="/launch" element={<Launch />} />
             <Route path="/c/:contractId" element={<Collection />} />
+            <Route
+              path="/c/:contractId/kat/:id"
+              element={
+                <ContractScope>
+                  <Kat />
+                </ContractScope>
+              }
+            />
+            <Route
+              path="/c/:contractId/kat/:id/verify"
+              element={
+                <ContractScope>
+                  <Verify />
+                </ContractScope>
+              }
+            />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

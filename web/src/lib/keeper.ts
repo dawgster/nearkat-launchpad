@@ -64,14 +64,23 @@ export interface KeeperInfo {
   model: string;
 }
 
+/** What a keeper serves, and why it isn't serving the others it has seen. */
+export interface KeeperCollections {
+  home?: string;
+  served?: Array<{ contract_id: string; name: string }>;
+  waiting?: Array<{ contract_id: string; reason: string }>;
+}
+
 export interface Keeper {
   info(): Promise<KeeperInfo>;
+  collections(): Promise<KeeperCollections>;
   attestation(): Promise<Record<string, unknown>>;
   challenge(): Promise<{ nonce: string; message: string; recipient: string }>;
   /** `callbackUrl` is the page URL given to the wallet, which web wallets sign over. */
   createSession(nonce: string, signed: SignedMessage, callbackUrl?: string): Promise<Session>;
-  getContext(token: string, tokenId: string): Promise<ContextDoc>;
-  chat(token: string, tokenId: string, message: string): Promise<ChatReply>;
+  /** `collection` is the contract of a launched collection; omitted for the home one. */
+  getContext(token: string, tokenId: string, collection?: string): Promise<ContextDoc>;
+  chat(token: string, tokenId: string, message: string, collection?: string): Promise<ChatReply>;
 }
 
 export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): Keeper {
@@ -106,17 +115,20 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
     return data as T;
   }
 
-  const kat = (tokenId: string) => `/kats/${encodeURIComponent(tokenId)}`;
+  const kat = (tokenId: string, collection?: string) =>
+    `${collection ? `/c/${encodeURIComponent(collection)}` : ""}/kats/${encodeURIComponent(tokenId)}`;
   return {
     info: () => request("GET", "/info"),
+    collections: () => request("GET", "/collections"),
     attestation: () => request("GET", "/attestation"),
     challenge: () => request("POST", "/auth/challenge"),
     createSession: (nonce, signed, callbackUrl) =>
       request("POST", "/auth/session", {
         body: { nonce, signed_message: signed, callback_url: callbackUrl },
       }),
-    getContext: (token, tokenId) => request("GET", `${kat(tokenId)}/context`, { token }),
-    chat: (token, tokenId, message) =>
-      request("POST", `${kat(tokenId)}/chat`, { token, body: { message } }),
+    getContext: (token, tokenId, collection) =>
+      request("GET", `${kat(tokenId, collection)}/context`, { token }),
+    chat: (token, tokenId, message, collection) =>
+      request("POST", `${kat(tokenId, collection)}/chat`, { token, body: { message } }),
   };
 }

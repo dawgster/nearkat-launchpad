@@ -12,6 +12,7 @@ import { KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
 import { useAsync } from "../lib/useAsync.ts";
+import { proofId, useScope } from "../scope.tsx";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
@@ -19,7 +20,7 @@ import { useWallet } from "../wallet/WalletProvider.tsx";
 const SETTLE_WAIT_MS = 2000;
 const SETTLE_WAITS = 30;
 /** Keeper answers that mean "not yet" while the contract shows this wallet as owner. */
-const SETTLING_CODES = ["waking_up", "not_owner", "not_found"];
+const SETTLING_CODES = ["waking_up", "not_owner", "not_found", "not_served"];
 
 /** The owner's side of the page: the conversation, and what the kat has become. */
 function Den({
@@ -37,12 +38,18 @@ function Den({
   /** Told the context version each time the mind is read, so the kat can be drawn grown. */
   onVersion: (version: number) => void;
 }) {
-  const { config, contract, keeper, prices, signer, session } = useServices();
+  const { config, keeper, prices, session } = useServices();
+  const scope = useScope();
+  const { contract, signer } = scope;
   const navigate = useNavigate();
-  const name = `Nearkat #${tokenId}`;
-  const [context, reloadContext] = useAsync(session ? `${ownerId}/${tokenId}` : null, () =>
-    // Reads go through the session so the wallet is asked to sign in once.
-    (session as NonNullable<typeof session>).call((token) => keeper.getContext(token, tokenId)),
+  const name = `${scope.name} #${tokenId}`;
+  const [context, reloadContext] = useAsync(
+    session ? `${scope.contractId}/${ownerId}/${tokenId}` : null,
+    () =>
+      // Reads go through the session so the wallet is asked to sign in once.
+      (session as NonNullable<typeof session>).call((token) =>
+        keeper.getContext(token, tokenId, scope.keeperCollection),
+      ),
   );
   // The keeper reports the balance after unsettled charges; the chain lags behind it.
   const [balance, setBalance] = useState(chainBalance);
@@ -122,34 +129,28 @@ function Den({
       <Chat
         katName={name}
         chatPrice={prices.chat}
-        send={(message) => session.call((token) => keeper.chat(token, tokenId, message))}
+        send={(message) =>
+          session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
+        }
         onReply={(reply) => {
           setBalance(BigInt(reply.balance));
           setOutOfBalance(false);
-          rememberProof(ownerId, tokenId, reply.verification);
+          rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
           // A long conversation may have just been folded into memory.
           void reloadContext();
         }}
         onOutOfBalance={() => setOutOfBalance(true)}
-        starters={
-          context.data.version === 1
-            ? [
-                "Hello! Do you have a name?",
-                "What can you see from your burrow?",
-                "Want to hear about my day?",
-              ]
-            : ["What do you remember about me?", "How have you been?"]
-        }
+        starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
       />
       <aside className="min-w-0 space-y-10 lg:border-l lg:border-cream/10 lg:pl-10">
-        <CharacterPanel character={context.data.personality} />
+        <CharacterPanel character={context.data.personality} noun={scope.noun} />
         <section aria-labelledby="memory">
           <h2 id="memory" className="font-sans text-lg font-bold">
             Memory
           </h2>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-mist">
             {context.data.memory_summary ||
-              "Nothing remembered yet. After a longer conversation, the kat writes down what mattered."}
+              `Nothing remembered yet. After a longer conversation, the ${scope.noun} writes down what mattered.`}
           </p>
           <p className="mt-3 text-sm text-mist">
             Saving what it learned costs {formatNear(prices.save)} NEAR from its balance, after
@@ -157,6 +158,7 @@ function Den({
           </p>
         </section>
         <FundPanel
+          noun={scope.noun}
           balance={balance}
           urgent={outOfBalance}
           fund={async (amount) => {
@@ -172,13 +174,14 @@ function Den({
           }}
         />
         <GiveAwayPanel
+          noun={scope.noun}
           katName={name}
           ownerId={ownerId}
           network={config.networkId}
           accountExists={(accountId) => contract.accountExists(accountId)}
           give={async (receiverId) => {
             await signer.transfer(tokenId, receiverId);
-            navigate("/");
+            navigate(scope.backPath);
           }}
         />
       </aside>
@@ -189,10 +192,10 @@ function Den({
 export function Kat() {
   const { id = "" } = useParams();
   const wallet = useWallet();
-  const { contract } = useServices();
-  const { config } = useServices();
-  const [kat, reloadKat] = useAsync(id, () => contract.getKat(id));
-  const name = `Nearkat #${id}`;
+  const scope = useScope();
+  const { contract } = scope;
+  const [kat, reloadKat] = useAsync(`${scope.contractId}/${id}`, () => contract.getKat(id));
+  const name = `${scope.name} #${id}`;
   // The keeper may have saved a newer version than the chain view shows yet.
   const [seenVersion, setSeenVersion] = useState(0);
   const onVersion = useCallback((version: number) => {
@@ -206,18 +209,18 @@ export function Kat() {
   return (
     <Shell world="burrow">
       <div className="descend">
-        <Link to="/" className="text-sm text-mist underline-offset-4 hover:underline">
-          Back to the surface
+        <Link to={scope.backPath} className="text-sm text-mist underline-offset-4 hover:underline">
+          {scope.backLabel}
         </Link>
         {kat.status === "loading" && <p className="mt-10 text-mist">Climbing down…</p>}
         {kat.status === "error" && (
           <p className="mt-10 text-alarm" role="alert">
-            Can't read this kat from the contract. {describeProblem(kat.error)}
+            Can't read this {scope.noun} from the contract. {describeProblem(kat.error)}
           </p>
         )}
         {kat.status === "ready" && !kat.data && (
           <div className="mt-10">
-            <h1 className="text-4xl">This burrow is empty</h1>
+            <h1 className="text-4xl">{scope.home ? "This burrow is empty" : "Nothing here yet"}</h1>
             <p className="mt-3 text-mist">There is no {name}. It may not have been minted yet.</p>
           </div>
         )}
@@ -225,10 +228,10 @@ export function Kat() {
           <>
             <header className="mt-6 flex flex-wrap items-center gap-5">
               <TokenArt
-                contractId={config.contractId}
+                contractId={scope.contractId}
                 tokenId={id}
                 contextVersion={version}
-                style="kat"
+                style={scope.art}
                 size={120}
                 decorative
               />
@@ -241,20 +244,23 @@ export function Kat() {
                       {shorten(kat.data.owner_id, 12)}
                     </span>
                   </span>
-                  <Link to={`/kat/${id}/verify`} className="text-lamp underline underline-offset-4">
-                    Verify this kat
+                  <Link
+                    to={`${scope.tokenPath(id)}/verify`}
+                    className="text-lamp underline underline-offset-4"
+                  >
+                    Verify this {scope.noun}
                   </Link>
                 </p>
                 {version > 0 && (
                   <div className="mt-3">
-                    <Growth contextVersion={version} />
+                    <Growth contextVersion={version} plain={!scope.home} />
                   </div>
                 )}
               </div>
             </header>
             {wallet.accountId === kat.data.owner_id ? (
               <Den
-                key={`${kat.data.owner_id}/${id}`}
+                key={`${scope.contractId}/${kat.data.owner_id}/${id}`}
                 tokenId={id}
                 ownerId={kat.data.owner_id}
                 chainBalance={BigInt(kat.data.balance)}

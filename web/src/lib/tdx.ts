@@ -69,6 +69,8 @@ export interface DstackEvent {
   digest: string;
   event: string;
   event_payload: string;
+  /** 1 (binary digest) when absent, or 2 (canonical JSON digest). */
+  version?: number;
 }
 
 /** Replays one measurement register from the event log, as the TDX module extends it. */
@@ -85,11 +87,20 @@ export function replayRtmr(events: DstackEvent[], imr: number): Uint8Array {
   return mr;
 }
 
-/** The digest dstack records for one of its runtime events. */
+/**
+ * The digest dstack records for one of its runtime events. Version 1 hashes
+ * `type_le || ":" || name || ":" || payload`; version 2 hashes RFC 8785
+ * canonical JSON of the name, hex payload and type.
+ */
 export function dstackEventDigest(event: DstackEvent): Uint8Array {
+  const payload = fromHex(event.event_payload);
+  if ((event.version ?? 1) === 2) {
+    const canonical = `{"name":${JSON.stringify(event.event)},"payload":"${toHex(payload)}","type":${0x08000001}}`;
+    return sha384(utf8(canonical));
+  }
   const type = new Uint8Array(4);
   new DataView(type.buffer).setUint32(0, event.event_type, true);
-  const parts = [type, utf8(":"), utf8(event.event), utf8(":"), fromHex(event.event_payload)];
+  const parts = [type, utf8(":"), utf8(event.event), utf8(":"), payload];
   const joined = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
   for (const part of parts) {
