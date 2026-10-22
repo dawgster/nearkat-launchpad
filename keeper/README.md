@@ -4,9 +4,12 @@ The service that holds each kat's mind. It checks NFT ownership on every
 request, decrypts the kat's context, runs inference on NEAR AI Cloud and saves
 updated memory. Design: `../docs/superpowers/specs/2026-10-13-nearkat-ai-nft-design.md`.
 
-It serves one collection. The collection's public prompt and starter context
-are read from the contract (`get_collection`), so the same keeper serves a
-meerkat, a tutor or a game master.
+It serves many collections: its home one (`CONTRACT_ID`), any listed in
+`CONTRACT_IDS`, and every launch on `LAUNCHPAD_ID` whose contract names this
+keeper's account. Each collection's public prompt and starter context are
+read from its contract (`get_collection`), so the same keeper serves a
+meerkat, a tutor or a game master. Each has its own meter and journal, and
+kat keys derived per contract.
 
 Two modes:
 
@@ -18,8 +21,11 @@ Two modes:
   then serves a TDX quote whose report data commits to the keeper's NEAR key.
   `DSTACK_ENDPOINT` can point at the dstack simulator for development.
 
-If the collection names a Phala app (`tee`), the keeper refuses to serve it
-unless it runs as exactly that app. Contexts are still stored on disk; NOVA
+If a collection names a Phala app (`tee`), the keeper refuses to serve it
+unless it runs as exactly that app. In that case it first proves its key to
+the contract: it fetches Intel's collateral for its quote from Phala's PCCS
+and calls `register_keeper_key`, which verifies the quote on-chain. The
+contract then only accepts keeper calls signed with that key. Contexts are still stored on disk; NOVA
 storage is a later step.
 
 ## Test
@@ -53,9 +59,11 @@ first run downloads a NEAR sandbox binary.
   Keep that file across restarts.
 - There is no rate limiting. Put the keeper behind a proxy that provides it
   before exposing it publicly.
-- Inference charges accrue on the contract for the keeper. Withdraw them to
-  the keeper account with the contract's `withdraw_inference`; the keeper
-  does not do this by itself yet.
+- Inference charges accrue on each contract for the keeper. The keeper
+  withdraws them to its account once they reach `WITHDRAW_MIN_YOCTO`
+  (1 NEAR by default), after settling charges.
+- `GET /collections` shows which collections are served and why any others
+  are not (another keeper named, TEE mismatch, attestation refused).
 - On start the keeper logs `SETUP PROBLEM` if the contract does not name its
   account as keeper or the account lacks its key. It keeps serving, so the
   public key stays available at `/attestation`.
@@ -68,10 +76,12 @@ first run downloads a NEAR sandbox binary.
 | `POST /auth/challenge` | none | Nonce, message and recipient to sign (NEP-413) |
 | `GET /info` | none | Prices per message and per save (yoctoNEAR) and the model id |
 | `POST /auth/session` | none | Body `{ nonce, signed_message, callback_url? }`; returns a 15-minute token |
+| `GET /collections` | none | Collections served, and those seen but not served with the reason |
 | `GET /kats/:id/context` | owner | The whole context: token id, version, salt, character (`personality`), memory summary |
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
+| `GET /c/:contract/kats/:id/context`, `POST /c/:contract/kats/:id/chat` | owner | The same, for a collection other than the home one |
 
 Errors are JSON `{ error, message }`: 400 `invalid_input`, 401
-`unauthorized`, 413 `too_large`, 402 `insufficient_balance` (with `balance` and `required`),
+`unauthorized`, 404 `not_served` (a collection this keeper doesn't serve), 413 `too_large`, 402 `insufficient_balance` (with `balance` and `required`),
 403 `not_owner`, 404 `not_found`, 409 `waking_up`, 500 `corrupted`, 503
 `inference_unavailable`.

@@ -10,6 +10,15 @@ It is also the code every launchpad collection runs (see `../launchpad`).
 Phala app). Empty `prompt` and `starter` give the original Nearkat. All are
 public through `get_collection` and fixed at deployment.
 
+A collection with `tee` only accepts keeper calls signed by a key proven to
+run inside that app. Anyone may submit the proof with
+`register_keeper_key({ public_key, quote, collateral, event_log })`: the
+contract verifies the TDX quote against Intel's collateral (dcap-qvl, about
+166 Tgas), that its report data commits to the key, and that dstack's event
+log replays to RTMR3 and names the app. `is_keeper_key_attested` reads the
+result; the admin can `revoke_keeper_key`. Test fixtures and their sources
+are in `tests/fixtures/`.
+
 Mint revenue accrues for the treasury (`withdraw_treasury`, admin). Inference
 charges accrue for the keeper, which pays for inference
 (`withdraw_inference`, keeper).

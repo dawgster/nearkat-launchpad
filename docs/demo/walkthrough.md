@@ -94,8 +94,12 @@ Open **Launchpad**.
 - On the collection page: the public prompt and starting context, who can
   open minds, and a mint button. Mint one: its art is an abstract sigil,
   since a tutor isn't a meerkat.
-- What's next: one keeper serving every collection, so you can chat with
-  launched tokens here, and on-chain verification of the TEE quote.
+- The page says whether this app's keeper serves the collection. A TEE
+  collection is only served by a keeper running as that Phala app, and only
+  after the contract itself has verified the keeper's TDX quote. For the
+  live demo, launch a second collection without the TEE option, mint, open
+  the token from "Yours" and talk to it: the same keeper serves every
+  collection.
 
 ## Likely questions
 
@@ -106,6 +110,9 @@ Open **Launchpad**.
   keeper, which pays the model provider.
 - **Is the prompt secret?** Not today: buyers can read it before minting.
   Encrypting it to the TEE app is on the roadmap.
+- **How do I know the TEE claim is real?** The collection's contract verifies
+  the keeper's Intel TDX quote itself, and then only accepts updates signed
+  by that key. The verify page shows whether that has happened.
 
 ## Setup
 
@@ -130,7 +137,8 @@ To present against it, start the same pieces by hand following
    `contract/README.md`).
 2. Publish the same wasm as a global contract by hash, deploy `launchpad/`,
    and call `set_collection_code_hash` (see `launchpad/README.md`).
-3. Run the keeper (`keeper/README.md`) and register its key on the keeper
-   account.
+3. Run the keeper (`keeper/README.md`) with `LAUNCHPAD_ID` set to the
+   launchpad, and register its key on the keeper account. It then serves
+   every launch that names it.
 4. Set `VITE_CONTRACT_ID`, `VITE_KEEPER_URL` and `VITE_FACTORY_ID` for the
    web app and run `npm run dev`.
