@@ -1,4 +1,5 @@
 mod admin;
+pub mod attestation;
 mod kat;
 mod keeper;
 mod nft;
@@ -8,7 +9,9 @@ use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
 use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, TokenId};
 use near_sdk::json_types::U64;
 use near_sdk::store::LookupMap;
-use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault};
+use near_sdk::{
+    env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault, PublicKey,
+};
 
 pub use kat::{
     Collection, CollectionView, ConfigView, Kat, KatView, TeeRequirement, DEFAULT_PROMPT,
@@ -29,6 +32,7 @@ enum StorageKey {
     Enumeration,
     Approval,
     Kats,
+    AttestedKeys,
 }
 
 #[derive(PanicOnDefault)]
@@ -59,6 +63,8 @@ pub struct Contract {
     inference_accrued: NearToken,
     /// Sequence number of the last applied `debit_batch`.
     debit_seq: u64,
+    /// Keeper keys proven to run inside the required TEE app, with when.
+    attested_keys: LookupMap<PublicKey, u64>,
 }
 
 #[near]
@@ -132,6 +138,7 @@ impl Contract {
             treasury_accrued: NearToken::from_yoctonear(0),
             inference_accrued: NearToken::from_yoctonear(0),
             debit_seq: 0,
+            attested_keys: LookupMap::new(StorageKey::AttestedKeys),
         }
     }
 
@@ -240,5 +247,7 @@ impl Contract {
     }
 }
 
+#[cfg(test)]
+mod attestation_tests;
 #[cfg(test)]
 mod tests;

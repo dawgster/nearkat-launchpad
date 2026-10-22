@@ -70,5 +70,6 @@ impl Contract {
             env::predecessor_account_id() == self.keeper_id,
             "Only the keeper can call this method"
         );
+        self.assert_attested_signer();
     }
 }

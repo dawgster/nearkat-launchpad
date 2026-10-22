@@ -10,6 +10,10 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 near-sdk = "5.29.1"
 near-contract-standards = "5.29.1"
+# Verifies Intel TDX quotes on-chain, for collections that require a Phala app.
+dcap-qvl = { version = "0.7", default-features = false, features = ["rustcrypto", "default-x509", "std"] }
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 near-sdk = { version = "5.29.1", features = ["unit-testing"] }

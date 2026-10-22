@@ -47,6 +47,11 @@ struct Env {
 }
 
 async fn setup() -> TestResult<Env> {
+    setup_with(Value::Null).await
+}
+
+/// Deploys the contract, with `tee` as the collection's TEE requirement.
+async fn setup_with(tee: Value) -> TestResult<Env> {
     let names = ["nearkat", "admin", "keeper", "treasury", "alice", "bob"];
     let accounts = names
         .iter()
@@ -83,6 +88,7 @@ async fn setup() -> TestResult<Env> {
                     "name": "Nearkat",
                     "symbol": "KAT",
                     "base_uri": "https://art.example/",
+                    "tee": tee,
                 },
             }),
         )?
@@ -351,5 +357,52 @@ async fn failed_treasury_transfer_restores_the_accrual() -> TestResult {
         serde_json::from_value::<NearToken>(config["treasury_accrued"].clone())?,
         PRICE
     );
+    Ok(())
+}
+
+/// Verifying a TDX quote on-chain must fit in a transaction. Runs the real
+/// Intel-signed fixture through `register_keeper_key` at the node's real
+/// time: Intel's checks pass, and the call then stops at the key binding,
+/// because the fixture was not made for our key.
+#[tokio::test]
+async fn a_real_tdx_quote_verifies_on_chain_within_the_gas_limit() -> TestResult {
+    // The fixture's collateral expires on 2026-11-07T00:09:46Z.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    if now >= 1_793_923_786 {
+        eprintln!("skipped: the fixture's collateral has expired");
+        return Ok(());
+    }
+    let env = setup_with(json!({ "Phala": { "app_id": "0a1b2c" } })).await?;
+    let quote = include_bytes!("fixtures/intel-tdx-quote.bin");
+    let collateral = include_str!("fixtures/intel-tdx-collateral.json");
+    let outcome = env
+        .contract
+        .call_function(
+            "register_keeper_key",
+            json!({
+                "public_key": "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp",
+                "quote": quote.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                "collateral": collateral,
+                "event_log": "[]",
+            }),
+        )
+        .transaction()
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(env.alice.id.clone(), env.alice.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    let near_api::types::transaction::result::TransactionResult::Full(result) = outcome else {
+        return Err("the transaction did not finish".into());
+    };
+    let burnt = result.total_gas_burnt;
+    let failure = format!("{:?}", result.outcomes());
+    eprintln!("register_keeper_key burnt {} Tgas", burnt.as_tgas());
+    assert!(
+        failure.contains("does not commit to this key"),
+        "Intel's checks should pass on-chain: {failure}"
+    );
+    assert!(burnt.as_tgas() < 250, "{} Tgas", burnt.as_tgas());
     Ok(())
 }

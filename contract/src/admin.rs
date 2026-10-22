@@ -90,7 +90,7 @@ impl Contract {
 }
 
 impl Contract {
-    fn assert_admin(&self) {
+    pub(crate) fn assert_admin(&self) {
         assert_one_yocto();
         require!(
             env::predecessor_account_id() == self.admin_id,
