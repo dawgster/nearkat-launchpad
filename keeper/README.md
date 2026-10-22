@@ -21,6 +21,22 @@ Two modes:
   then serves a TDX quote whose report data commits to the keeper's NEAR key.
   `DSTACK_ENDPOINT` can point at the dstack simulator for development.
 
+Each collection is charged at its own prices: its `terms` prices, or the
+keeper's raised to cover the creator's share. The keeper refuses a collection
+whose prices leave it less than its own after that share.
+
+A TEE collection can carry a sealed prompt, encrypted in the creator's browser
+to the keeper's X25519 sealing key. The key is derived from the root secret,
+so every instance of the app has it, and the quote binds it together with the
+NEAR key. The keeper adds the opened instructions to conversations only,
+marked confidential, never to the update that rewrites a token's character.
+
+Token art is served at `GET /art/<contract>/<id>.svg`, drawn by the shared
+`../art` module from the token's on-chain growth.
+
+With `S3_BUCKET` set, contexts are stored in an S3-compatible bucket before
+their hash moves on-chain, and the local directory only caches them.
+
 If a collection names a Phala app (`tee`), the keeper refuses to serve it
 unless it runs as exactly that app. In that case it first proves its key to
 the contract: it fetches Intel's collateral for its quote from Phala's PCCS
@@ -76,7 +92,8 @@ first run downloads a NEAR sandbox binary.
 | `POST /auth/challenge` | none | Nonce, message and recipient to sign (NEP-413) |
 | `GET /info` | none | Prices per message and per save (yoctoNEAR) and the model id |
 | `POST /auth/session` | none | Body `{ nonce, signed_message, callback_url? }`; returns a 15-minute token |
-| `GET /collections` | none | Collections served, and those seen but not served with the reason |
+| `GET /collections` | none | Collections served with their prices, and those seen but not served with the reason |
+| `GET /art/:contract/:id.svg` | none, any origin | A token's picture, as it has grown |
 | `GET /kats/:id/context` | owner | The whole context: token id, version, salt, character (`personality`), memory summary |
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
 | `GET /c/:contract/kats/:id/context`, `POST /c/:contract/kats/:id/chat` | owner | The same, for a collection other than the home one |

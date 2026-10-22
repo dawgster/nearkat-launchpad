@@ -41,7 +41,9 @@ The wasm is written to `target/near/nearkat_launchpad.wasm`.
 | `get_collection({ account_id })` | view | One entry, or null. |
 | `collection_account({ slug })` | view | The account a slug launches to, or an error saying why it can't. |
 | `get_config()` | view | Admin, keeper, code hash, fee, funding, fees kept. |
-| `set_collection_code_hash`, `set_keeper`, `set_prices`, `reserve`, `withdraw_fees` | admin, 1 yocto | Operating the launchpad. |
+| `is_code_approved({ code_hash })`, `get_approved_code_hashes()` | view | Versions collections may upgrade to. The launch version is always one. |
+| `record_upgrade({ code_hash })` | a collection | Records that a collection moved to an approved version. |
+| `set_collection_code_hash`, `approve_code_hash`, `revoke_code_hash`, `set_keeper`, `set_prices`, `reserve`, `withdraw_fees` | admin, 1 yocto | Operating the launchpad. Only approve versions that keep every promise a collection made to its buyers. |
 
 `launch` takes:
 
@@ -63,6 +65,7 @@ The wasm is written to `target/near/nearkat_launchpad.wasm`.
 }
 ```
 
-`max_supply`, `tee` and `keeper_id` are optional. A collection that requires a
+`max_supply`, `tee`, `keeper_id`, `base_uri`, `media_extension`, `terms` and
+`sealed_prompt` are optional; see `../contract/README.md` for what they mean. A collection that requires a
 Phala app needs a keeper running as that app; name it in `keeper_id` if the
 launchpad's keeper isn't one.

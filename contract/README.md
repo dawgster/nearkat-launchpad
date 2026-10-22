@@ -12,12 +12,25 @@ public through `get_collection` and fixed at deployment.
 
 A collection with `tee` only accepts keeper calls signed by a key proven to
 run inside that app. Anyone may submit the proof with
-`register_keeper_key({ public_key, quote, collateral, event_log })`: the
-contract verifies the TDX quote against Intel's collateral (dcap-qvl, about
-166 Tgas), that its report data commits to the key, and that dstack's event
+`register_keeper_key({ public_key, seal_public_key, quote, collateral, event_log })`:
+the contract verifies the TDX quote against Intel's collateral (dcap-qvl, about
+166 Tgas), that its report data commits to both keys, and that dstack's event
 log replays to RTMR3 and names the app. `is_keeper_key_attested` reads the
 result; the admin can `revoke_keeper_key`. Test fixtures and their sources
 are in `tests/fixtures/`.
+
+The `collection` also takes `terms` (`royalty_bps` up to 2500 for NEP-199
+`nft_payout`/`nft_transfer_payout`, `creator_share_bps` up to 5000 of every
+conversation charge, optional `chat_price` and `save_price`),
+`media_extension` for token images under `base_uri`, and, with `tee`, a
+`sealed_prompt` (`ciphertext`, `sealed_to`) of instructions only the TEE app
+can read; `sealed_key_attested` says when the key it is sealed to has been
+attested. `new` also takes an optional `code_hash` (the launchpad passes it).
+
+`upgrade({ code_hash })` (admin, 1 yocto) moves the collection to other
+published code and runs `migrate` in the same batch. A collection created by
+a launchpad may only move to versions that launchpad approves, and the
+launchpad records the move.
 
 Mint revenue accrues for the treasury (`withdraw_treasury`, admin). Inference
 charges accrue for the keeper, which pays for inference

@@ -58,8 +58,9 @@ so first run `cargo near build non-reproducible-wasm` in `../contract` and in
 - The app only ever asks a wallet to sign the fixed sign-in message for the
   configured recipient, with a nonce from the keeper.
 
-- Token art is generated in the browser (`src/lib/art.ts`): kat portraits for
-  the home collection, abstract sigils for launched ones. Each look comes
+- Token art comes from the shared `../art` module, which the keeper also
+  serves to marketplaces: kat portraits for the home collection, abstract
+  sigils for launched ones. Each look comes
   from the contract and token id; the stage (how far it has grown) comes from
   the on-chain context version.
 - The keeper reads finalized blocks, so it trails the chain by a few seconds.

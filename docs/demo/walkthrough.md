@@ -86,7 +86,14 @@ Open **Launchpad**.
   to be a creature."
 - Click **Tutor**. The prompt and starter fill in. Change the name to
   something from the room. The preview shows exactly what token #1 is told.
-- Choose **Only inside a Phala TEE app** and paste an app id. "Contexts for
+- Under **What you earn**, set a 10% royalty and a 20% share of
+  conversations: the creator earns on resales and on every conversation,
+  and owners see the resulting price before they mint.
+- Leave **Token images** on generated: wallets and marketplaces fetch each
+  token's picture from the keeper, and it grows there too.
+- Choose **Only inside a Phala TEE app** and paste an app id. With a keeper
+  running in that app, add **Secret instructions**: they are encrypted in
+  this browser to a key that only exists inside the enclave. "Contexts for
   this collection can only be opened inside that enclave app. A keeper
   running as anything else refuses to serve it. That's fixed at launch."
 - Launch. It becomes its own NEAR account, running the same audited code as
@@ -110,6 +117,11 @@ Open **Launchpad**.
   keeper, which pays the model provider.
 - **Is the prompt secret?** Not today: buyers can read it before minting.
   Encrypting it to the TEE app is on the roadmap.
+- **Can a creator change the rules later?** No. The prompt, terms and TEE
+  requirement are fixed at launch. A creator can only upgrade to code the
+  launchpad approved, and the collection page shows which version runs.
+- **Where are the minds stored?** Encrypted, in an S3-compatible bucket, with
+  a fingerprint of each on-chain.
 - **How do I know the TEE claim is real?** The collection's contract verifies
   the keeper's Intel TDX quote itself, and then only accepts updates signed
   by that key. The verify page shows whether that has happened.

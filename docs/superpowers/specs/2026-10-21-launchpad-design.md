@@ -5,8 +5,9 @@ NFTs: tokens that share one public prompt, start from the same context, and
 then each grow their own way through conversations with whoever owns them.
 Nearkat becomes one collection among many.
 
-Status: built end to end (contracts with on-chain TEE attestation, a keeper
-serving many collections, web pages). Open items are listed at the end.
+Status: built end to end: contracts with on-chain TEE attestation, terms,
+royalties and upgrades; a keeper serving many collections with sealed prompts,
+live art and durable storage; web pages. Open items are listed at the end.
 
 ## What a collection is
 
@@ -87,13 +88,14 @@ inside a given Phala Cloud (dstack) app. Three layers enforce it:
    refuses it if it names an app other than the one the keeper runs as, or
    if the keeper runs in local mode.
 3. **On-chain attestation.** The keeper's quote has report data
-   `sha256("nearkat-keeper:v1:" + keeper NEAR public key)` followed by zeros.
-   Before serving a TEE collection, the keeper fetches Intel's collateral for
-   it (Phala's PCCS) and calls `register_keeper_key(public_key, quote,
-   collateral, event_log)`. The contract:
+   `sha256("nearkat-keeper:v2:" + NEAR public key + ":" + sealing key)`
+   followed by zeros. Before serving a TEE collection, the keeper fetches
+   Intel's collateral for it (Phala's PCCS) and calls
+   `register_keeper_key(public_key, seal_public_key, quote, collateral,
+   event_log)`. The contract:
    - verifies the quote against Intel's root with `dcap-qvl`, at the block
      time, refusing debug TDs and out-of-date or revoked platforms;
-   - checks the report data commits to that key;
+   - checks the report data commits to both keys;
    - replays RTMR3 from dstack's event log and checks the `app-id` event
      (v1 binary or v2 canonical-JSON digest) names the required app.
    From then on, for a TEE collection, `set_context` and `debit_batch` must
@@ -142,19 +144,82 @@ isn't serving the rest. A request for an unseen launch makes it check that
 launch at once. Inference earnings are withdrawn from each collection once
 they reach `WITHDRAW_MIN_YOCTO`.
 
-## Not done yet
+## Terms and royalties
 
-1. **Private prompts.** Optionally encrypt the collection prompt to the TEE
-   app, so only the enclave reads it. Buyers then trust the TEE instead of
-   reading the prompt.
-2. **Art from creators.** `base_uri` exists; the launch form should accept
-   an image set, and generated SVGs should be served somewhere marketplaces
-   can fetch them. Today the art only exists in this web app.
-3. **Launchpad economics.** Fee level, creator royalties on resales
-   (NEP-199 payouts), and the inference price per collection (the keeper
-   charges one price everywhere).
-4. **Upgrades.** Collections run immutable code by hash. A path for creators
-   to move a live collection to a newer version, with state migration, is
-   not designed yet.
-5. **Storage.** Contexts are files on the keeper's disk. Encrypted, but a
-   lost disk loses them; NOVA or another durable store is the next step.
+Fixed at launch, published in `get_collection().terms`:
+
+- `royalty_bps` (up to 25%): NEP-199 `nft_payout` and `nft_transfer_payout`
+  pay this share of a sale to the treasury, the rest to the seller.
+- `creator_share_bps` (up to 50%): `debit_batch` sends this share of every
+  conversation charge to the treasury, the rest to the keeper.
+- `chat_price`, `save_price`: optional. Unset, a collection charges the
+  keeper's price raised just enough to cover the creator's share. A keeper
+  serves a collection only if what it keeps after the share still covers its
+  own price; `GET /collections` reports the prices it charges.
+
+## Art
+
+The art generator lives in `art/`, with no dependencies, and renders plain
+SVG. The web app draws pages with it, and the keeper serves
+`GET /art/<contract>/<id>.svg` to any origin, drawn from the token's on-chain
+context version, so it grows in wallets and marketplaces too. The launch
+form points `base_uri` there with `media_extension: "svg"` by default, or at
+the creator's own images.
+
+## Sealed prompts
+
+A TEE collection can add secret instructions after its public prompt:
+
+1. The keeper derives an X25519 sealing key from its root secret, so every
+   instance of the app shares it and nothing outside the app has it. Its
+   quote's report data is `sha256("nearkat-keeper:v2:" + NEAR key + ":" +
+   sealing key)`, which both the contract and the browser check.
+2. The launch form fetches the keeper's attestation, checks in the browser
+   that the quote binds the sealing key and names the chosen app, and seals
+   the instructions to it (X25519, HKDF-SHA256, AES-256-GCM). Only the
+   ciphertext and `sealed_to` go on-chain.
+3. When the keeper registers its attested key with the collection, the
+   contract checks the sealing key it proves against `sealed_to` and sets
+   `sealed_key_attested`. The collection page shows it.
+4. The keeper opens the instructions when it starts serving the collection
+   and adds them to conversations only, marked confidential. They never go
+   into the update that rewrites a token's character, which owners read.
+
+Limits: a model can be talked into revealing instructions it was given;
+keeping them out of the character update and telling the model not to reveal
+them reduces that but cannot rule it out. Treat sealed instructions as hidden
+from casual view and from the operator, not as a guarantee against owners
+who probe the model.
+
+## Upgrades
+
+Collections run published code by hash. `upgrade(code_hash)` (admin, 1 yocto)
+on a launchpad collection first asks the launchpad `is_code_approved`; if
+approved, the collection points its own account at that code and calls
+`migrate` in one batch (undone together if `migrate` fails), then tells the
+launchpad, which records the version. A directly deployed collection may move
+to any published code. The launchpad approves versions with
+`approve_code_hash`; the one new launches use is always approved and can't be
+revoked. Each version that changes the state layout must convert the previous
+layout in `migrate`; this version reads its own. Only approve code that keeps
+the promises collections made to buyers: public prompt, starter, TEE
+requirement, terms.
+
+## Storage
+
+With `S3_BUCKET` set, the keeper stores every encrypted context in an
+S3-compatible bucket (AWS, R2, MinIO, B2) before its hash moves on-chain, and
+keeps the disk only as a cache that refills from the bucket. Requests are
+signed with SigV4 (checked against AWS's documented example). The bucket is
+trusted to keep blobs, not to keep them secret or intact: they are encrypted,
+and checked against the on-chain hash when read.
+
+## Still open
+
+- **On real infrastructure.** The Phala flow (dstack key derivation, PCCS
+  collateral, on-chain registration) and S3 storage are tested against
+  stand-ins and real recorded data here, not yet on a live Phala CVM or bucket.
+- **Migrations.** The upgrade path is in place; the first version that changes
+  the state layout has to write its conversion.
+- **NOVA.** Contexts could also be stored with NEAR's NOVA; S3 was chosen for
+  this step because any provider works with it.
