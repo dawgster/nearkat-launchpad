@@ -1,5 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
-import { appIdProblem, Launchpad, promptFor, slugFrom, slugProblem } from "../src/lib/launchpad.ts";
+import {
+  appIdProblem,
+  Launchpad,
+  pricesFor,
+  promptFor,
+  slugFrom,
+  slugProblem,
+} from "../src/lib/launchpad.ts";
 
 describe("slugs", () => {
   test("are made from a collection name", () => {
@@ -42,6 +49,14 @@ test("launches with the arguments the factory expects", async () => {
       maxSupply: 100,
       phalaAppId: "0a1b",
       keeperId: null,
+      images: { baseUri: "https://keeper.example/art/magister.launch.testnet/", extension: "svg" },
+      terms: {
+        royaltyBps: 500,
+        creatorShareBps: 1000,
+        chatPrice: 4n * 10n ** 21n,
+        savePrice: null,
+      },
+      sealedPrompt: { ciphertext: "c2VhbGVk", sealed_to: "ab".repeat(32) },
     },
     3n * 10n ** 24n,
   );
@@ -55,15 +70,30 @@ test("launches with the arguments the factory expects", async () => {
         collection: {
           name: "Magister",
           symbol: "LAT",
-          base_uri: "",
+          base_uri: "https://keeper.example/art/magister.launch.testnet/",
+          media_extension: "svg",
           prompt: "p",
           starter: "s",
           max_supply: "100",
           tee: { Phala: { app_id: "0a1b" } },
+          terms: {
+            royalty_bps: 500,
+            creator_share_bps: 1000,
+            chat_price: "4000000000000000000000",
+            save_price: null,
+          },
+          sealed_prompt: { ciphertext: "c2VhbGVk", sealed_to: "ab".repeat(32) },
         },
         keeper_id: null,
       },
     },
     { gas: "150 Tgas", attachedDeposit: "3000000000000000000000000 yocto" },
   );
+});
+
+test("prices a collection as the keeper does", () => {
+  const keeper = { chat: 2_000n, save: 50_000n };
+  expect(pricesFor(undefined, keeper)).toEqual(keeper);
+  const terms = { royalty_bps: 0, creator_share_bps: 2_000, chat_price: null, save_price: "70000" };
+  expect(pricesFor(terms, keeper)).toEqual({ chat: 2_500n, save: 70_000n });
 });

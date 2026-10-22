@@ -38,8 +38,9 @@ function Den({
   /** Told the context version each time the mind is read, so the kat can be drawn grown. */
   onVersion: (version: number) => void;
 }) {
-  const { config, keeper, prices, session } = useServices();
+  const { config, keeper, session } = useServices();
   const scope = useScope();
+  const { prices } = scope;
   const { contract, signer } = scope;
   const navigate = useNavigate();
   const name = `${scope.name} #${tokenId}`;
@@ -153,7 +154,7 @@ function Den({
               `Nothing remembered yet. After a longer conversation, the ${scope.noun} writes down what mattered.`}
           </p>
           <p className="mt-3 text-sm text-mist">
-            Saving what it learned costs {formatNear(prices.save)} NEAR from its balance, after
+            Saving what it learned costs {formatNear(prices.save, 6)} NEAR from its balance, after
             about ten exchanges.
           </p>
         </section>

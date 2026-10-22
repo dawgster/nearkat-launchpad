@@ -12,7 +12,28 @@ export interface CollectionView {
   starter: string;
   max_supply: string | null;
   tee: TeeRequirement | null;
+  media_extension: string;
+  terms: Terms;
+  sealed_prompt: SealedPrompt | null;
+  /** Whether a key attested inside the required app is the one the prompt is sealed to. */
+  sealed_key_attested: boolean;
   minted: string;
+  /** The launchpad that approves this collection's upgrades. */
+  factory_id: string | null;
+  code_hash: string | null;
+}
+
+/** Amounts are yoctoNEAR strings. */
+export interface Terms {
+  royalty_bps: number;
+  creator_share_bps: number;
+  chat_price: string | null;
+  save_price: string | null;
+}
+
+export interface SealedPrompt {
+  ciphertext: string;
+  sealed_to: string;
 }
 
 export interface LaunchpadConfig {
@@ -29,6 +50,7 @@ export interface CollectionListing {
   name: string;
   symbol: string;
   live: boolean;
+  code_hash: string;
 }
 
 export interface LaunchRequest {
@@ -44,6 +66,16 @@ export interface LaunchRequest {
   phalaAppId: string | null;
   /** Null means the launchpad's keeper. */
   keeperId: string | null;
+  /** Where token images live, and their extension. Empty base means none. */
+  images: { baseUri: string; extension: string };
+  terms: {
+    royaltyBps: number;
+    creatorShareBps: number;
+    chatPrice: bigint | null;
+    savePrice: bigint | null;
+  };
+  /** Secret instructions, already sealed to the keeper in this browser. */
+  sealedPrompt: SealedPrompt | null;
 }
 
 export const MAX_PROMPT_CHARS = 4000;
@@ -160,11 +192,19 @@ export class Launchpad {
           collection: {
             name: request.name,
             symbol: request.symbol,
-            base_uri: "",
+            base_uri: request.images.baseUri,
+            media_extension: request.images.extension,
             prompt: request.prompt,
             starter: request.starter,
             max_supply: request.maxSupply === null ? null : String(request.maxSupply),
             tee: request.phalaAppId ? { Phala: { app_id: request.phalaAppId } } : null,
+            terms: {
+              royalty_bps: request.terms.royaltyBps,
+              creator_share_bps: request.terms.creatorShareBps,
+              chat_price: request.terms.chatPrice?.toString() ?? null,
+              save_price: request.terms.savePrice?.toString() ?? null,
+            },
+            ...(request.sealedPrompt ? { sealed_prompt: request.sealedPrompt } : {}),
           },
           keeper_id: request.keeperId,
         },
@@ -173,7 +213,30 @@ export class Launchpad {
     );
   }
 
+  /** Versions of the collection code collections may move to. */
+  async approvedVersions(): Promise<string[]> {
+    return (await this.#view<string[]>("get_approved_code_hashes", {})) ?? [];
+  }
+
   #view<T>(method: string, args: object): Promise<T | undefined> {
     return this.#near.view<T>(this.#id, method, args, { finality: "optimistic" });
   }
+}
+
+/**
+ * What a collection charges per message and per save: its own price, or the
+ * keeper's raised to cover the creator's share. Mirrors the keeper's
+ * `collectionPrices`, which is what actually charges.
+ */
+export function pricesFor(
+  terms: Terms | undefined,
+  keeper: { chat: bigint; save: bigint },
+): { chat: bigint; save: bigint } {
+  const keep = 10_000n - BigInt(terms?.creator_share_bps ?? 0);
+  const price = (set: string | null | undefined, own: bigint) =>
+    set ? BigInt(set) : (own * 10_000n + keep - 1n) / keep;
+  return {
+    chat: price(terms?.chat_price, keeper.chat),
+    save: price(terms?.save_price, keeper.save),
+  };
 }

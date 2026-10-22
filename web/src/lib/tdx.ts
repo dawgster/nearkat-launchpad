@@ -57,9 +57,9 @@ export function parseQuote(hex: string): TdxQuote {
 }
 
 /** The report data a keeper puts in its quote. Must match the keeper's `reportDataFor`. */
-export function expectedReportData(publicKey: string): Uint8Array {
+export function expectedReportData(publicKey: string, sealPublicKey: string): Uint8Array {
   const out = new Uint8Array(64);
-  out.set(sha256(utf8(`nearkat-keeper:v1:${publicKey}`)));
+  out.set(sha256(utf8(`nearkat-keeper:v2:${publicKey}:${sealPublicKey}`)));
   return out;
 }
 
@@ -114,6 +114,8 @@ export interface PhalaReport {
   quote: string;
   event_log: string;
   keeper_public_key: string;
+  /** The X25519 key creators seal prompts to, hex. */
+  seal_public_key: string;
   app_id: string;
 }
 
@@ -144,7 +146,9 @@ export function checkPhalaReport(report: PhalaReport): PhalaCheck {
   } catch (error) {
     return { status: "unreadable", reason: String((error as Error).message ?? error) };
   }
-  const bindsKey = toHex(quote.reportData) === toHex(expectedReportData(report.keeper_public_key));
+  const bindsKey =
+    toHex(quote.reportData) ===
+    toHex(expectedReportData(report.keeper_public_key, report.seal_public_key ?? ""));
   let logMatchesQuote = false;
   let appId: string | null = null;
   try {

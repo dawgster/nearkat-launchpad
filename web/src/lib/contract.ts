@@ -117,6 +117,16 @@ export class KatContract {
     return returnValue<{ token_id: string }>(outcome)?.token_id ?? null;
   }
 
+  /** Moves the collection to another published version. Admin only. */
+  async upgrade(codeHash: string): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "upgrade",
+      { code_hash: codeHash },
+      { gas: "150 Tgas", attachedDeposit: yocto(1n) },
+    );
+  }
+
   async fund(tokenId: string, amount: bigint): Promise<void> {
     await this.#near.call(
       this.#contractId,

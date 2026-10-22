@@ -2,6 +2,7 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 import { useParams } from "react-router";
 import { Shell } from "./components/Shell.tsx";
 import { KatContract } from "./lib/contract.ts";
+import { pricesFor } from "./lib/launchpad.ts";
 import { describeProblem } from "./lib/problems.ts";
 import { useAsync } from "./lib/useAsync.ts";
 import { useServices } from "./services.tsx";
@@ -31,6 +32,8 @@ export interface Scope {
   /** Where "back" goes from a token page. */
   backPath: string;
   backLabel: string;
+  /** What this collection charges, in yoctoNEAR. */
+  prices: { chat: bigint; save: bigint };
   /** Openers for a fresh conversation, and for one already under way. */
   starters: { fresh: string[]; later: string[] };
 }
@@ -47,7 +50,7 @@ export function useScope(): Scope {
 
 /** The home collection. */
 export function HomeScope({ children }: { children: ReactNode }) {
-  const { config, contract, signer } = useServices();
+  const { config, contract, signer, prices } = useServices();
   const scope = useMemo<Scope>(
     () => ({
       contractId: config.contractId,
@@ -58,6 +61,7 @@ export function HomeScope({ children }: { children: ReactNode }) {
       contract,
       signer,
       keeperCollection: undefined,
+      prices,
       tokenPath: (tokenId) => `/kat/${tokenId}`,
       backPath: "/",
       backLabel: "Back to the surface",
@@ -70,7 +74,7 @@ export function HomeScope({ children }: { children: ReactNode }) {
         later: ["What do you remember about me?", "How have you been?"],
       },
     }),
-    [config, contract, signer],
+    [config, contract, signer, prices],
   );
   return <ScopeContext.Provider value={scope}>{children}</ScopeContext.Provider>;
 }
@@ -78,7 +82,7 @@ export function HomeScope({ children }: { children: ReactNode }) {
 /** A collection named in the route, `/c/:contractId/...`. */
 export function ContractScope({ children }: { children: ReactNode }) {
   const { contractId = "" } = useParams();
-  const { config, reader } = useServices();
+  const { config, reader, prices } = useServices();
   const wallet = useWallet();
   const contract = useMemo(() => new KatContract(reader, contractId), [reader, contractId]);
   const home = contractId === config.contractId;
@@ -102,6 +106,7 @@ export function ContractScope({ children }: { children: ReactNode }) {
       contract,
       signer,
       keeperCollection: contractId,
+      prices: pricesFor(collection.data.terms, prices),
       tokenPath: (tokenId) => `/c/${contractId}/kat/${tokenId}`,
       backPath: `/c/${contractId}`,
       backLabel: `Back to ${collection.data.name}`,
@@ -110,7 +115,7 @@ export function ContractScope({ children }: { children: ReactNode }) {
         later: ["What do you remember about me?", "Where did we leave off?"],
       },
     };
-  }, [collection, contract, signer, contractId]);
+  }, [collection, contract, signer, contractId, prices]);
 
   if (home) {
     return <HomeScope>{children}</HomeScope>;

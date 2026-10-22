@@ -5,8 +5,13 @@ import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { PLAIN_STAGE_NAMES, STAGE_NAMES, stageOf } from "../lib/art.ts";
 import { KatContract } from "../lib/contract.ts";
-import { shorten } from "../lib/format.ts";
-import type { TeeRequirement } from "../lib/launchpad.ts";
+import { formatNear, shorten } from "../lib/format.ts";
+import {
+  type Terms as CollectionTerms,
+  type CollectionView,
+  pricesFor,
+  type TeeRequirement,
+} from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { useServices } from "../services.tsx";
@@ -135,7 +140,30 @@ export function Collection() {
               Who can open the tokens' minds
             </h2>
             <Privacy tee={c.tee} />
+            {c.sealed_prompt && (
+              <p className="mt-2 text-sm leading-relaxed text-mist">
+                <span className="font-bold text-cream">It also has secret instructions</span>,
+                sealed to key{" "}
+                <span className="font-mono">{shorten(c.sealed_prompt.sealed_to, 8)}</span>.{" "}
+                {c.sealed_key_attested
+                  ? "The contract has verified that this key lives inside the app."
+                  : "The contract hasn't yet verified a keeper holding this key inside the app."}
+              </p>
+            )}
           </section>
+          <section className="mt-8" aria-labelledby="terms">
+            <h2 id="terms" className="font-sans text-lg font-bold">
+              Terms
+            </h2>
+            <Terms terms={c.terms} />
+            <p className="mt-2 text-sm text-mist">
+              {c.base_uri
+                ? `Token images are at ${c.base_uri}<number>.${c.media_extension}.`
+                : "Token images exist only in this app."}{" "}
+              Everything here is fixed at launch.
+            </p>
+          </section>
+          <Version contractId={contractId} collection={c} adminId={s.admin_id} />
         </div>
 
         <div>
@@ -146,7 +174,7 @@ export function Collection() {
           ) : (
             <MintPanel
               mintPrice={BigInt(s.mint_price)}
-              chatPrice={prices.chat}
+              chatPrice={home ? prices.chat : pricesFor(c.terms, prices).chat}
               noun={home ? "kat" : "token"}
               onMint={wallet.near ? mint : null}
               onConnect={wallet.connect}
@@ -245,5 +273,111 @@ function KeeperNote({ contractId, keeperId }: { contractId: string; keeperId: st
           : "This app's keeper hasn't picked this collection up yet. New launches are found within a minute."}{" "}
       Its keeper is <span className="font-mono">{shorten(keeperId, 12)}</span>.
     </p>
+  );
+}
+
+function Terms({ terms }: { terms: CollectionTerms }) {
+  const percent = (bps: number) => `${bps / 100}%`;
+  const keeperPrice =
+    terms.creator_share_bps > 0
+      ? "The keeper's price, plus the creator's share"
+      : "The keeper's price";
+  return (
+    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm">
+      <dt className="text-mist">Royalty on resales</dt>
+      <dd>{percent(terms.royalty_bps)}, to the creator</dd>
+      <dt className="text-mist">Creator's share of conversations</dt>
+      <dd>{percent(terms.creator_share_bps)}</dd>
+      <dt className="text-mist">Per message</dt>
+      <dd>{terms.chat_price ? `${formatNear(terms.chat_price, 6)} NEAR` : keeperPrice}</dd>
+      <dt className="text-mist">Per memory save</dt>
+      <dd>{terms.save_price ? `${formatNear(terms.save_price, 6)} NEAR` : keeperPrice}</dd>
+    </dl>
+  );
+}
+
+/**
+ * Which published code the collection runs, and, for its admin, the newer
+ * versions its launchpad has approved. Upgrading keeps every token and its
+ * mind; a launchpad only approves versions that keep the collection's promises.
+ */
+function Version({
+  contractId,
+  collection,
+  adminId,
+}: {
+  contractId: string;
+  collection: CollectionView;
+  adminId: string;
+}) {
+  const { launchpad } = useServices();
+  const wallet = useWallet();
+  const fromLaunchpad = launchpad !== null && collection.factory_id === launchpad.id;
+  const [approved] = useAsync(fromLaunchpad ? `approved/${contractId}` : null, () =>
+    (launchpad as NonNullable<typeof launchpad>).approvedVersions(),
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const isAdmin = wallet.accountId === adminId;
+  const others =
+    approved.status === "ready"
+      ? approved.data.filter((hash) => hash !== collection.code_hash)
+      : [];
+
+  async function upgrade(codeHash: string) {
+    if (!wallet.near) {
+      return;
+    }
+    setBusy(codeHash);
+    setOutcome(null);
+    try {
+      await new KatContract(wallet.near, contractId).upgrade(codeHash);
+      setOutcome(`Now running version ${shorten(codeHash, 6)}. Reload to see it.`);
+    } catch (error) {
+      setOutcome(describeProblem(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="mt-8" aria-labelledby="version">
+      <h2 id="version" className="font-sans text-lg font-bold">
+        Version
+      </h2>
+      <p className="mt-2 text-sm text-mist">
+        {collection.code_hash ? (
+          <>
+            Runs published code{" "}
+            <span className="break-all font-mono text-cream">{collection.code_hash}</span>, which
+            anyone can compare with the source.
+          </>
+        ) : (
+          "Runs code its operator deployed directly."
+        )}
+      </p>
+      {isAdmin && fromLaunchpad && others.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {others.map((hash) => (
+            <li key={hash} className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="font-mono">{shorten(hash, 8)}</span>
+              <button
+                type="button"
+                className="button button-quiet"
+                disabled={busy !== null}
+                onClick={() => void upgrade(hash)}
+              >
+                {busy === hash ? "Upgrading…" : "Upgrade to this version"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {outcome && (
+        <p className="mt-2 text-sm" role="status">
+          {outcome}
+        </p>
+      )}
+    </section>
   );
 }

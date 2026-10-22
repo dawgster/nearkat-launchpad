@@ -17,6 +17,7 @@ const KEEPER_PORT = 8788;
 const MODEL_PORT = 8789;
 export const ALICE_URL = "http://localhost:3000";
 export const BOB_URL = "http://localhost:3001";
+export const KEEPER_URL = `http://127.0.0.1:${KEEPER_PORT}`;
 
 const children: ChildProcess[] = [];
 
@@ -195,7 +196,7 @@ export default async function globalSetup() {
         VITE_NEAR_NETWORK: "sandbox",
         VITE_NEAR_RPC_URL: sandbox.rpcUrl,
         VITE_CONTRACT_ID: names.contract,
-        VITE_KEEPER_URL: `http://127.0.0.1:${KEEPER_PORT}`,
+        VITE_KEEPER_URL: KEEPER_URL,
         VITE_FACTORY_ID: names.launchpad,
         VITE_DEV_WALLET_ID: id,
         VITE_DEV_WALLET_KEY: key,

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ALICE_URL, BOB_URL } from "./global-setup.ts";
+import { ALICE_URL, BOB_URL, KEEPER_URL } from "./global-setup.ts";
 
 const SHOTS = process.env.E2E_SCREENSHOTS;
 const shot = async (page: import("@playwright/test").Page, name: string) => {
@@ -99,6 +99,14 @@ test("a creator launches a collection with its own prompt, and mints from it", a
     "You are Magister #1, a patient Spanish tutor.",
   );
   await shot(page, "4-launch");
+
+  // Secret instructions are sealed to a key inside the Phala app; this keeper isn't in one.
+  await page.getByLabel("Secret instructions (optional)").fill("The final answer is LANTERN.");
+  await page.getByRole("button", { name: "Launch collection" }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "isn't running as Phala app" }),
+  ).toBeVisible();
+  await page.getByLabel("Secret instructions (optional)").fill("");
   await page.getByRole("button", { name: "Launch collection" }).click();
 
   const launchpad = process.env.E2E_LAUNCHPAD_ID as string;
@@ -136,9 +144,16 @@ test("an owner talks to a token from a launched collection", async ({ page }) =>
   await page.getByLabel("Name").fill("Lantern");
   await page.getByLabel("Symbol").fill("LNT");
   await page.getByRole("button", { name: "Game master" }).click();
+  await page.getByLabel("Royalty on resales (%)").fill("10");
+  await page.getByLabel("Your share of conversations (%)").fill("20");
   await page.getByRole("button", { name: "Launch collection" }).click();
   const launchpad = process.env.E2E_LAUNCHPAD_ID as string;
   await expect(page).toHaveURL(`${ALICE_URL}/c/lantern.${launchpad}`, { timeout: 60_000 });
+
+  const terms = page.getByRole("region", { name: "Terms" });
+  await expect(terms).toContainText("10%, to the creator");
+  await expect(terms).toContainText("20%");
+  await expect(terms).toContainText(`/art/lantern.${launchpad}/<number>.svg`);
 
   await page.getByRole("button", { name: "Mint a token" }).click();
   await page.getByRole("link", { name: /Lantern #1/ }).click();
@@ -147,10 +162,17 @@ test("an owner talks to a token from a launched collection", async ({ page }) =>
   // The keeper finds the new launch and wakes the token with the collection's starter.
   const character = page.getByRole("region", { name: "Character" });
   await expect(character).toContainText("The adventure has not started.", { timeout: 90_000 });
+  // The keeper's price, raised to cover the creator's 20%.
+  await expect(page.getByText("Each message costs 0.0025 NEAR")).toBeVisible();
   await page.getByRole("button", { name: "Hello! Who are you?" }).click();
   await expect(page.getByText("Meow! You said: Hello! Who are you?")).toBeVisible();
   await expect(page.getByRole("region", { name: "Growth" })).toContainText("New");
   await shot(page, "6-launched-token");
+
+  // Wallets and marketplaces get the same growing picture from the keeper.
+  const art = await page.request.get(`${KEEPER_URL}/art/lantern.${launchpad}/1.svg`);
+  expect(art.headers()["content-type"]).toBe("image/svg+xml");
+  expect(await art.text()).toContain("<title>Lantern #1</title>");
 
   await page.getByRole("link", { name: "Verify this token" }).click();
   await expect(page.getByRole("heading", { name: "Verify Lantern #1" })).toBeVisible();

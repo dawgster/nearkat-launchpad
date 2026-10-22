@@ -14,6 +14,7 @@ import {
 
 const KEY = "ed25519:4eUKxcVz6kQgHHvJDY2jkm6mYwSj8b8N3pHn1dQd8Z8C";
 const APP = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+const SEAL = "ab".repeat(32);
 
 function event(name: string, payloadHex: string, imr = 3): DstackEvent {
   const e = { imr, event_type: 0x08000001, digest: "", event: name, event_payload: payloadHex };
@@ -40,9 +41,10 @@ function report(overrides: { events?: DstackEvent[]; key?: string; appId?: strin
     event("boot", "aa", 1),
   ];
   return {
-    quote: quote(replayRtmr(events, 3), expectedReportData(KEY)),
+    quote: quote(replayRtmr(events, 3), expectedReportData(KEY, SEAL)),
     event_log: JSON.stringify(events),
     keeper_public_key: overrides.key ?? KEY,
+    seal_public_key: SEAL,
     app_id: overrides.appId ?? APP,
   };
 }
@@ -136,6 +138,7 @@ describe("a real dstack quote", () => {
       quote: fixture.quote,
       event_log: fixture.event_log,
       keeper_public_key: "ed25519:x",
+      seal_public_key: SEAL,
       app_id: "3763bc34552cf3a27ff71ad5f7a90471562a1a2d",
     });
     // Its report data wasn't made for a keeper key, but the app and log hold up.
@@ -161,4 +164,9 @@ test("computes dstack v2 digests over canonical JSON", () => {
   expect(digest).toEqual(
     sha384(new TextEncoder().encode('{"name":"compose-hash","payload":"abcd","type":134217729}')),
   );
+});
+
+test("notices a quote made for a different sealing key", () => {
+  const check = checkPhalaReport({ ...report(), seal_public_key: "cd".repeat(32) });
+  expect(check).toMatchObject({ bindsKey: false });
 });

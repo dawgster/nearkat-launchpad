@@ -86,8 +86,8 @@ export function Chat({
         {lines.length === 0 && !thinking && (
           <div>
             <p className="max-w-prose text-mist">
-              Say something to {katName}. Each message costs {formatNear(chatPrice)} NEAR from its
-              balance.
+              Say something to {katName}. Each message costs {formatNear(chatPrice, 6)} NEAR from
+              its balance.
             </p>
             {starters.length > 0 && (
               <ul className="mt-4 flex flex-wrap gap-2" aria-label="Ways to start">

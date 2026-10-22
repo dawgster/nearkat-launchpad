@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { Shell } from "../components/Shell.tsx";
 import { TokenSigil } from "../components/TokenSigil.tsx";
 import { formatNear, parseNear, shorten } from "../lib/format.ts";
+import type { Keeper } from "../lib/keeper.ts";
 import {
   appIdProblem,
   Launchpad,
@@ -10,10 +11,13 @@ import {
   MAX_STARTER_CHARS,
   PROMPT_TEMPLATES,
   promptFor,
+  type SealedPrompt,
   slugFrom,
   slugProblem,
 } from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { sealPrompt } from "../lib/sealing.ts";
+import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
@@ -59,6 +63,42 @@ function Counter({ text, max }: { text: string; max: number }) {
   );
 }
 
+/** A percentage typed by a person, as basis points, or null if invalid. */
+function percentToBps(text: string, max: number): number | null {
+  const match = /^(\d{1,2})(?:\.(\d{1,2}))?$/.exec(text.trim());
+  if (!match) {
+    return null;
+  }
+  const bps = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  return bps <= max * 100 ? bps : null;
+}
+
+/**
+ * Seals secret instructions to the sealing key of this app's keeper, after
+ * checking in the browser that the keeper's quote binds that key and comes
+ * from the chosen Phala app. The contract checks the same quote, Intel's
+ * signature included, when the keeper registers.
+ */
+async function sealForApp(keeper: Keeper, appId: string, secret: string): Promise<SealedPrompt> {
+  const report = (await keeper.attestation()) as Partial<PhalaReport> & { mode?: string };
+  const check = report.mode === "phala" ? checkPhalaReport(report as PhalaReport) : null;
+  if (
+    check?.status !== "read" ||
+    !check.bindsKey ||
+    !check.logMatchesQuote ||
+    check.appId !== appId ||
+    !report.seal_public_key
+  ) {
+    throw new Error(
+      `Secret instructions are sealed to this app's keeper, and it isn't running as Phala app ${appId}, so there is no key inside that app to seal them to.`,
+    );
+  }
+  return {
+    ciphertext: await sealPrompt(report.seal_public_key, secret),
+    sealed_to: report.seal_public_key,
+  };
+}
+
 /** Where anyone launches their own collection of prompt-based NFTs. */
 export function Launch() {
   const { launchpad } = useServices();
@@ -75,7 +115,7 @@ export function Launch() {
 
 function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const wallet = useWallet();
-  const { prices } = useServices();
+  const { prices, keeper, config: app } = useServices();
   const navigate = useNavigate();
   const [config] = useAsync("launchpad", () => launchpad.getConfig());
   const [listing] = useAsync("collections", () => launchpad.collections());
@@ -91,6 +131,14 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const [private_, setPrivate] = useState(false);
   const [appId, setAppId] = useState("");
   const [keeperId, setKeeperId] = useState("");
+  const [secret, setSecret] = useState("");
+  const [royalty, setRoyalty] = useState("5");
+  const [share, setShare] = useState("0");
+  const [chatPrice, setChatPrice] = useState("");
+  const [savePrice, setSavePrice] = useState("");
+  const [ownImages, setOwnImages] = useState(false);
+  const [imageBase, setImageBase] = useState("");
+  const [imageExtension, setImageExtension] = useState("png");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [taken, setTaken] = useState(false);
@@ -111,6 +159,10 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   }, [effectiveSlug, launchpad]);
 
   const mintPrice = parseNear(price);
+  const royaltyBps = percentToBps(royalty, 25);
+  const shareBps = percentToBps(share, 50);
+  const chatPriceValue = chatPrice.trim() ? parseNear(chatPrice) : null;
+  const savePriceValue = savePrice.trim() ? parseNear(savePrice) : null;
   const maxSupply = supply.trim() === "" ? null : Number(supply);
   const problems = {
     name: name.trim() ? null : "Give the collection a name.",
@@ -132,6 +184,19 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
         ? null
         : "A whole number, or leave it empty for no limit.",
     appId: private_ ? appIdProblem(appId) : null,
+    secret: secret.length > MAX_PROMPT_CHARS ? "Too long." : null,
+    royalty: royaltyBps === null ? "A percentage from 0 to 25." : null,
+    share: shareBps === null ? "A percentage from 0 to 50." : null,
+    chatPrice:
+      chatPrice.trim() && chatPriceValue === null ? "An amount in NEAR, or leave it empty." : null,
+    savePrice:
+      savePrice.trim() && savePriceValue === null ? "An amount in NEAR, or leave it empty." : null,
+    imageBase:
+      ownImages && !/^https?:\/\/\S+\/$/.test(imageBase)
+        ? "A web address ending in /, like https://example.com/art/"
+        : null,
+    imageExtension:
+      ownImages && !/^[A-Za-z0-9]{1,8}$/.test(imageExtension) ? "Like png, jpg or webp." : null,
   };
   const valid = Object.values(problems).every((p) => p === null) && !taken;
   const [touched, setTouched] = useState(false);
@@ -151,6 +216,8 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     setBusy(true);
     setProblem(null);
     try {
+      const sealedPrompt =
+        private_ && secret.trim() ? await sealForApp(keeper, appId, secret) : null;
       await new Launchpad(wallet.near, launchpad.id).launch(
         {
           slug: effectiveSlug,
@@ -162,6 +229,20 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           maxSupply,
           phalaAppId: private_ ? appId : null,
           keeperId: private_ && keeperId.trim() ? keeperId.trim() : null,
+          images: ownImages
+            ? { baseUri: imageBase, extension: imageExtension }
+            : // The keeper draws each token's art live, as it grows.
+              {
+                baseUri: `${app.keeperUrl}/art/${launchpad.accountFor(effectiveSlug)}/`,
+                extension: "svg",
+              },
+          terms: {
+            royaltyBps: royaltyBps ?? 0,
+            creatorShareBps: shareBps ?? 0,
+            chatPrice: chatPriceValue,
+            savePrice: savePriceValue,
+          },
+          sealedPrompt,
         },
         cost,
       );
@@ -305,6 +386,134 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           </div>
 
           <fieldset className="rounded-xl border border-cream/15 p-5">
+            <legend className="px-2 font-bold">What you earn</legend>
+            <div className="grid gap-6 sm:grid-cols-2">
+              <Field
+                id="royalty"
+                label="Royalty on resales (%)"
+                hint="Paid to you by marketplaces that honour NEAR royalties (NEP-199). Up to 25%."
+                problem={show(problems.royalty)}
+              >
+                <input
+                  id="royalty"
+                  className="field"
+                  inputMode="decimal"
+                  value={royalty}
+                  aria-describedby="royalty-hint"
+                  onChange={(e) => setRoyalty(e.target.value)}
+                />
+              </Field>
+              <Field
+                id="share"
+                label="Your share of conversations (%)"
+                hint="Taken from every message and memory save. Up to 50%; raises the price owners pay."
+                problem={show(problems.share)}
+              >
+                <input
+                  id="share"
+                  className="field"
+                  inputMode="decimal"
+                  value={share}
+                  aria-describedby="share-hint"
+                  onChange={(e) => setShare(e.target.value)}
+                />
+              </Field>
+              <Field
+                id="chat-price"
+                label="Price per message (NEAR)"
+                hint={`Optional. Empty means the keeper's price, ${formatNear(prices.chat, 6)} NEAR, plus your share.`}
+                problem={show(problems.chatPrice)}
+              >
+                <input
+                  id="chat-price"
+                  className="field"
+                  inputMode="decimal"
+                  value={chatPrice}
+                  aria-describedby="chat-price-hint"
+                  onChange={(e) => setChatPrice(e.target.value)}
+                />
+              </Field>
+              <Field
+                id="save-price"
+                label="Price per memory save (NEAR)"
+                hint={`Optional. Empty means the keeper's price, ${formatNear(prices.save, 6)} NEAR, plus your share.`}
+                problem={show(problems.savePrice)}
+              >
+                <input
+                  id="save-price"
+                  className="field"
+                  inputMode="decimal"
+                  value={savePrice}
+                  aria-describedby="save-price-hint"
+                  onChange={(e) => setSavePrice(e.target.value)}
+                />
+              </Field>
+            </div>
+            <p className="mt-4 text-sm text-mist">
+              A keeper only serves a collection whose prices still cover its own after your share.
+              These are fixed at launch.
+            </p>
+          </fieldset>
+
+          <fieldset className="rounded-xl border border-cream/15 p-5">
+            <legend className="px-2 font-bold">Token images</legend>
+            <label className="flex gap-3">
+              <input
+                type="radio"
+                name="images"
+                checked={!ownImages}
+                onChange={() => setOwnImages(false)}
+              />
+              <span>
+                Generated, and growing
+                <span className="block text-sm text-mist">
+                  Each token gets the art in the preview, served by the keeper, so wallets and
+                  marketplaces see it change as the token grows.
+                </span>
+              </span>
+            </label>
+            <label className="mt-4 flex gap-3">
+              <input
+                type="radio"
+                name="images"
+                checked={ownImages}
+                onChange={() => setOwnImages(true)}
+              />
+              <span>
+                My own images
+                <span className="block text-sm text-mist">
+                  Token 1's image is at your address followed by 1 and the extension.
+                </span>
+              </span>
+            </label>
+            {ownImages && (
+              <div className="mt-5 grid gap-5 pl-7 sm:grid-cols-[1fr_8rem]">
+                <Field id="image-base" label="Image address" problem={show(problems.imageBase)}>
+                  <input
+                    id="image-base"
+                    className="field font-mono"
+                    placeholder="https://example.com/art/"
+                    value={imageBase}
+                    onChange={(e) => setImageBase(e.target.value.trim())}
+                  />
+                </Field>
+                <Field
+                  id="image-extension"
+                  label="Extension"
+                  problem={show(problems.imageExtension)}
+                >
+                  <input
+                    id="image-extension"
+                    className="field font-mono"
+                    value={imageExtension}
+                    onChange={(e) => setImageExtension(e.target.value.trim())}
+                  />
+                </Field>
+              </div>
+            )}
+          </fieldset>
+
+          <fieldset className="rounded-xl border border-cream/15 p-5">
             <legend className="px-2 font-bold">Who can open the tokens' minds</legend>
             <label className="flex gap-3">
               <input
@@ -355,6 +564,20 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                   />
                 </Field>
                 <Field
+                  id="secret"
+                  label="Secret instructions (optional)"
+                  hint="Added after the prompt, for the model only. They're sealed in this browser to a key that exists only inside the Phala app; buyers, owners and the keeper's operator never see them."
+                  problem={show(problems.secret)}
+                >
+                  <textarea
+                    id="secret"
+                    className="field min-h-24"
+                    value={secret}
+                    aria-describedby="secret-hint"
+                    onChange={(e) => setSecret(e.target.value)}
+                  />
+                </Field>
+                <Field
                   id="keeper-id"
                   label="Keeper account (optional)"
                   hint="The NEAR account of the keeper running as that app. Leave empty to use the launchpad's keeper."
@@ -396,7 +619,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
             )}
             <p className="mt-3 text-sm text-mist">
               Mint revenue goes to you. Owners pay for their tokens' conversations from each token's
-              own balance ({formatNear(prices.chat)} NEAR a message here).
+              own balance ({formatNear(prices.chat, 6)} NEAR a message here).
             </p>
             {wallet.near ? (
               <button

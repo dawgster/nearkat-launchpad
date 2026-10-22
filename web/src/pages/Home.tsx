@@ -177,7 +177,7 @@ function HowItWorks({ chatPrice }: { chatPrice: bigint }) {
               </h3>
               <p className="mt-1 text-sm leading-relaxed text-mist">
                 {step.title === "Talk"
-                  ? `${step.text} Each costs ${formatNear(chatPrice)} NEAR.`
+                  ? `${step.text} Each costs ${formatNear(chatPrice, 6)} NEAR.`
                   : step.text}
               </p>
             </div>
