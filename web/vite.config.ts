@@ -24,7 +24,8 @@ function refuseDevWalletInBuild(): Plugin {
 
 export default defineConfig({
   plugins: [refuseDevWalletInBuild(), react(), tailwindcss()],
-  server: { port: 3000, strictPort: true },
+  // The art module lives beside the app, shared with the keeper.
+  server: { port: 3000, strictPort: true, fs: { allow: [".."] } },
   test: {
     environment: "happy-dom",
     include: ["test/**/*.test.{ts,tsx}"],

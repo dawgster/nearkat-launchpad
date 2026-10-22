@@ -1,6 +1,8 @@
 import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
 import { Near, verifyNep413Signature } from "near-kit";
+import { katSvg, sigilSvg } from "../../art/svg.ts";
+import { stageOf } from "../../art/traits.ts";
 import { createApp } from "./app.ts";
 import { Auth } from "./auth.ts";
 import { NearChain } from "./chain.ts";
@@ -133,6 +135,18 @@ const app = createApp({
       reason,
     })),
   }),
+  art: async (contractId, tokenId) => {
+    const served = collections.get(contractId);
+    const kat = served ? await served.chain.getKat(tokenId) : null;
+    if (!served || !kat) {
+      return null;
+    }
+    // Drawn exactly as the web app draws it: kats for the home collection.
+    const draw = contractId === config.contractId ? katSvg : sigilSvg;
+    return draw(`${contractId}/${tokenId}`, stageOf(Number(kat.context_version) || 1), {
+      title: `${served.info.name} #${tokenId}`,
+    });
+  },
   attestation: async () =>
     appInfo && quote
       ? {

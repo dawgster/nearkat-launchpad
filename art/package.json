@@ -1,0 +1,6 @@
+{
+  "name": "nearkat-art",
+  "private": true,
+  "type": "module",
+  "description": "Token art shared by the web app and the keeper. No dependencies."
+}

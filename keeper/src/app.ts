@@ -16,6 +16,11 @@ export interface AppOptions {
   homeContractId?: string;
   /** Any collection this keeper serves, by contract id, served at /c/:contract/kats. */
   collection?: (contractId: string) => KatService | undefined;
+  /**
+   * A token's picture as SVG, for wallets and marketplaces: collections point
+   * their `base_uri` at /art/<contract>/. Null when there is no such token.
+   */
+  art?: (contractId: string, tokenId: string) => Promise<string | null>;
   /** Served at GET /collections: what this keeper serves, and what it is waiting on. */
   collections?: () => Record<string, unknown>;
   /** Served at GET /attestation. */
@@ -47,10 +52,14 @@ export function createApp(options: AppOptions): Hono<Env> {
   const { auth, kats } = options;
   const app = new Hono<Env>();
 
-  app.use(
-    "*",
-    cors({ origin: options.webOrigins, allowHeaders: ["authorization", "content-type"] }),
-  );
+  // Art is public, and fetched by wallets and marketplaces from anywhere;
+  // everything else answers only the web app.
+  const publicCors = cors({ origin: "*" });
+  const appCors = cors({
+    origin: options.webOrigins,
+    allowHeaders: ["authorization", "content-type"],
+  });
+  app.use("*", (c, next) => (c.req.path.startsWith("/art/") ? publicCors : appCors)(c, next));
 
   app.use(
     "*",
@@ -101,6 +110,19 @@ export function createApp(options: AppOptions): Hono<Env> {
   });
 
   app.get("/collections", (c) => c.json(options.collections?.() ?? {}));
+
+  app.get("/art/:contract/:file", async (c) => {
+    const match = /^(\d{1,20})\.svg$/.exec(c.req.param("file"));
+    const svg = match?.[1] ? await options.art?.(c.req.param("contract"), match[1]) : null;
+    if (!svg) {
+      throw new HttpError(404, "not_found", "No such token");
+    }
+    return c.body(svg, 200, {
+      "content-type": "image/svg+xml",
+      // A token's picture changes as it grows, so caches check back hourly.
+      "cache-control": "public, max-age=3600",
+    });
+  });
 
   const signedIn = createMiddleware<Env>(async (c, next) => {
     const header = c.req.header("authorization") ?? "";

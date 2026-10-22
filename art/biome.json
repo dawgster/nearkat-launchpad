@@ -1,0 +1,5 @@
+{
+  "files": { "includes": ["*.ts", "*.json"] },
+  "formatter": { "indentStyle": "space", "lineWidth": 100 },
+  "linter": { "rules": { "preset": "recommended" } }
+}

@@ -333,3 +333,34 @@ describe("collections served alongside the home one", () => {
     expect(await (await app.request("/collections")).json()).toEqual({ served: ["tutor.near"] });
   });
 });
+
+describe("art", () => {
+  test("serves a token's picture as SVG to anyone", async () => {
+    const auth = new Auth({
+      sessionKey: keys.sessionKey(),
+      recipient: "x",
+      verify: async () => true,
+    });
+    const app = createApp({
+      auth,
+      art: async (contract, token) =>
+        contract === "tutor.near" && token === "1" ? "<svg>tutor 1</svg>" : null,
+      attestation: async () => ({ mode: "local" }),
+      info: { chat_price: "1", save_price: "1", model: "m" },
+      webOrigins: ["http://localhost:3000"],
+    });
+    const response = await app.request("/art/tutor.near/1.svg", {
+      headers: { origin: "https://marketplace.example" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml");
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await response.text()).toBe("<svg>tutor 1</svg>");
+
+    expect((await app.request("/art/tutor.near/2.svg")).status).toBe(404);
+    expect((await app.request("/art/tutor.near/1.png")).status).toBe(404);
+    // Only the art is open to every origin.
+    const info = await app.request("/info", { headers: { origin: "https://marketplace.example" } });
+    expect(info.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

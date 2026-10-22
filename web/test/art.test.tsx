@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
+import { katSvg, sigilSvg } from "../../art/svg.ts";
 import { Growth } from "../src/components/Growth.tsx";
 import { KatPortrait } from "../src/components/KatPortrait.tsx";
 import { TokenSigil } from "../src/components/TokenSigil.tsx";
@@ -67,5 +68,24 @@ describe("portraits", () => {
     const { container } = render(<TokenSigil seed="x/1" decorative />);
     expect(screen.queryByRole("img")).toBeNull();
     expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+describe("shared SVG", () => {
+  test("escapes the title, so a collection name can't inject markup", () => {
+    const svg = katSvg("x/1", 0, { title: '<script>alert("hi")</script>' });
+    expect(svg).not.toContain("<script>");
+    expect(svg).toContain("&#60;script&#62;");
+  });
+
+  test("hides decorative art and sizes on request", () => {
+    const svg = sigilSvg("x/1", 3, { title: null, size: 64 });
+    expect(svg).toContain('aria-hidden="true"');
+    expect(svg).toContain('width="64"');
+    expect(svg).not.toContain("<title>");
+  });
+
+  test("is standalone SVG that a marketplace can load as an image", () => {
+    expect(katSvg("x/1", 2)).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg"/);
   });
 });
