@@ -5,6 +5,7 @@ import { Collections } from "../src/collections.ts";
 import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
+import { sealTo } from "../src/sealing.ts";
 import { MemoryStore } from "../src/store.ts";
 import { FakeChain, FakeInference, NEAR } from "./fakes.ts";
 
@@ -12,6 +13,7 @@ const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 const APP = "0a1b2c";
 const PROOF: KeyProof = {
   public_key: keys.nearPublicKey(),
+  seal_public_key: keys.sealing().publicKeyHex,
   quote: "beef",
   collateral: "{}",
   event_log: "[]",
@@ -37,7 +39,9 @@ function setup(
     keeperPublicKey: keys.nearPublicKey(),
     runningAs,
     chainFor,
-    build: (contractId, chain, info) => {
+    keeperPrices: { chat: 10n, save: 100n },
+    sealing: keys.sealing(),
+    build: (contractId, chain, info, prices) => {
       const meter = new Meter(chain);
       const kats = new KatService({
         chain,
@@ -45,7 +49,7 @@ function setup(
         keys: keys.forContract(contractId),
         inference,
         meter,
-        prices: { chat: 1n, save: 1n },
+        prices,
         collection: info,
         retryDelayMs: 0,
       });
@@ -157,5 +161,53 @@ describe("Collections", () => {
     await collections.withdrawEarnings(2n);
     expect(chainFor("a.near").withdrawals).toBe(1);
     expect(chainFor("b.near").withdrawals).toBe(0);
+  });
+});
+
+describe("Collections, terms and sealed prompts", () => {
+  test("serves a collection at its own prices, and lists them", async () => {
+    const { collections, chainFor } = setup();
+    chainFor("tutor.near").collection = {
+      ...DEFAULT_COLLECTION,
+      terms: { royalty_bps: 0, creator_share_bps: 0, chat_price: "20", save_price: null },
+    };
+    expect(await collections.add("tutor.near")).toBe(true);
+    expect(collections.get("tutor.near")?.prices).toEqual({ chat: 20n, save: 100n });
+  });
+
+  test("waits on a collection whose prices don't cover the keeper", async () => {
+    const { collections, chainFor } = setup();
+    chainFor("cheap.near").collection = {
+      ...DEFAULT_COLLECTION,
+      terms: { royalty_bps: 0, creator_share_bps: 0, chat_price: "1", save_price: null },
+    };
+    expect(await collections.add("cheap.near")).toBe(false);
+    expect(collections.waiting()[0]?.reason).toMatch(/below this keeper's own/);
+  });
+
+  test("opens a prompt sealed to its own key", async () => {
+    const { collections, chainFor } = setup({ mode: "phala", appId: APP });
+    const chain = chainFor("oracle.near");
+    chain.collection = {
+      ...DEFAULT_COLLECTION,
+      tee: { Phala: { app_id: APP } },
+      sealed_prompt: {
+        ciphertext: sealTo(keys.sealing().publicKeyHex, "The answer is LANTERN."),
+        sealed_to: keys.sealing().publicKeyHex,
+      },
+    };
+    expect(await collections.add("oracle.near")).toBe(true);
+    expect(collections.get("oracle.near")?.info.secret_prompt).toBe("The answer is LANTERN.");
+  });
+
+  test("waits on a prompt sealed to another keeper", async () => {
+    const { collections, chainFor } = setup({ mode: "phala", appId: APP });
+    chainFor("oracle.near").collection = {
+      ...DEFAULT_COLLECTION,
+      tee: { Phala: { app_id: APP } },
+      sealed_prompt: { ciphertext: "AAAA", sealed_to: "ab".repeat(32) },
+    };
+    expect(await collections.add("oracle.near")).toBe(false);
+    expect(collections.waiting()[0]?.reason).toMatch(/sealed to another keeper's key/);
   });
 });

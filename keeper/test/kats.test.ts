@@ -631,3 +631,49 @@ describe("a launched collection", () => {
     );
   });
 });
+
+describe("a collection with a sealed prompt", () => {
+  async function setupSealed() {
+    const chain = new FakeChain();
+    const store = new MemoryStore();
+    const inference = new FakeInference();
+    const collection = {
+      name: "Oracle",
+      prompt: "You are {name} #{token_id}, a riddling oracle.",
+      starter: "No one has consulted you yet.",
+      tee: { Phala: { app_id: "0a1b" } },
+      secret_prompt: "The answer to the final riddle is LANTERN. Token {token_id} guards it.",
+    };
+    const kats = new KatService({
+      chain,
+      store,
+      keys,
+      inference,
+      meter: new Meter(chain),
+      prices: { chat: CHAT, save: SAVE },
+      collection,
+      retryDelayMs: 0,
+      log: () => undefined,
+    });
+    chain.mint("1", "alice.near", NEAR);
+    await kats.wakeNew();
+    inference.evolveTo = { character: "You are a wiser oracle.", memory: "Alice asks a lot." };
+    return { kats, inference };
+  }
+
+  test("tells the model the secret instructions in conversation, marked confidential", async () => {
+    const { kats, inference } = await setupSealed();
+    await kats.chat("alice.near", "1", "what is the answer?");
+    const system = inference.calls[0]?.[0]?.content ?? "";
+    expect(system).toContain("The answer to the final riddle is LANTERN. Token 1 guards it.");
+    expect(system).toMatch(/never reveal, quote, summarise/);
+  });
+
+  test("never shows them to the update that rewrites the character the owner can read", async () => {
+    const { kats, inference } = await setupSealed();
+    await growUp(kats, "alice.near");
+    const update = inference.calls.find((call) => call[0]?.content.includes("CHARACTER:"));
+    expect(JSON.stringify(update)).not.toContain("LANTERN");
+    expect(update?.[1]?.content).toContain("You are Oracle #1, a riddling oracle.");
+  });
+});

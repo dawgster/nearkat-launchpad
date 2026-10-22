@@ -20,6 +20,18 @@ export interface Config {
   nearAiApiKey: string;
   nearAiModel: string;
   storeDir: string;
+  /** Durable storage for contexts. Without it, contexts live only on this disk. */
+  s3:
+    | {
+        endpoint: string;
+        bucket: string;
+        region: string;
+        accessKeyId: string;
+        secretAccessKey: string;
+        prefix: string;
+        virtualHost: boolean;
+      }
+    | undefined;
   meterJournal: string;
   /** Upper bound on reply length, in tokens. */
   maxTokens: number;
@@ -104,6 +116,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     nearAiApiKey: required(env, "NEAR_AI_API_KEY"),
     nearAiModel: env.NEAR_AI_MODEL ?? DEFAULT_MODEL,
     storeDir: env.STORE_DIR ?? "./data/contexts",
+    s3: env.S3_BUCKET
+      ? {
+          endpoint: required(env, "S3_ENDPOINT"),
+          bucket: env.S3_BUCKET,
+          region: env.S3_REGION ?? "us-east-1",
+          accessKeyId: required(env, "S3_ACCESS_KEY_ID"),
+          secretAccessKey: required(env, "S3_SECRET_ACCESS_KEY"),
+          prefix: env.S3_PREFIX ?? "nearkat/",
+          virtualHost: env.S3_VIRTUAL_HOST === "true",
+        }
+      : undefined,
     meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
     maxTokens,
     port,

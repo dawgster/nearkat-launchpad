@@ -12,6 +12,7 @@ import { NearAiInference } from "./inference.ts";
 import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
 import { FileJournal, Meter } from "./meter.ts";
+import { MirroredStore, S3Store } from "./s3.ts";
 import { FileStore } from "./store.ts";
 import { DstackAgent, keyProof, phalaCollateral, phalaRootSecret, reportDataFor } from "./tee.ts";
 
@@ -29,7 +30,8 @@ const keys = keysFromRootSecret(
 );
 const appInfo = dstack ? await dstack.info() : null;
 // Fixed for the keeper's lifetime: the quote binds this key to this app instance.
-const quote = dstack ? await dstack.getQuote(reportDataFor(keys.nearPublicKey())) : null;
+const sealKey = keys.sealing().publicKeyHex;
+const quote = dstack ? await dstack.getQuote(reportDataFor(keys.nearPublicKey(), sealKey)) : null;
 const near = new Near({
   network: config.rpcUrl
     ? {
@@ -41,8 +43,12 @@ const near = new Near({
   defaultSignerId: config.keeperAccountId,
 });
 
-// Blobs are encrypted per collection and named by their hash, so one store serves all.
-const store = new FileStore(config.storeDir);
+// Blobs are encrypted per collection and named by their hash, so one store
+// serves all. With S3 configured, every blob is stored there first and the
+// disk only caches it.
+const store = config.s3
+  ? new MirroredStore(new FileStore(config.storeDir), new S3Store(config.s3))
+  : new FileStore(config.storeDir);
 const inference = new NearAiInference({
   baseUrl: config.nearAiBaseUrl,
   apiKey: config.nearAiApiKey,
@@ -60,7 +66,9 @@ const collections = new Collections({
   keeperPublicKey: keys.nearPublicKey(),
   runningAs: appInfo ? { mode: "phala", appId: appInfo.app_id } : { mode: "local" },
   chainFor: (contractId) => new NearChain(near, contractId),
-  build: (contractId, chain, info) => {
+  keeperPrices: { chat: config.chatPrice, save: config.savePrice },
+  sealing: keys.sealing(),
+  build: (contractId, chain, info, prices) => {
     const meter = new Meter(chain, { journal: new FileJournal(journalFor(contractId)) });
     const kats = new KatService({
       chain,
@@ -68,17 +76,22 @@ const collections = new Collections({
       keys: keys.forContract(contractId),
       inference,
       meter,
-      prices: { chat: config.chatPrice, save: config.savePrice },
+      prices,
       collection: info,
     });
     return { meter, kats };
   },
-  proof: quote ? () => keyProof(keys.nearPublicKey(), quote, phalaCollateral) : undefined,
+  proof: quote ? () => keyProof(keys.nearPublicKey(), sealKey, quote, phalaCollateral) : undefined,
 });
 
 /** The collections to serve: the configured ones, and launches that name this keeper. */
 async function discover(): Promise<void> {
   const ids = new Set([config.contractId, ...config.extraContractIds]);
+  console.log(
+    config.s3
+      ? `Contexts are stored in S3 bucket ${config.s3.bucket}, cached in ${config.storeDir}`
+      : `Contexts are stored only in ${config.storeDir}; set S3_BUCKET for durable storage`,
+  );
   if (config.launchpadId) {
     for (let from = 0; ; from += 100) {
       const page =
@@ -125,10 +138,12 @@ const app = createApp({
   },
   collections: () => ({
     home: config.contractId,
-    served: collections.all().map(({ contractId, info }) => ({
+    served: collections.all().map(({ contractId, info, prices }) => ({
       contract_id: contractId,
       name: info.name,
       tee: info.tee,
+      chat_price: prices.chat.toString(),
+      save_price: prices.save.toString(),
     })),
     waiting: collections.waiting().map(({ contractId, reason }) => ({
       contract_id: contractId,
@@ -152,13 +167,14 @@ const app = createApp({
       ? {
           mode: "phala",
           keeper_public_key: keys.nearPublicKey(),
+          seal_public_key: sealKey,
           app_id: appInfo.app_id,
           instance_id: appInfo.instance_id,
           compose_hash: appInfo.compose_hash,
           quote: quote.quote,
           event_log: quote.event_log,
         }
-      : { mode: "local", keeper_public_key: keys.nearPublicKey() },
+      : { mode: "local", keeper_public_key: keys.nearPublicKey(), seal_public_key: sealKey },
   info: {
     chat_price: config.chatPrice.toString(),
     save_price: config.savePrice.toString(),
@@ -217,6 +233,11 @@ every(DISCOVER_EVERY_MS, "discover", discover);
 
 const server = serve({ fetch: app.fetch, port: config.port });
 console.log(`Keeper listening on :${config.port} for ${config.contractId} (${config.network})`);
+console.log(
+  config.s3
+    ? `Contexts are stored in S3 bucket ${config.s3.bucket}, cached in ${config.storeDir}`
+    : `Contexts are stored only in ${config.storeDir}; set S3_BUCKET for durable storage`,
+);
 if (config.launchpadId) {
   console.log(`Also serving collections launched on ${config.launchpadId} that name this keeper`);
 }

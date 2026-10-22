@@ -29,9 +29,9 @@ describe("teeMismatch", () => {
 
 describe("reportDataFor", () => {
   test("is the SHA-256 of the labelled key, padded to 64 bytes", () => {
-    const data = reportDataFor("ed25519:abc");
+    const data = reportDataFor("ed25519:abc", "11");
     expect(data).toHaveLength(64);
-    const digest = createHash("sha256").update("nearkat-keeper:v1:ed25519:abc").digest();
+    const digest = createHash("sha256").update("nearkat-keeper:v2:ed25519:abc:11").digest();
     expect(data.subarray(0, 32)).toEqual(digest);
     expect(data.subarray(32)).toEqual(Buffer.alloc(32));
   });
@@ -87,7 +87,7 @@ describe("DstackAgent against a stand-in guest agent", () => {
   });
 
   test("asks for a quote over the report data, hex encoded", async () => {
-    const data = reportDataFor("ed25519:abc");
+    const data = reportDataFor("ed25519:abc", "11");
     expect(await agent.getQuote(data)).toEqual({ quote: "beef", event_log: "[]" });
     expect(seen.find((call) => call.path === "/GetQuote")?.body).toEqual({
       report_data: data.toString("hex"),
@@ -100,6 +100,7 @@ describe("keyProof", () => {
     let asked: Uint8Array | null = null;
     const proof = await keyProof(
       "ed25519:abc",
+      "11",
       { quote: "0xbeef", event_log: "[]" },
       async (quote) => {
         asked = quote;
@@ -109,6 +110,7 @@ describe("keyProof", () => {
     expect(asked).toEqual(Buffer.from("beef", "hex"));
     expect(proof).toEqual({
       public_key: "ed25519:abc",
+      seal_public_key: "11",
       quote: "beef",
       event_log: "[]",
       collateral: JSON.stringify({

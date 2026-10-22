@@ -140,3 +140,36 @@ describe("serving many collections", () => {
     });
   });
 });
+
+describe("durable storage", () => {
+  const env = { CONTRACT_ID: "a.near", KEEPER_ACCOUNT_ID: "k.near", NEAR_AI_API_KEY: "x" };
+
+  test("keeps contexts on disk only, unless a bucket is set", () => {
+    expect(loadConfig(env).s3).toBeUndefined();
+  });
+
+  test("reads the S3 settings, with defaults", () => {
+    const config = loadConfig({
+      ...env,
+      S3_BUCKET: "contexts",
+      S3_ENDPOINT: "https://r2.example",
+      S3_ACCESS_KEY_ID: "id",
+      S3_SECRET_ACCESS_KEY: "secret",
+    });
+    expect(config.s3).toEqual({
+      endpoint: "https://r2.example",
+      bucket: "contexts",
+      region: "us-east-1",
+      accessKeyId: "id",
+      secretAccessKey: "secret",
+      prefix: "nearkat/",
+      virtualHost: false,
+    });
+  });
+
+  test("insists on credentials once a bucket is set", () => {
+    expect(() => loadConfig({ ...env, S3_BUCKET: "contexts", S3_ENDPOINT: "https://x" })).toThrow(
+      /S3_ACCESS_KEY_ID/,
+    );
+  });
+});

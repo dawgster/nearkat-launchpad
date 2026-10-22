@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, hkdfSync } from "node:crypto";
 import { base58 } from "@scure/base";
+import { type SealingKey, sealingKey } from "./sealing.ts";
 
 export interface Keys {
   /** AES-256-GCM key for one kat's context. */
@@ -14,6 +15,8 @@ export interface Keys {
   /** The keeper's NEAR signing key, as `ed25519:<base58>`. */
   nearPrivateKey(): `ed25519:${string}`;
   nearPublicKey(): string;
+  /** The X25519 key creators seal secret prompts to. Same for every instance of the app. */
+  sealing(): SealingKey;
 }
 
 // DER prefix of a PKCS#8 Ed25519 private key; the 32-byte seed follows it.
@@ -36,7 +39,9 @@ export function keysFromRootSecret(root: Uint8Array): Keys {
   const jwk = createPublicKey(privateKey).export({ format: "jwk" });
   const publicBytes = Buffer.from(jwk.x as string, "base64url");
 
+  const sealing = sealingKey(derive(root, "nearkat/seal"));
   const keys = (katPrefix: string): Keys => ({
+    sealing: () => sealing,
     katKey: (tokenId) => derive(root, `${katPrefix}${tokenId}`),
     forContract: (contractId) => keys(`nearkat/kat/${contractId}/`),
     sessionKey: () => derive(root, "nearkat/session"),

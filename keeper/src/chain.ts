@@ -37,6 +37,8 @@ export interface Chain {
 /** What `register_keeper_key` takes. */
 export interface KeyProof {
   public_key: string;
+  /** X25519 sealing key, hex, proven together with the NEAR key. */
+  seal_public_key: string;
   /** Hex. */
   quote: string;
   /** dcap-qvl's collateral as JSON, byte fields hex encoded. */
@@ -117,7 +119,14 @@ export class NearChain implements Chain {
     if (!view) {
       throw new Error(`Contract ${this.#contractId} returned no collection`);
     }
-    return { name: view.name, prompt: view.prompt, starter: view.starter, tee: view.tee ?? null };
+    return {
+      name: view.name,
+      prompt: view.prompt,
+      starter: view.starter,
+      tee: view.tee ?? null,
+      terms: view.terms,
+      sealed_prompt: view.sealed_prompt ?? null,
+    };
   }
 
   async getInferenceAccrued(): Promise<bigint> {

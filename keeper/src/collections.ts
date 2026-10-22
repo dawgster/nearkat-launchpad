@@ -1,13 +1,16 @@
 import type { Chain, KeyProof } from "./chain.ts";
-import type { CollectionInfo } from "./collection.ts";
+import { type CollectionInfo, collectionPrices, type KeeperPrices } from "./collection.ts";
 import type { KatService } from "./kats.ts";
 import type { Meter } from "./meter.ts";
+import type { SealingKey } from "./sealing.ts";
 import { teeMismatch } from "./tee.ts";
 
 /** One collection this keeper serves, with its own meter and kats. */
 export interface ServedCollection {
   contractId: string;
   info: CollectionInfo;
+  /** What this collection charges, in yoctoNEAR. */
+  prices: { chat: bigint; save: bigint };
   chain: Chain;
   meter: Meter;
   kats: KatService;
@@ -18,7 +21,16 @@ export interface CollectionsOptions {
   keeperPublicKey: string;
   runningAs: { mode: "local" } | { mode: "phala"; appId: string };
   chainFor(contractId: string): Chain;
-  build(contractId: string, chain: Chain, info: CollectionInfo): { meter: Meter; kats: KatService };
+  /** What this keeper charges, and needs to keep after any creator's share. */
+  keeperPrices: KeeperPrices;
+  /** Opens prompts sealed to this keeper. */
+  sealing: SealingKey;
+  build(
+    contractId: string,
+    chain: Chain,
+    info: CollectionInfo,
+    prices: { chat: bigint; save: bigint },
+  ): { meter: Meter; kats: KatService };
   /** Proof that the keeper's key runs inside its TEE app. Absent in local mode. */
   proof?: () => Promise<KeyProof>;
   log?: (message: string) => void;
@@ -92,8 +104,23 @@ export class Collections {
         return this.#wait(contractId, attested);
       }
     }
-    const { meter, kats } = this.#o.build(contractId, chain, info);
-    this.#served.set(contractId, { contractId, info, chain, meter, kats });
+    const { chat, save, shortfall } = collectionPrices(info.terms, this.#o.keeperPrices);
+    if (shortfall) {
+      return this.#wait(contractId, shortfall);
+    }
+    const prices = { chat, save };
+    if (info.sealed_prompt) {
+      if (info.sealed_prompt.sealed_to.toLowerCase() !== this.#o.sealing.publicKeyHex) {
+        return this.#wait(contractId, "its prompt is sealed to another keeper's key");
+      }
+      try {
+        info = { ...info, secret_prompt: this.#o.sealing.open(info.sealed_prompt.ciphertext) };
+      } catch {
+        return this.#wait(contractId, "its sealed prompt cannot be opened");
+      }
+    }
+    const { meter, kats } = this.#o.build(contractId, chain, info, prices);
+    this.#served.set(contractId, { contractId, info, prices, chain, meter, kats });
     this.#waiting.delete(contractId);
     this.#log(
       info.tee

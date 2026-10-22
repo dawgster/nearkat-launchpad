@@ -11,6 +11,49 @@ export interface CollectionInfo {
   starter: string;
   /** Where contexts may be opened, if the collection restricts it. */
   tee: TeeRequirement | null;
+  /** Prices and the creator's share, as the contract publishes them. */
+  terms?: Terms;
+  /** Instructions only the TEE app can read, encrypted to its sealing key. */
+  sealed_prompt?: { ciphertext: string; sealed_to: string } | null;
+  /** The sealed prompt, opened by this keeper. Never leaves the keeper. */
+  secret_prompt?: string;
+}
+
+/** Amounts are yoctoNEAR strings. */
+export interface Terms {
+  royalty_bps: number;
+  creator_share_bps: number;
+  chat_price: string | null;
+  save_price: string | null;
+}
+
+/** What this keeper needs per message and per save, at least. */
+export interface KeeperPrices {
+  chat: bigint;
+  save: bigint;
+}
+
+/**
+ * The prices a collection charges, and why they don't work for this keeper,
+ * if they don't. The creator's share comes out of every charge, so what the
+ * keeper keeps must still cover its own price. A price the collection leaves
+ * unset is the keeper's, raised just enough to cover the creator's share.
+ */
+export function collectionPrices(
+  terms: Terms | undefined,
+  keeper: KeeperPrices,
+): { chat: bigint; save: bigint; shortfall: string | null } {
+  const keep = 10_000n - BigInt(terms?.creator_share_bps ?? 0);
+  const price = (set: string | null | undefined, own: bigint) =>
+    set ? BigInt(set) : (own * 10_000n + keep - 1n) / keep;
+  const chat = price(terms?.chat_price, keeper.chat);
+  const save = price(terms?.save_price, keeper.save);
+  const covered = (charged: bigint, own: bigint) => (charged * keep) / 10_000n >= own;
+  const shortfall =
+    covered(chat, keeper.chat) && covered(save, keeper.save)
+      ? null
+      : "its prices, after the creator's share, are below this keeper's own";
+  return { chat, save, shortfall };
 }
 
 export type TeeRequirement = { Phala: { app_id: string } };

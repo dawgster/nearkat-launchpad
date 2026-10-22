@@ -106,11 +106,13 @@ export async function phalaRootSecret(dstack: Dstack): Promise<Buffer> {
 
 /**
  * The 64 bytes of report data a keeper's quote carries: SHA-256 of a fixed
- * label and its NEAR public key, then zeros. A browser recomputes it to check
- * the quote speaks for the key the contract trusts.
+ * label, its NEAR public key and its sealing key, then zeros. The contract
+ * and the browser recompute it to check the quote speaks for both keys.
  */
-export function reportDataFor(publicKey: string): Buffer {
-  const digest = createHash("sha256").update(`nearkat-keeper:v1:${publicKey}`).digest();
+export function reportDataFor(publicKey: string, sealPublicKeyHex: string): Buffer {
+  const digest = createHash("sha256")
+    .update(`nearkat-keeper:v2:${publicKey}:${sealPublicKeyHex}`)
+    .digest();
   return Buffer.concat([digest, Buffer.alloc(32)]);
 }
 
@@ -161,12 +163,14 @@ export function collateralJson(collateral: Record<string, unknown>): string {
 /** Everything `register_keeper_key` needs to accept this keeper's key. */
 export async function keyProof(
   publicKey: string,
+  sealPublicKeyHex: string,
   quote: { quote: string; event_log: string },
   collateral: CollateralSource,
 ): Promise<KeyProof> {
   const quoteHex = quote.quote.replace(/^0x/, "");
   return {
     public_key: publicKey,
+    seal_public_key: sealPublicKeyHex,
     quote: quoteHex,
     collateral: collateralJson(await collateral(Buffer.from(quoteHex, "hex"))),
     event_log: quote.event_log,
