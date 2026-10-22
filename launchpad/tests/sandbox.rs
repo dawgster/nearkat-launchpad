@@ -251,3 +251,91 @@ async fn a_failed_launch_refunds_the_creator_and_frees_the_name() -> TestResult 
     .await??;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_creator_upgrades_their_collection_only_to_an_approved_version() -> TestResult {
+    let env = setup().await?;
+    call(
+        &env,
+        &env.launchpad.id,
+        &env.alice,
+        "launch",
+        launch_args("magister", "0a1b2c"),
+        NearToken::from_near(3),
+    )
+    .await??;
+    let collection: AccountId = format!("magister.{}", env.launchpad.id).parse()?;
+    call(
+        &env,
+        &collection,
+        &env.bob,
+        "mint",
+        json!({}),
+        NearToken::from_near(2),
+    )
+    .await??;
+    let code_hash: Base58CryptoHash = near_sdk::env::sha256_array(collection_wasm()).into();
+    let info = view(&env, &collection, "get_collection", json!({})).await?;
+    assert_eq!(info["code_hash"], json!(code_hash));
+    assert_eq!(info["factory_id"], env.launchpad.id.as_str());
+
+    // A version the launchpad never approved is refused.
+    let unapproved: Base58CryptoHash = [7u8; 32].into();
+    let refused = call(
+        &env,
+        &collection,
+        &env.alice,
+        "upgrade",
+        json!({ "code_hash": unapproved }),
+        NearToken::from_yoctonear(1),
+    )
+    .await?;
+    assert!(
+        format!("{refused:?}").contains("has not approved that version"),
+        "{refused:?}"
+    );
+
+    // An approved one goes through, migrates, and keeps every token.
+    call(
+        &env,
+        &collection,
+        &env.alice,
+        "upgrade",
+        json!({ "code_hash": code_hash }),
+        NearToken::from_yoctonear(1),
+    )
+    .await??;
+    let kat = view(&env, &collection, "get_kat", json!({ "token_id": "1" })).await?;
+    assert_eq!(kat["owner_id"], env.bob.id.as_str());
+    let token = call(
+        &env,
+        &collection,
+        &env.bob,
+        "mint",
+        json!({}),
+        NearToken::from_near(2),
+    )
+    .await??;
+    assert_eq!(token["token_id"], "2");
+    let entry = view(
+        &env,
+        &env.launchpad.id,
+        "get_collection",
+        json!({ "account_id": collection }),
+    )
+    .await?;
+    assert_eq!(entry["code_hash"], json!(code_hash));
+
+    // Only the collection's admin can upgrade it.
+    let stranger = call(
+        &env,
+        &collection,
+        &env.bob,
+        "upgrade",
+        json!({ "code_hash": code_hash }),
+        NearToken::from_yoctonear(1),
+    )
+    .await?;
+    assert!(format!("{stranger:?}").contains("Only the admin"));
+    Ok(())
+}

@@ -20,7 +20,7 @@ use crate::{Contract, ContractExt, TeeRequirement};
 /// dstack's event type for its runtime events.
 const DSTACK_RUNTIME_EVENT_TYPE: u32 = 0x0800_0001;
 /// The label the keeper hashes with its key into the quote's report data.
-const REPORT_DATA_LABEL: &str = "nearkat-keeper:v1:";
+const REPORT_DATA_LABEL: &str = "nearkat-keeper:v2:";
 /// TCB statuses a platform may have and still be trusted. Out-of-date and
 /// revoked platforms are refused.
 const ACCEPTED_STATUSES: [&str; 4] = [
@@ -45,11 +45,23 @@ pub struct DstackEvent {
     pub version: Option<u32>,
 }
 
-/// The report data a keeper's quote must carry for `public_key`:
-/// SHA-256 of the label and the key, then 32 zero bytes.
-pub fn expected_report_data(public_key: &str) -> [u8; 64] {
+/// A keeper key the contract has seen proven inside the required app.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttestedKey {
+    /// Block timestamp of the registration, in nanoseconds.
+    pub attested_at: u64,
+    /// The keeper's X25519 sealing key, hex, attested together with its NEAR key.
+    pub seal_public_key: String,
+}
+
+/// The report data a keeper's quote must carry: SHA-256 of the label, its
+/// NEAR key and its sealing key, then 32 zero bytes. Binding both means the
+/// sealing key a creator encrypts to is proven to live in the same enclave.
+pub fn expected_report_data(public_key: &str, seal_public_key: &str) -> [u8; 64] {
     let mut data = [0u8; 64];
-    let digest = Sha256::digest(format!("{REPORT_DATA_LABEL}{public_key}").as_bytes());
+    let digest =
+        Sha256::digest(format!("{REPORT_DATA_LABEL}{public_key}:{seal_public_key}").as_bytes());
     data[..32].copy_from_slice(&digest);
     data
 }
@@ -140,14 +152,15 @@ pub fn verify_quote(
 pub fn check_registration(
     app_id: &str,
     public_key: &str,
+    seal_public_key: &str,
     td: &VerifiedTd,
     event_log_json: &str,
 ) -> Result<(), String> {
     if !ACCEPTED_STATUSES.contains(&td.status.as_str()) {
         return Err(format!("platform TCB status {} is not accepted", td.status));
     }
-    if td.report_data != expected_report_data(public_key) {
-        return Err("the quote's report data does not commit to this key".to_string());
+    if td.report_data != expected_report_data(public_key, seal_public_key) {
+        return Err("the quote's report data does not commit to these keys".to_string());
     }
     let events: Vec<DstackEvent> = near_sdk::serde_json::from_str(event_log_json)
         .map_err(|e| format!("event log is not valid: {e}"))?;
@@ -161,12 +174,14 @@ pub fn check_registration(
 #[near]
 impl Contract {
     /// Registers a keeper key proven to live inside the Phala app this
-    /// collection requires. Anyone may submit: only that app can produce a
-    /// quote that passes. `quote` is hex; `collateral` is dcap-qvl's
-    /// `QuoteCollateralV3` as JSON; `event_log` is dstack's event log JSON.
+    /// collection requires, together with its sealing key. Anyone may submit:
+    /// only that app can produce a quote that passes. `quote` is hex;
+    /// `collateral` is dcap-qvl's `QuoteCollateralV3` as JSON; `event_log` is
+    /// dstack's event log JSON.
     pub fn register_keeper_key(
         &mut self,
         public_key: PublicKey,
+        seal_public_key: String,
         quote: String,
         collateral: String,
         event_log: String,
@@ -177,19 +192,28 @@ impl Contract {
         let quote = hex::decode(quote.trim_start_matches("0x"))
             .unwrap_or_else(|_| env::panic_str("quote must be hex"));
         let now_secs = env::block_timestamp() / 1_000_000_000;
+        require!(
+            seal_public_key.len() == 64 && seal_public_key.bytes().all(|b| b.is_ascii_hexdigit()),
+            "seal_public_key must be a 32-byte hex key"
+        );
+        let seal_public_key = seal_public_key.to_lowercase();
         let key = String::from(&public_key);
         let result = verify_quote(&quote, &collateral, now_secs)
-            .and_then(|td| check_registration(&app_id, &key, &td, &event_log));
+            .and_then(|td| check_registration(&app_id, &key, &seal_public_key, &td, &event_log));
         if let Err(problem) = result {
             env::panic_str(&problem);
         }
-        self.attested_keys
-            .insert(public_key, env::block_timestamp());
+        self.record_attestation(public_key, seal_public_key);
     }
 
     /// Whether a key has been proven to live inside the required app.
     pub fn is_keeper_key_attested(&self, public_key: PublicKey) -> bool {
         self.attested_keys.contains_key(&public_key)
+    }
+
+    /// The attestation recorded for a key, with the sealing key proven alongside it.
+    pub fn get_attested_key(&self, public_key: PublicKey) -> Option<AttestedKey> {
+        self.attested_keys.get(&public_key).cloned()
     }
 
     /// Removes an attested key, for example one whose platform has since been
@@ -202,6 +226,25 @@ impl Contract {
 }
 
 impl Contract {
+    /// Records a key that passed every check, and notes whether it is the
+    /// key the collection's sealed prompt was encrypted to.
+    pub(crate) fn record_attestation(&mut self, public_key: PublicKey, seal_public_key: String) {
+        if self
+            .sealed_prompt
+            .as_ref()
+            .is_some_and(|sealed| sealed.sealed_to.to_lowercase() == seal_public_key)
+        {
+            self.sealed_key_attested = true;
+        }
+        self.attested_keys.insert(
+            public_key,
+            AttestedKey {
+                attested_at: env::block_timestamp(),
+                seal_public_key,
+            },
+        );
+    }
+
     /// For a collection with a TEE requirement, keeper calls must be signed
     /// with an attested key, not just come from the keeper account.
     pub(crate) fn assert_attested_signer(&self) {

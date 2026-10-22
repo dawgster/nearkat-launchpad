@@ -31,6 +31,7 @@ fn deploy() -> Contract {
         acc("treasury.near"),
         PRICE,
         collection("Nearkat", "KAT", "https://art.example/"),
+        None,
     )
 }
 
@@ -42,6 +43,7 @@ fn deploy_as(name: &str, symbol: &str, base_uri: &str) -> Contract {
         acc("treasury.near"),
         PRICE,
         collection(name, symbol, base_uri),
+        None,
     )
 }
 
@@ -54,6 +56,9 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         starter: String::new(),
         max_supply: None,
         tee: None,
+        media_extension: String::new(),
+        terms: crate::Terms::default(),
+        sealed_prompt: None,
     }
 }
 
@@ -65,6 +70,7 @@ fn deploy_with(collection: Collection) -> Contract {
         acc("treasury.near"),
         PRICE,
         collection,
+        None,
     )
 }
 
@@ -715,4 +721,249 @@ fn withdraw_inference_rejects_empty() {
     let mut c = deploy();
     ctx("keeper.near", NearToken::from_yoctonear(0));
     let _ = c.withdraw_inference();
+}
+
+// Terms, royalties and images.
+
+fn with_terms(terms: crate::Terms) -> Contract {
+    deploy_with(Collection {
+        terms,
+        ..collection("Magister", "LAT", "")
+    })
+}
+
+#[test]
+fn debits_split_between_the_creator_and_the_keeper() {
+    let mut c = with_terms(crate::Terms {
+        creator_share_bps: 2_000,
+        ..Default::default()
+    });
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.debit_batch(
+        1.into(),
+        vec![("1".to_string(), NearToken::from_millinear(10))],
+    );
+    let cfg = c.get_config();
+    // 20% of the charge to the treasury, on top of the mint price.
+    assert_eq!(
+        cfg.treasury_accrued,
+        PRICE.saturating_add(NearToken::from_millinear(2))
+    );
+    assert_eq!(cfg.inference_accrued, NearToken::from_millinear(8));
+}
+
+#[test]
+#[should_panic(expected = "royalty_bps must be at most 2500")]
+fn new_rejects_an_excessive_royalty() {
+    with_terms(crate::Terms {
+        royalty_bps: 2_501,
+        ..Default::default()
+    });
+}
+
+#[test]
+#[should_panic(expected = "creator_share_bps must be at most 5000")]
+fn new_rejects_an_excessive_creator_share() {
+    with_terms(crate::Terms {
+        creator_share_bps: 5_001,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn a_collection_publishes_its_terms() {
+    let terms = crate::Terms {
+        royalty_bps: 500,
+        creator_share_bps: 1_000,
+        chat_price: Some(NearToken::from_millinear(5)),
+        save_price: None,
+    };
+    let c = with_terms(terms.clone());
+    assert_eq!(c.get_collection().terms, terms);
+}
+
+#[test]
+fn payout_pays_the_royalty_to_the_treasury_and_the_rest_to_the_owner() {
+    let mut c = with_terms(crate::Terms {
+        royalty_bps: 1_000,
+        ..Default::default()
+    });
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    let payout = c.nft_payout("1".to_string(), 1_000.into(), Some(10)).payout;
+    assert_eq!(payout.len(), 2);
+    assert_eq!(payout[&acc("treasury.near")].0, 100);
+    assert_eq!(payout[&acc("alice.near")].0, 900);
+}
+
+#[test]
+fn payout_without_a_royalty_is_all_the_owners() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    let payout = c.nft_payout("1".to_string(), 1_000.into(), None).payout;
+    assert_eq!(payout.len(), 1);
+    assert_eq!(payout[&acc("alice.near")].0, 1_000);
+}
+
+#[test]
+#[should_panic(expected = "more than 1")]
+fn payout_respects_the_marketplaces_limit() {
+    let mut c = with_terms(crate::Terms {
+        royalty_bps: 1_000,
+        ..Default::default()
+    });
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    c.nft_payout("1".to_string(), 1_000.into(), Some(1));
+}
+
+#[test]
+fn transfer_payout_moves_the_token_and_pays_the_previous_owner() {
+    let mut c = with_terms(crate::Terms {
+        royalty_bps: 1_000,
+        ..Default::default()
+    });
+    ctx("alice.near", NearToken::from_near(2));
+    c.mint();
+    ctx("alice.near", YOCTO);
+    let payout = c
+        .nft_transfer_payout(
+            acc("bob.near"),
+            "1".to_string(),
+            None,
+            None,
+            1_000.into(),
+            None,
+        )
+        .payout;
+    assert_eq!(payout[&acc("alice.near")].0, 900);
+    assert_eq!(
+        c.get_kat("1".to_string()).unwrap().owner_id,
+        acc("bob.near")
+    );
+}
+
+#[test]
+fn token_images_use_the_collections_extension() {
+    let mut c = deploy_with(Collection {
+        media_extension: "svg".to_string(),
+        ..collection("Lantern", "LNT", "https://keeper.example/art/lantern/")
+    });
+    ctx("alice.near", NearToken::from_near(2));
+    let token = c.mint();
+    assert_eq!(token.metadata.unwrap().media.unwrap(), "1.svg");
+}
+
+#[test]
+#[should_panic(expected = "media_extension must be 1 to 8 letters or digits")]
+fn new_rejects_a_strange_image_extension() {
+    deploy_with(Collection {
+        media_extension: "../x".to_string(),
+        ..collection("Lantern", "LNT", "")
+    });
+}
+
+// Sealed prompts.
+
+fn sealed() -> crate::SealedPrompt {
+    crate::SealedPrompt {
+        ciphertext: "c2VhbGVk".to_string(),
+        sealed_to: "ab".repeat(32),
+    }
+}
+
+fn phala() -> Option<crate::TeeRequirement> {
+    Some(crate::TeeRequirement::Phala {
+        app_id: "0a1b2c".to_string(),
+    })
+}
+
+#[test]
+#[should_panic(expected = "A sealed prompt needs a TEE requirement")]
+fn a_sealed_prompt_needs_a_tee_requirement() {
+    deploy_with(Collection {
+        sealed_prompt: Some(sealed()),
+        ..collection("Secret", "SEC", "")
+    });
+}
+
+#[test]
+#[should_panic(expected = "sealed_to must be a 32-byte hex key")]
+fn a_sealed_prompt_names_a_real_key() {
+    deploy_with(Collection {
+        tee: phala(),
+        sealed_prompt: Some(crate::SealedPrompt {
+            sealed_to: "nope".to_string(),
+            ..sealed()
+        }),
+        ..collection("Secret", "SEC", "")
+    });
+}
+
+#[test]
+fn the_sealed_key_counts_as_attested_only_when_its_own_key_is() {
+    let mut c = deploy_with(Collection {
+        tee: phala(),
+        sealed_prompt: Some(sealed()),
+        ..collection("Secret", "SEC", "")
+    });
+    let key: near_sdk::PublicKey = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp"
+        .parse()
+        .unwrap();
+    c.record_attestation(key.clone(), "cd".repeat(32));
+    assert!(!c.get_collection().sealed_key_attested);
+    c.record_attestation(key, "ab".repeat(32));
+    let view = c.get_collection();
+    assert!(view.sealed_key_attested);
+    assert_eq!(view.sealed_prompt, Some(sealed()));
+}
+
+// Where a collection came from.
+
+#[test]
+fn a_collection_initialised_by_a_launchpad_remembers_it() {
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(acc("lantern.launch.near"))
+        .predecessor_account_id(acc("launch.near"))
+        .build());
+    let hash: near_sdk::json_types::Base58CryptoHash = [3u8; 32].into();
+    let c = Contract::new(
+        acc("alice.near"),
+        acc("keeper.near"),
+        acc("alice.near"),
+        PRICE,
+        collection("Lantern", "LNT", ""),
+        Some(hash),
+    );
+    let view = c.get_collection();
+    assert_eq!(view.factory_id, Some(acc("launch.near")));
+    assert_eq!(view.code_hash, Some(hash));
+}
+
+#[test]
+fn a_collection_its_operator_deployed_has_no_launchpad() {
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(acc("nearkat.near"))
+        .predecessor_account_id(acc("nearkat.near"))
+        .build());
+    let c = Contract::new(
+        acc("admin.near"),
+        acc("keeper.near"),
+        acc("admin.near"),
+        PRICE,
+        collection("Nearkat", "KAT", ""),
+        None,
+    );
+    assert_eq!(c.get_collection().factory_id, None);
+}
+
+#[test]
+#[should_panic(expected = "Only the admin can call this method")]
+fn only_the_admin_upgrades() {
+    let mut c = deploy();
+    ctx("alice.near", YOCTO);
+    let _ = c.upgrade([1u8; 32].into());
 }

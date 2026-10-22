@@ -383,6 +383,7 @@ async fn a_real_tdx_quote_verifies_on_chain_within_the_gas_limit() -> TestResult
             "register_keeper_key",
             json!({
                 "public_key": "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp",
+                "seal_public_key": "11".repeat(32),
                 "quote": quote.iter().map(|b| format!("{b:02x}")).collect::<String>(),
                 "collateral": collateral,
                 "event_log": "[]",
@@ -400,7 +401,7 @@ async fn a_real_tdx_quote_verifies_on_chain_within_the_gas_limit() -> TestResult
     let failure = format!("{:?}", result.outcomes());
     eprintln!("register_keeper_key burnt {} Tgas", burnt.as_tgas());
     assert!(
-        failure.contains("does not commit to this key"),
+        failure.contains("does not commit to these keys"),
         "Intel's checks should pass on-chain: {failure}"
     );
     assert!(burnt.as_tgas() < 250, "{} Tgas", burnt.as_tgas());

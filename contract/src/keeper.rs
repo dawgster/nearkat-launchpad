@@ -35,8 +35,9 @@ impl Contract {
         kat.context_version = version.0;
     }
 
-    /// Moves each amount from a kat's balance to the inference account, which
-    /// the keeper withdraws to pay for inference. Keeper only.
+    /// Moves each amount from a kat's balance: the creator's share to the
+    /// treasury, the rest to the inference account, which the keeper
+    /// withdraws to pay for inference. Keeper only.
     /// Any kat with insufficient balance fails the whole batch.
     ///
     /// `seq` must be one more than the last applied batch, so a batch that is
@@ -56,9 +57,18 @@ impl Contract {
             kat.balance = kat.balance.checked_sub(amount).unwrap_or_else(|| {
                 env::panic_str(&format!("Insufficient balance for kat {token_id}"))
             });
+            // The creator's share of each charge goes to the treasury; the rest
+            // to the keeper, which pays for inference.
+            let share = NearToken::from_yoctonear(
+                amount.as_yoctonear() * u128::from(self.terms.creator_share_bps) / 10_000,
+            );
+            self.treasury_accrued = self
+                .treasury_accrued
+                .checked_add(share)
+                .unwrap_or_else(|| env::panic_str("Treasury overflow"));
             self.inference_accrued = self
                 .inference_accrued
-                .checked_add(amount)
+                .checked_add(amount.saturating_sub(share))
                 .unwrap_or_else(|| env::panic_str("Inference overflow"));
         }
     }

@@ -5,7 +5,7 @@
 //! none pays to store its own copy.
 
 use near_sdk::json_types::{Base58CryptoHash, U64};
-use near_sdk::store::{IterableMap, LookupSet};
+use near_sdk::store::{IterableMap, IterableSet, LookupSet};
 use near_sdk::{
     assert_one_yocto, env, near, require, AccountId, BorshStorageKey, CryptoHash, Gas, NearToken,
     PanicOnDefault, Promise, PromiseError,
@@ -14,7 +14,7 @@ use near_sdk::{
 #[cfg(test)]
 mod tests;
 
-const GAS_FOR_INIT: Gas = Gas::from_tgas(30);
+const GAS_FOR_INIT: Gas = Gas::from_tgas(100);
 const GAS_FOR_LAUNCH_CALLBACK: Gas = Gas::from_tgas(15);
 const GAS_FOR_WITHDRAW_CALLBACK: Gas = Gas::from_tgas(5);
 const MAX_SLUG_LEN: usize = 32;
@@ -24,6 +24,7 @@ const MAX_SLUG_LEN: usize = 32;
 enum StorageKey {
     Collections,
     Reserved,
+    Approved,
 }
 
 /// Where a collection's contexts may be opened. Mirrors the collection
@@ -50,6 +51,16 @@ pub struct CollectionArgs {
     pub max_supply: Option<U64>,
     #[serde(default)]
     pub tee: Option<TeeRequirement>,
+    /// Extension of token images under `base_uri`.
+    #[serde(default)]
+    pub media_extension: String,
+    /// Royalties, the creator's share of conversations, and prices. Passed
+    /// through; the collection validates them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<near_sdk::serde_json::Value>,
+    /// Instructions encrypted to the keeper's sealing key. Passed through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed_prompt: Option<near_sdk::serde_json::Value>,
 }
 
 #[near(serializers = [json])]
@@ -71,6 +82,8 @@ pub struct CollectionEntry {
     pub symbol: String,
     /// False while the launch is in flight.
     pub live: bool,
+    /// The published code the collection runs.
+    pub code_hash: Base58CryptoHash,
 }
 
 #[near(serializers = [json])]
@@ -81,6 +94,7 @@ pub struct CollectionListing {
     pub name: String,
     pub symbol: String,
     pub live: bool,
+    pub code_hash: Base58CryptoHash,
 }
 
 #[near(serializers = [json])]
@@ -107,6 +121,9 @@ pub struct Launchpad {
     collections: IterableMap<AccountId, CollectionEntry>,
     /// Slugs that can never be launched, such as names the operator uses.
     reserved: LookupSet<String>,
+    /// Versions of the collection code that collections may run. The current
+    /// launch version is always one.
+    approved: IterableSet<CryptoHash>,
 }
 
 #[near]
@@ -127,6 +144,7 @@ impl Launchpad {
             fees_accrued: NearToken::from_yoctonear(0),
             collections: IterableMap::new(StorageKey::Collections),
             reserved: LookupSet::new(StorageKey::Reserved),
+            approved: IterableSet::new(StorageKey::Approved),
         }
     }
 
@@ -166,6 +184,7 @@ impl Launchpad {
                 name: name.clone(),
                 symbol: symbol.clone(),
                 live: false,
+                code_hash: code_hash.into(),
             },
         );
         let init = near_sdk::serde_json::json!({
@@ -174,6 +193,7 @@ impl Launchpad {
             "treasury_id": creator_id,
             "mint_price": args.mint_price,
             "collection": args.collection,
+            "code_hash": Base58CryptoHash::from(code_hash),
         });
         Promise::new(account_id.clone())
             .create_account()
@@ -233,6 +253,7 @@ impl Launchpad {
                 name: entry.name.clone(),
                 symbol: entry.symbol.clone(),
                 live: entry.live,
+                code_hash: entry.code_hash,
             })
             .collect()
     }
@@ -283,6 +304,50 @@ impl Launchpad {
     pub fn set_collection_code_hash(&mut self, code_hash: Base58CryptoHash) {
         self.assert_admin();
         self.collection_code_hash = Some(code_hash.into());
+        self.approved.insert(code_hash.into());
+    }
+
+    /// Lets collections move to this version without making it the one new
+    /// launches use. Only approve code that keeps every promise a collection
+    /// makes to its buyers.
+    #[payable]
+    pub fn approve_code_hash(&mut self, code_hash: Base58CryptoHash) {
+        self.assert_admin();
+        self.approved.insert(code_hash.into());
+    }
+
+    /// Stops collections moving to this version. Those already on it stay.
+    #[payable]
+    pub fn revoke_code_hash(&mut self, code_hash: Base58CryptoHash) {
+        self.assert_admin();
+        let hash: CryptoHash = code_hash.into();
+        require!(
+            self.collection_code_hash != Some(hash),
+            "The version new launches use can't be revoked; set another first"
+        );
+        self.approved.remove(&hash);
+    }
+
+    pub fn is_code_approved(&self, code_hash: Base58CryptoHash) -> bool {
+        self.approved.contains(&CryptoHash::from(code_hash))
+    }
+
+    pub fn get_approved_code_hashes(&self) -> Vec<Base58CryptoHash> {
+        self.approved.iter().map(|hash| (*hash).into()).collect()
+    }
+
+    /// Called by a collection after it has moved to an approved version.
+    pub fn record_upgrade(&mut self, code_hash: Base58CryptoHash) {
+        let collection = env::predecessor_account_id();
+        require!(
+            self.approved.contains(&CryptoHash::from(code_hash)),
+            "That version is not approved"
+        );
+        let entry = self
+            .collections
+            .get_mut(&collection)
+            .unwrap_or_else(|| env::panic_str("Not a collection from this launchpad"));
+        entry.code_hash = code_hash;
     }
 
     #[payable]

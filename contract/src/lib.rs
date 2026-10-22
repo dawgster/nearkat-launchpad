@@ -3,21 +3,25 @@ pub mod attestation;
 mod kat;
 mod keeper;
 mod nft;
+mod payout;
+mod upgrade;
 
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
 use near_contract_standards::non_fungible_token::{NonFungibleToken, Token, TokenId};
-use near_sdk::json_types::U64;
+use near_sdk::json_types::{Base58CryptoHash, U64};
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    env, near, require, AccountId, BorshStorageKey, NearToken, PanicOnDefault, PublicKey,
+    env, near, require, AccountId, BorshStorageKey, CryptoHash, NearToken, PanicOnDefault,
+    PublicKey,
 };
 
 pub use kat::{
-    Collection, CollectionView, ConfigView, Kat, KatView, TeeRequirement, DEFAULT_PROMPT,
-    DEFAULT_STARTER,
+    Collection, CollectionView, ConfigView, Kat, KatView, SealedPrompt, TeeRequirement, Terms,
+    DEFAULT_PROMPT, DEFAULT_STARTER,
 };
-use kat::{MAX_PROMPT_LEN, MAX_STARTER_LEN};
+use kat::{MAX_PROMPT_LEN, MAX_SEALED_PROMPT_LEN, MAX_STARTER_LEN};
+pub use payout::Payout;
 
 /// Bytes charged at mint on top of the measured usage. Covers later growth no
 /// caller pays for: the context hash and ref, first-approval bookkeeping, and
@@ -63,8 +67,20 @@ pub struct Contract {
     inference_accrued: NearToken,
     /// Sequence number of the last applied `debit_batch`.
     debit_seq: u64,
-    /// Keeper keys proven to run inside the required TEE app, with when.
-    attested_keys: LookupMap<PublicKey, u64>,
+    /// Keeper keys proven to run inside the required TEE app.
+    attested_keys: LookupMap<PublicKey, attestation::AttestedKey>,
+    /// Extension of token images under `base_uri`.
+    media_extension: String,
+    terms: Terms,
+    /// Instructions only the TEE app can read. Fixed at deployment.
+    sealed_prompt: Option<SealedPrompt>,
+    /// Set once a key attested inside the app is the one the prompt is sealed to.
+    sealed_key_attested: bool,
+    /// The launchpad this came from, which approves upgrades. None for a
+    /// collection its operator deployed directly.
+    factory_id: Option<AccountId>,
+    /// The published code this runs, when known.
+    code_hash: Option<CryptoHash>,
 }
 
 #[near]
@@ -76,6 +92,7 @@ impl Contract {
         treasury_id: AccountId,
         mint_price: NearToken,
         collection: Collection,
+        code_hash: Option<Base58CryptoHash>,
     ) -> Self {
         let Collection {
             name,
@@ -85,6 +102,9 @@ impl Contract {
             starter,
             max_supply,
             tee,
+            media_extension,
+            terms,
+            sealed_prompt,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -114,6 +134,36 @@ impl Contract {
             max_supply.is_none_or(|max| max.0 > 0),
             "max_supply must be at least 1"
         );
+        terms.validate();
+        let media_extension = if media_extension.is_empty() {
+            "png".to_string()
+        } else {
+            media_extension
+        };
+        require!(
+            media_extension.len() <= 8
+                && media_extension.bytes().all(|b| b.is_ascii_alphanumeric()),
+            "media_extension must be 1 to 8 letters or digits"
+        );
+        if let Some(sealed) = &sealed_prompt {
+            require!(
+                tee.is_some(),
+                "A sealed prompt needs a TEE requirement, or nothing could read it safely"
+            );
+            require!(
+                !sealed.ciphertext.is_empty() && sealed.ciphertext.len() <= MAX_SEALED_PROMPT_LEN,
+                "sealed_prompt.ciphertext must be 1 to 24000 bytes"
+            );
+            require!(
+                sealed.sealed_to.len() == 64
+                    && sealed.sealed_to.bytes().all(|b| b.is_ascii_hexdigit()),
+                "sealed_prompt.sealed_to must be a 32-byte hex key"
+            );
+        }
+        // A launchpad initialises the collections it creates; an operator
+        // deploying directly initialises from the contract's own account.
+        let factory_id = (env::predecessor_account_id() != env::current_account_id())
+            .then(env::predecessor_account_id);
         Self {
             tokens: NonFungibleToken::new(
                 StorageKey::OwnerById,
@@ -139,6 +189,12 @@ impl Contract {
             inference_accrued: NearToken::from_yoctonear(0),
             debit_seq: 0,
             attested_keys: LookupMap::new(StorageKey::AttestedKeys),
+            media_extension,
+            terms,
+            sealed_prompt,
+            sealed_key_attested: false,
+            factory_id,
+            code_hash: code_hash.map(Into::into),
         }
     }
 
@@ -158,7 +214,8 @@ impl Contract {
 
         let metadata = TokenMetadata {
             title: Some(format!("{} #{token_id}", self.name)),
-            media: (!self.base_uri.is_empty()).then(|| format!("{token_id}.png")),
+            media: (!self.base_uri.is_empty())
+                .then(|| format!("{token_id}.{}", self.media_extension)),
             ..Default::default()
         };
         let token = self.tokens.internal_mint_with_refund(
@@ -222,7 +279,13 @@ impl Contract {
             starter: self.starter.clone(),
             max_supply: self.max_supply.map(U64),
             tee: self.tee.clone(),
+            media_extension: self.media_extension.clone(),
+            terms: self.terms.clone(),
+            sealed_prompt: self.sealed_prompt.clone(),
+            sealed_key_attested: self.sealed_key_attested,
             minted: U64(self.next_token_id - 1),
+            factory_id: self.factory_id.clone(),
+            code_hash: self.code_hash.map(Into::into),
         }
     }
 

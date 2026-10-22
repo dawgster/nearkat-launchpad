@@ -44,6 +44,9 @@ fn args(slug: &str) -> LaunchArgs {
             starter: "Your student has not told you anything yet.".to_string(),
             max_supply: None,
             tee: None,
+            media_extension: String::new(),
+            terms: None,
+            sealed_prompt: None,
         },
         keeper_id: None,
     }
@@ -204,4 +207,63 @@ fn withdraw_fees_zeroes_what_was_kept() {
     ctx("admin.near", YOCTO);
     let _ = l.withdraw_fees();
     assert!(l.get_config().fees_accrued.is_zero());
+}
+
+#[test]
+fn the_launch_version_is_approved_for_upgrades() {
+    let l = deploy();
+    assert!(l.is_code_approved(code_hash()));
+    assert!(!l.is_code_approved([8u8; 32].into()));
+}
+
+#[test]
+fn the_admin_approves_and_revokes_other_versions() {
+    let mut l = deploy();
+    ctx("admin.near", YOCTO);
+    l.approve_code_hash([8u8; 32].into());
+    assert!(l.is_code_approved([8u8; 32].into()));
+    assert_eq!(l.get_approved_code_hashes().len(), 2);
+    l.revoke_code_hash([8u8; 32].into());
+    assert!(!l.is_code_approved([8u8; 32].into()));
+}
+
+#[test]
+#[should_panic(expected = "can't be revoked")]
+fn the_launch_version_cant_be_revoked() {
+    let mut l = deploy();
+    ctx("admin.near", YOCTO);
+    l.revoke_code_hash(code_hash());
+}
+
+#[test]
+fn a_collection_records_its_upgrade() {
+    let mut l = deploy();
+    launch(&mut l, "alice.near", "magister");
+    ctx("admin.near", YOCTO);
+    l.approve_code_hash([8u8; 32].into());
+    ctx("magister.launch.near", NearToken::from_yoctonear(0));
+    l.record_upgrade([8u8; 32].into());
+    assert_eq!(
+        l.get_collection(acc("magister.launch.near"))
+            .unwrap()
+            .code_hash,
+        Base58CryptoHash::from([8u8; 32])
+    );
+}
+
+#[test]
+#[should_panic(expected = "Not a collection from this launchpad")]
+fn only_collections_record_upgrades() {
+    let mut l = deploy();
+    ctx("mallory.near", NearToken::from_yoctonear(0));
+    l.record_upgrade(code_hash());
+}
+
+#[test]
+#[should_panic(expected = "That version is not approved")]
+fn unapproved_upgrades_are_not_recorded() {
+    let mut l = deploy();
+    launch(&mut l, "alice.near", "magister");
+    ctx("magister.launch.near", NearToken::from_yoctonear(0));
+    l.record_upgrade([9u8; 32].into());
 }

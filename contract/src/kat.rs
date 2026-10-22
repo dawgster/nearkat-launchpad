@@ -58,6 +58,54 @@ pub const DEFAULT_STARTER: &str =
 pub const MAX_PROMPT_LEN: usize = 4000;
 pub const MAX_STARTER_LEN: usize = 2000;
 pub const MAX_TEE_APP_ID_LEN: usize = 64;
+/// Royalties on resales are capped at 25%.
+pub const MAX_ROYALTY_BPS: u16 = 2_500;
+/// The creator's share of conversation charges is capped at 50%.
+pub const MAX_CREATOR_SHARE_BPS: u16 = 5_000;
+/// A sealed prompt of 4,000 characters, encrypted and base64 encoded, fits easily.
+pub const MAX_SEALED_PROMPT_LEN: usize = 24_000;
+
+/// Instructions only the TEE app can read: encrypted in the creator's browser
+/// to the keeper's sealing key, which is derived inside the app.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SealedPrompt {
+    /// Base64 of ephemeral X25519 key, nonce, and AES-256-GCM ciphertext.
+    pub ciphertext: String,
+    /// The keeper's X25519 sealing key it was encrypted to, hex.
+    pub sealed_to: String,
+}
+
+/// Economic terms, fixed at deployment so buyers know them before minting.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Terms {
+    /// Royalty on resales, to the treasury, in basis points (NEP-199).
+    #[serde(default)]
+    pub royalty_bps: u16,
+    /// Share of every conversation charge that goes to the treasury.
+    #[serde(default)]
+    pub creator_share_bps: u16,
+    /// Price per message. None means the keeper's own price.
+    #[serde(default)]
+    pub chat_price: Option<NearToken>,
+    /// Price per saved conversation. None means the keeper's own price.
+    #[serde(default)]
+    pub save_price: Option<NearToken>,
+}
+
+impl Terms {
+    pub(crate) fn validate(&self) {
+        require!(
+            self.royalty_bps <= MAX_ROYALTY_BPS,
+            "royalty_bps must be at most 2500"
+        );
+        require!(
+            self.creator_share_bps <= MAX_CREATOR_SHARE_BPS,
+            "creator_share_bps must be at most 5000"
+        );
+    }
+}
 
 /// Where a collection's contexts may be opened. Fixed at deployment, so a
 /// buyer knows nobody can later move them somewhere less private.
@@ -109,6 +157,14 @@ pub struct Collection {
     /// Where contexts may be opened. None means any keeper the admin names.
     #[serde(default)]
     pub tee: Option<TeeRequirement>,
+    /// Extension of token images under `base_uri`. Defaults to "png".
+    #[serde(default)]
+    pub media_extension: String,
+    #[serde(default)]
+    pub terms: Terms,
+    /// Instructions only the TEE app can read, added after `prompt`. Needs `tee`.
+    #[serde(default)]
+    pub sealed_prompt: Option<SealedPrompt>,
 }
 
 #[near(serializers = [json])]
@@ -121,8 +177,17 @@ pub struct CollectionView {
     pub starter: String,
     pub max_supply: Option<U64>,
     pub tee: Option<TeeRequirement>,
+    pub media_extension: String,
+    pub terms: Terms,
+    pub sealed_prompt: Option<SealedPrompt>,
+    /// Whether a key attested inside the required app is the one the prompt is sealed to.
+    pub sealed_key_attested: bool,
     /// Tokens minted so far.
     pub minted: U64,
+    /// The launchpad this collection came from, which approves its upgrades.
+    pub factory_id: Option<AccountId>,
+    /// The published code it runs, when known.
+    pub code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
 }
 
 #[near(serializers = [json])]

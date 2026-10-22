@@ -16,6 +16,7 @@ const DSTACK_APP: &str = "3763bc34552cf3a27ff71ad5f7a90471562a1a2d";
 /// 2026-10-20, inside the Intel fixture's collateral validity.
 const VALID_NOW: u64 = 1_792_454_400;
 const KEY: &str = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp";
+const SEAL: &str = "11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa";
 
 fn dstack() -> (Vec<DstackEvent>, [u8; 48], String) {
     let report: near_sdk::serde_json::Value =
@@ -95,28 +96,43 @@ fn td(status: &str, key: &str) -> VerifiedTd {
     VerifiedTd {
         status: status.to_string(),
         rtmr3,
-        report_data: expected_report_data(key),
+        report_data: expected_report_data(key, SEAL),
     }
 }
 
 #[test]
 fn accepts_a_quote_for_this_key_from_the_required_app() {
     let (_, _, log) = dstack();
-    check_registration(DSTACK_APP, KEY, &td("UpToDate", KEY), &log).unwrap();
+    check_registration(DSTACK_APP, KEY, SEAL, &td("UpToDate", KEY), &log).unwrap();
 }
 
 #[test]
 fn refuses_a_quote_made_for_another_key() {
     let (_, _, log) = dstack();
+    let error = check_registration(
+        DSTACK_APP,
+        KEY,
+        SEAL,
+        &td("UpToDate", "ed25519:other"),
+        &log,
+    )
+    .unwrap_err();
+    assert!(error.contains("does not commit to these keys"));
+}
+
+#[test]
+fn refuses_a_quote_made_for_another_sealing_key() {
+    let (_, _, log) = dstack();
+    let other_seal = "22".repeat(32);
     let error =
-        check_registration(DSTACK_APP, KEY, &td("UpToDate", "ed25519:other"), &log).unwrap_err();
-    assert!(error.contains("does not commit to this key"));
+        check_registration(DSTACK_APP, KEY, &other_seal, &td("UpToDate", KEY), &log).unwrap_err();
+    assert!(error.contains("does not commit to these keys"));
 }
 
 #[test]
 fn refuses_a_quote_from_another_app() {
     let (_, _, log) = dstack();
-    let error = check_registration("0a1b2c", KEY, &td("UpToDate", KEY), &log).unwrap_err();
+    let error = check_registration("0a1b2c", KEY, SEAL, &td("UpToDate", KEY), &log).unwrap_err();
     assert!(error.contains(&format!("from app {DSTACK_APP}")));
 }
 
@@ -124,7 +140,7 @@ fn refuses_a_quote_from_another_app() {
 fn refuses_out_of_date_and_revoked_platforms() {
     let (_, _, log) = dstack();
     for status in ["OutOfDate", "Revoked", "OutOfDateConfigurationNeeded"] {
-        assert!(check_registration(DSTACK_APP, KEY, &td(status, KEY), &log).is_err());
+        assert!(check_registration(DSTACK_APP, KEY, SEAL, &td(status, KEY), &log).is_err());
     }
 }
 
@@ -166,11 +182,22 @@ fn tee_collection() -> Contract {
             tee: Some(TeeRequirement::Phala {
                 app_id: DSTACK_APP.to_string(),
             }),
+            media_extension: String::new(),
+            terms: crate::Terms::default(),
+            sealed_prompt: None,
         },
+        None,
     );
     ctx("alice.near", OPERATOR_KEY, NearToken::from_near(2));
     c.mint();
     c
+}
+
+fn attested() -> crate::attestation::AttestedKey {
+    crate::attestation::AttestedKey {
+        attested_at: 0,
+        seal_public_key: SEAL.to_string(),
+    }
 }
 
 fn set_context(c: &mut Contract) {
@@ -193,7 +220,7 @@ fn a_tee_collection_refuses_the_keeper_account_signing_with_another_key() {
 #[test]
 fn a_tee_collection_accepts_the_keeper_signing_with_an_attested_key() {
     let mut c = tee_collection();
-    c.attested_keys.insert(key(KEY), 0);
+    c.attested_keys.insert(key(KEY), attested());
     ctx("keeper.near", KEY, NearToken::from_yoctonear(0));
     set_context(&mut c);
     assert!(c.is_keeper_key_attested(key(KEY)));
@@ -214,7 +241,7 @@ fn a_tee_collection_refuses_debits_signed_with_another_key() {
 #[test]
 fn the_admin_can_revoke_an_attested_key() {
     let mut c = tee_collection();
-    c.attested_keys.insert(key(KEY), 0);
+    c.attested_keys.insert(key(KEY), attested());
     ctx("admin.near", OPERATOR_KEY, NearToken::from_yoctonear(1));
     c.revoke_keeper_key(key(KEY));
     assert!(!c.is_keeper_key_attested(key(KEY)));
@@ -237,9 +264,19 @@ fn registration_needs_a_tee_requirement() {
             starter: String::new(),
             max_supply: None,
             tee: None,
+            media_extension: String::new(),
+            terms: crate::Terms::default(),
+            sealed_prompt: None,
         },
+        None,
     );
-    c.register_keeper_key(key(KEY), String::new(), String::new(), String::new());
+    c.register_keeper_key(
+        key(KEY),
+        SEAL.to_string(),
+        String::new(),
+        String::new(),
+        String::new(),
+    );
 }
 
 #[test]
@@ -251,6 +288,7 @@ fn registration_runs_the_quote_through_intels_checks() {
     ctx("anyone.near", OPERATOR_KEY, NearToken::from_yoctonear(0));
     c.register_keeper_key(
         key(KEY),
+        SEAL.to_string(),
         hex::encode(INTEL_QUOTE),
         INTEL_COLLATERAL.to_string(),
         "[]".to_string(),
