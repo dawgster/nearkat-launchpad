@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
+    "@phala/dcap-qvl": "^0.7.0",
     "@scure/base": "^2.4.0",
     "hono": "^4.13.13",
     "near-kit": "^0.20.2"

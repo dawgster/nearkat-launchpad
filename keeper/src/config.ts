@@ -6,7 +6,14 @@ export interface Config {
   network: "testnet" | "mainnet" | "sandbox";
   /** Overrides the network's default RPC endpoint. Required for a sandbox. */
   rpcUrl: string | undefined;
+  /** The home collection, served at /kats. */
   contractId: string;
+  /** More collections to serve, by contract id. */
+  extraContractIds: string[];
+  /** A launchpad whose collections naming this keeper are served too. */
+  launchpadId: string | undefined;
+  /** Inference earnings are withdrawn from a collection once they reach this, in yoctoNEAR. */
+  withdrawMinimum: bigint;
   keeperAccountId: string;
   rootSecretHex: string | undefined;
   nearAiBaseUrl: string;
@@ -84,6 +91,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     network,
     rpcUrl: env.NEAR_RPC_URL || undefined,
     contractId: required(env, "CONTRACT_ID"),
+    extraContractIds: (env.CONTRACT_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
+    launchpadId: env.LAUNCHPAD_ID || undefined,
+    // 1 NEAR
+    withdrawMinimum: yocto(env, "WITHDRAW_MIN_YOCTO", "1000000000000000000000000"),
     keeperAccountId: required(env, "KEEPER_ACCOUNT_ID"),
     rootSecretHex: env.KEEPER_ROOT_SECRET,
     nearAiBaseUrl: env.NEAR_AI_BASE_URL ?? "https://cloud-api.near.ai/v1",

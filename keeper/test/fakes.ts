@@ -1,4 +1,4 @@
-import type { Chain, DebitResult } from "../src/chain.ts";
+import type { Chain, DebitResult, KeyProof } from "../src/chain.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
@@ -13,6 +13,10 @@ export class FakeChain implements Chain {
   readonly debits: Array<[number, Array<[string, string]>]> = [];
   keeperId = "keeper.near";
   collection: CollectionInfo = DEFAULT_COLLECTION;
+  inferenceAccrued = 0n;
+  withdrawals = 0;
+  readonly attested = new Set<string>();
+  readonly proofs: KeyProof[] = [];
   debitSeq = 0;
   /** "lost": the call never reaches the contract. "unconfirmed": it applies, then the reply is lost. */
   debitFailure: "none" | "lost" | "unconfirmed" = "none";
@@ -97,6 +101,24 @@ export class FakeChain implements Chain {
 
   async getCollection(): Promise<CollectionInfo> {
     return this.collection;
+  }
+
+  async getInferenceAccrued(): Promise<bigint> {
+    return this.inferenceAccrued;
+  }
+
+  async withdrawInference(): Promise<void> {
+    this.withdrawals += 1;
+    this.inferenceAccrued = 0n;
+  }
+
+  async isKeyAttested(publicKey: string): Promise<boolean> {
+    return this.attested.has(publicKey);
+  }
+
+  async registerKeeperKey(proof: KeyProof): Promise<void> {
+    this.proofs.push(proof);
+    this.attested.add(proof.public_key);
   }
 
   #kat(tokenId: string): KatView {

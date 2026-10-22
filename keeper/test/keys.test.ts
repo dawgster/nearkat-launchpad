@@ -45,3 +45,20 @@ describe("localRootSecret", () => {
     expect(() => localRootSecret(value)).toThrow("KEEPER_ROOT_SECRET");
   });
 });
+
+describe("forContract", () => {
+  test("gives the same token a different key in each collection", () => {
+    const keys = keysFromRootSecret(root);
+    const a = keys.forContract("a.near");
+    const b = keys.forContract("b.near");
+    expect(a.katKey("1")).not.toEqual(b.katKey("1"));
+    expect(a.katKey("1")).not.toEqual(keys.katKey("1"));
+    expect(a.katKey("1")).toEqual(keysFromRootSecret(root).forContract("a.near").katKey("1"));
+  });
+
+  test("keeps the session and NEAR keys shared", () => {
+    const keys = keysFromRootSecret(root);
+    expect(keys.forContract("a.near").nearPublicKey()).toBe(keys.nearPublicKey());
+    expect(keys.forContract("a.near").sessionKey()).toEqual(keys.sessionKey());
+  });
+});

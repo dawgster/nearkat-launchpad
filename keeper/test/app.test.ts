@@ -245,3 +245,91 @@ describe("keeper HTTP API", () => {
     expect(other.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
+
+describe("collections served alongside the home one", () => {
+  async function setupMany() {
+    const home = await setup();
+    const chain = new FakeChain();
+    chain.collection = {
+      name: "Magister",
+      prompt: "You are {name} #{token_id}, a tutor.",
+      starter: "No student yet.",
+      tee: null,
+    };
+    const tutor = new KatService({
+      chain,
+      store: new MemoryStore(),
+      keys: keys.forContract("tutor.near"),
+      inference: home.inference,
+      meter: new Meter(chain),
+      prices: { chat: 2n * 10n ** 21n, save: 5n * 10n ** 22n },
+      collection: chain.collection,
+      retryDelayMs: 0,
+    });
+    chain.mint("1", "alice.near", NEAR);
+    await tutor.wakeNew();
+    const auth = new Auth({
+      sessionKey: keys.sessionKey(),
+      recipient: "nearkat.xyz",
+      verify: async (signed) => signed.signature === "valid",
+    });
+    const app = createApp({
+      auth,
+      homeContractId: "nearkat.near",
+      collection: (id) => (id === "tutor.near" ? tutor : undefined),
+      collections: () => ({ served: ["tutor.near"] }),
+      attestation: async () => ({ mode: "local" }),
+      info: { chat_price: "1", save_price: "1", model: "m" },
+      webOrigins: [],
+    });
+    const signIn = async (accountId: string) => {
+      const { nonce } = await (await app.request("/auth/challenge", { method: "POST" })).json();
+      const signed: SignedMessage = { accountId, publicKey: "ed25519:pk", signature: "valid" };
+      const response = await app.request("/auth/session", {
+        method: "POST",
+        body: JSON.stringify({ nonce, signed_message: signed }),
+      });
+      return (await response.json()).token as string;
+    };
+    return { app, signIn, as: home.as };
+  }
+
+  test("reads and talks to a token of another collection under /c/:contract", async () => {
+    const { app, signIn, as } = await setupMany();
+    const token = await signIn("alice.near");
+    const context = await app.request("/c/tutor.near/kats/1/context", as(token, undefined, "GET"));
+    expect(await context.json()).toMatchObject({ personality: "No student yet." });
+    const chat = await app.request("/c/tutor.near/kats/1/chat", as(token, { message: "salve" }));
+    expect(chat.status).toBe(200);
+  });
+
+  test("says which collections it doesn't serve", async () => {
+    const { app, signIn, as } = await setupMany();
+    const token = await signIn("alice.near");
+    const response = await app.request(
+      "/c/unknown.near/kats/1/context",
+      as(token, undefined, "GET"),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "not_served" });
+  });
+
+  test("asks for a session on scoped routes too", async () => {
+    const { app } = await setupMany();
+    const response = await app.request("/c/tutor.near/kats/1/context");
+    expect(response.status).toBe(401);
+  });
+
+  test("says it is starting up while the home collection isn't served yet", async () => {
+    const { app, signIn, as } = await setupMany();
+    const token = await signIn("alice.near");
+    const response = await app.request("/kats/1/context", as(token, undefined, "GET"));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "waking_up" });
+  });
+
+  test("lists what it serves", async () => {
+    const { app } = await setupMany();
+    expect(await (await app.request("/collections")).json()).toEqual({ served: ["tutor.near"] });
+  });
+});

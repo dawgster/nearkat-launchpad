@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { request } from "node:http";
+import type { KeyProof } from "./chain.ts";
 import { type CollectionInfo, requiredPhalaApp } from "./collection.ts";
 
 /**
@@ -132,4 +133,42 @@ export function teeMismatch(
     return `the collection requires Phala app ${required}, and this keeper runs as ${runningAs.appId}`;
   }
   return null;
+}
+
+/** Fetches Intel's collateral for a quote. Phala's PCCS by default. */
+export type CollateralSource = (quote: Uint8Array) => Promise<Record<string, unknown>>;
+
+export const phalaCollateral: CollateralSource = async (quote) => {
+  const { getCollateral, PHALA_PCCS_URL } = await import("@phala/dcap-qvl");
+  return (await getCollateral(PHALA_PCCS_URL, quote)) as unknown as Record<string, unknown>;
+};
+
+/**
+ * The collateral as the contract's dcap-qvl reads it: byte fields as hex.
+ * The JS library may return them as arrays of numbers.
+ */
+export function collateralJson(collateral: Record<string, unknown>): string {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(collateral)) {
+    out[key] =
+      Array.isArray(value) || value instanceof Uint8Array
+        ? Buffer.from(value as number[]).toString("hex")
+        : value;
+  }
+  return JSON.stringify(out);
+}
+
+/** Everything `register_keeper_key` needs to accept this keeper's key. */
+export async function keyProof(
+  publicKey: string,
+  quote: { quote: string; event_log: string },
+  collateral: CollateralSource,
+): Promise<KeyProof> {
+  const quoteHex = quote.quote.replace(/^0x/, "");
+  return {
+    public_key: publicKey,
+    quote: quoteHex,
+    collateral: collateralJson(await collateral(Buffer.from(quoteHex, "hex"))),
+    event_log: quote.event_log,
+  };
 }

@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
-import { DstackAgent, phalaRootSecret, reportDataFor, teeMismatch } from "../src/tee.ts";
+import { DstackAgent, keyProof, phalaRootSecret, reportDataFor, teeMismatch } from "../src/tee.ts";
 
 const APP = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
 const phala = { ...DEFAULT_COLLECTION, tee: { Phala: { app_id: APP } } };
@@ -91,6 +91,31 @@ describe("DstackAgent against a stand-in guest agent", () => {
     expect(await agent.getQuote(data)).toEqual({ quote: "beef", event_log: "[]" });
     expect(seen.find((call) => call.path === "/GetQuote")?.body).toEqual({
       report_data: data.toString("hex"),
+    });
+  });
+});
+
+describe("keyProof", () => {
+  test("hands the contract the quote, the event log and hex-encoded collateral", async () => {
+    let asked: Uint8Array | null = null;
+    const proof = await keyProof(
+      "ed25519:abc",
+      { quote: "0xbeef", event_log: "[]" },
+      async (quote) => {
+        asked = quote;
+        return { root_ca_crl: [1, 2, 255], tcb_info: '{"id":"TDX"}', tcb_info_signature: "abcd" };
+      },
+    );
+    expect(asked).toEqual(Buffer.from("beef", "hex"));
+    expect(proof).toEqual({
+      public_key: "ed25519:abc",
+      quote: "beef",
+      event_log: "[]",
+      collateral: JSON.stringify({
+        root_ca_crl: "0102ff",
+        tcb_info: '{"id":"TDX"}',
+        tcb_info_signature: "abcd",
+      }),
     });
   });
 });

@@ -4,6 +4,11 @@ import { base58 } from "@scure/base";
 export interface Keys {
   /** AES-256-GCM key for one kat's context. */
   katKey(tokenId: string): Buffer;
+  /**
+   * The same keys, with kat keys scoped to one collection contract, so a
+   * keeper serving many collections never reuses a key across them.
+   */
+  forContract(contractId: string): Keys;
   /** HMAC key for session tokens. */
   sessionKey(): Buffer;
   /** The keeper's NEAR signing key, as `ed25519:<base58>`. */
@@ -31,12 +36,14 @@ export function keysFromRootSecret(root: Uint8Array): Keys {
   const jwk = createPublicKey(privateKey).export({ format: "jwk" });
   const publicBytes = Buffer.from(jwk.x as string, "base64url");
 
-  return {
-    katKey: (tokenId) => derive(root, `nearkat/kat/${tokenId}`),
+  const keys = (katPrefix: string): Keys => ({
+    katKey: (tokenId) => derive(root, `${katPrefix}${tokenId}`),
+    forContract: (contractId) => keys(`nearkat/kat/${contractId}/`),
     sessionKey: () => derive(root, "nearkat/session"),
     nearPrivateKey: () => `ed25519:${base58.encode(Buffer.concat([seed, publicBytes]))}`,
     nearPublicKey: () => `ed25519:${base58.encode(publicBytes)}`,
-  };
+  });
+  return keys("nearkat/kat/");
 }
 
 /** Reads the local-mode root secret: 64 hex characters. */

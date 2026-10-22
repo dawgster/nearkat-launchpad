@@ -24,6 +24,25 @@ export interface Chain {
   getKeeperId(): Promise<string>;
   /** The collection's public prompt, starter and TEE requirement. */
   getCollection(): Promise<CollectionInfo>;
+  /** yoctoNEAR the contract holds for the keeper from inference charges. */
+  getInferenceAccrued(): Promise<bigint>;
+  /** Sends what the contract holds for the keeper to the keeper account. */
+  withdrawInference(): Promise<void>;
+  /** Whether the contract accepts this key as running inside the required TEE app. */
+  isKeyAttested(publicKey: string): Promise<boolean>;
+  /** Proves to the contract that this key runs inside the required TEE app. */
+  registerKeeperKey(proof: KeyProof): Promise<void>;
+}
+
+/** What `register_keeper_key` takes. */
+export interface KeyProof {
+  public_key: string;
+  /** Hex. */
+  quote: string;
+  /** dcap-qvl's collateral as JSON, byte fields hex encoded. */
+  collateral: string;
+  /** dstack's event log JSON. */
+  event_log: string;
 }
 
 export class NearChain implements Chain {
@@ -101,13 +120,39 @@ export class NearChain implements Chain {
     return { name: view.name, prompt: view.prompt, starter: view.starter, tee: view.tee ?? null };
   }
 
-  async #config(): Promise<{ keeper_id: string; debit_seq: string }> {
-    const config = await this.#near.view<{ keeper_id: string; debit_seq: string }>(
-      this.#contractId,
-      "get_config",
-      {},
-      { finality: this.#finality },
+  async getInferenceAccrued(): Promise<bigint> {
+    return BigInt((await this.#config()).inference_accrued ?? "0");
+  }
+
+  async withdrawInference(): Promise<void> {
+    await this.#near.call(this.#contractId, "withdraw_inference", {}, { gas: "30 Tgas" });
+  }
+
+  async isKeyAttested(publicKey: string): Promise<boolean> {
+    return (
+      (await this.#near.view<boolean>(
+        this.#contractId,
+        "is_keeper_key_attested",
+        { public_key: publicKey },
+        { finality: this.#finality },
+      )) === true
     );
+  }
+
+  async registerKeeperKey(proof: KeyProof): Promise<void> {
+    // Verifying a TDX quote on-chain costs about 170 Tgas.
+    await this.#near.call(this.#contractId, "register_keeper_key", proof, {
+      gas: "300 Tgas",
+      waitUntil: "FINAL",
+    });
+  }
+
+  async #config(): Promise<{ keeper_id: string; debit_seq: string; inference_accrued?: string }> {
+    const config = await this.#near.view<{
+      keeper_id: string;
+      debit_seq: string;
+      inference_accrued?: string;
+    }>(this.#contractId, "get_config", {}, { finality: this.#finality });
     if (!config) {
       throw new Error(`Contract ${this.#contractId} returned no config`);
     }

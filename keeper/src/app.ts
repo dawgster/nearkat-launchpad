@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
+import { createMiddleware } from "hono/factory";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { SignedMessage } from "near-kit";
 import type { Auth } from "./auth.ts";
@@ -9,7 +10,14 @@ import type { KatService } from "./kats.ts";
 
 export interface AppOptions {
   auth: Auth;
-  kats: KatService;
+  /** The home collection, served at /kats. Absent until it can be served. */
+  kats?: KatService;
+  /** Otherwise /kats serves this collection through `collection`. */
+  homeContractId?: string;
+  /** Any collection this keeper serves, by contract id, served at /c/:contract/kats. */
+  collection?: (contractId: string) => KatService | undefined;
+  /** Served at GET /collections: what this keeper serves, and what it is waiting on. */
+  collections?: () => Record<string, unknown>;
   /** Served at GET /attestation. */
   attestation: () => Promise<Record<string, unknown>>;
   /** Served at GET /info: what the web app needs to quote costs. Amounts are yoctoNEAR. */
@@ -92,7 +100,9 @@ export function createApp(options: AppOptions): Hono<Env> {
     return c.json(await auth.createSession(signed, body.nonce, body.callback_url));
   });
 
-  app.use("/kats/*", async (c, next) => {
+  app.get("/collections", (c) => c.json(options.collections?.() ?? {}));
+
+  const signedIn = createMiddleware<Env>(async (c, next) => {
     const header = c.req.header("authorization") ?? "";
     const accountId = header.startsWith("Bearer ") ? auth.verifySession(header.slice(7)) : null;
     if (!accountId) {
@@ -101,15 +111,45 @@ export function createApp(options: AppOptions): Hono<Env> {
     c.set("accountId", accountId);
     await next();
   });
+  app.use("/kats/*", signedIn);
+  app.use("/c/:contract/kats/*", signedIn);
 
-  app.get("/kats/:id/context", async (c) =>
-    c.json(await kats.getContext(c.get("accountId"), c.req.param("id"))),
-  );
+  /** The collection a request is for: the home one, or the one in the path. */
+  const serving = (contractId: string | undefined): KatService => {
+    if (contractId === undefined) {
+      const home =
+        kats ?? (options.homeContractId ? options.collection?.(options.homeContractId) : undefined);
+      if (!home) {
+        // The web app waits on this code, as it does for a kat that is waking.
+        throw new HttpError(409, "waking_up", "The keeper is still starting up");
+      }
+      return home;
+    }
+    const scoped = options.collection?.(contractId);
+    if (!scoped) {
+      throw new HttpError(404, "not_served", `This keeper does not serve ${contractId}`);
+    }
+    return scoped;
+  };
 
-  app.post("/kats/:id/chat", async (c) => {
-    const body = await jsonBody(c.req.raw);
-    return c.json(await kats.chat(c.get("accountId"), c.req.param("id"), body.message as string));
-  });
+  for (const prefix of ["", "/c/:contract"]) {
+    app.get(`${prefix}/kats/:id/context`, async (c) =>
+      c.json(
+        await serving(c.req.param("contract")).getContext(c.get("accountId"), c.req.param("id")),
+      ),
+    );
+
+    app.post(`${prefix}/kats/:id/chat`, async (c) => {
+      const body = await jsonBody(c.req.raw);
+      return c.json(
+        await serving(c.req.param("contract")).chat(
+          c.get("accountId"),
+          c.req.param("id"),
+          body.message as string,
+        ),
+      );
+    });
+  }
 
   return app;
 }

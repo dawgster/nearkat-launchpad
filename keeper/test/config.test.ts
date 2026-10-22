@@ -110,3 +110,33 @@ describe("keeper mode", () => {
     expect(() => loadConfig({ ...env, KEEPER_MODE: "sgx" })).toThrow(/local or phala/);
   });
 });
+
+describe("serving many collections", () => {
+  const env = {
+    CONTRACT_ID: "nearkat.near",
+    KEEPER_ACCOUNT_ID: "keeper.near",
+    NEAR_AI_API_KEY: "key",
+  };
+
+  test("serves only the home collection by default, and withdraws from 1 NEAR", () => {
+    expect(loadConfig(env)).toMatchObject({
+      extraContractIds: [],
+      launchpadId: undefined,
+      withdrawMinimum: 10n ** 24n,
+    });
+  });
+
+  test("takes more collections and a launchpad", () => {
+    const config = loadConfig({
+      ...env,
+      CONTRACT_IDS: "a.near, b.near,",
+      LAUNCHPAD_ID: "launch.near",
+      WITHDRAW_MIN_YOCTO: "5",
+    });
+    expect(config).toMatchObject({
+      extraContractIds: ["a.near", "b.near"],
+      launchpadId: "launch.near",
+      withdrawMinimum: 5n,
+    });
+  });
+});
