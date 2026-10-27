@@ -34,15 +34,31 @@ marked confidential, never to the update that rewrites a token's character.
 Token art is served at `GET /art/<contract>/<id>.svg`, drawn by the shared
 `../art` module from the token's on-chain growth.
 
-With `S3_BUCKET` set, contexts are stored in an S3-compatible bucket before
-their hash moves on-chain, and the local directory only caches them.
+**Context keys.** A collection with a `key_source` gets its keys from NEAR's
+MPC network (confidential key derivation). Before serving it, the keeper
+makes a throwaway BLS12-381 key and calls the collection's
+`request_context_key`; the network derives a key for that collection's
+account and returns it encrypted to the throwaway key. The keeper checks the
+result is the network's BLS signature on the collection's app id, and
+derives every token's key from it. So the keys don't depend on any keeper's
+own secret: a replacement keeper the collection names gets the same keys,
+and for a TEE collection only an attested keeper key can ask. Collections
+without a key source use keys derived from the keeper's root secret.
+
+**Storage.** By default (`STORAGE=fastfs`) each encrypted context is stored
+on NEAR as a FastFS file: a `__fastdata_fastfs` call from the keeper account
+to the collection, which costs the keeper a small transaction fee. The
+on-chain `context_ref` names the uploader, the blob's SHA-256 and the
+transaction. The keeper reads it back from its disk cache, then a FastFS
+gateway (`https://<uploader>.fastfs.io` on mainnet), then any archival RPC
+node (`NEAR_ARCHIVAL_RPC_URL`), checking the hash each time. `STORAGE=file`
+keeps contexts only on disk.
 
 If a collection names a Phala app (`tee`), the keeper refuses to serve it
 unless it runs as exactly that app. In that case it first proves its key to
 the contract: it fetches Intel's collateral for its quote from Phala's PCCS
 and calls `register_keeper_key`, which verifies the quote on-chain. The
-contract then only accepts keeper calls signed with that key. Contexts are still stored on disk; NOVA
-storage is a later step.
+contract then only accepts keeper calls signed with that key.
 
 ## Test
 
@@ -53,8 +69,10 @@ npm run typecheck
 npm run lint
 ```
 
-The sandbox test needs the contract wasm and is skipped without it. Build it
-first with `cargo near build non-reproducible-wasm` in `../contract`. Its
+The sandbox tests need the contract wasm (and, for the MPC test, the mock
+MPC wasm) and are skipped without them. Build them first with
+`cargo near build non-reproducible-wasm` in `../contract` and
+`cargo near build non-reproducible-wasm --no-abi` in `../mock-mpc`. Its
 first run downloads a NEAR sandbox binary.
 
 ## Run against testnet

@@ -7,7 +7,8 @@ Nearkat becomes one collection among many.
 
 Status: built end to end: contracts with on-chain TEE attestation, terms,
 royalties and upgrades; a keeper serving many collections with sealed prompts,
-live art and durable storage; web pages. Open items are listed at the end.
+live art, context keys from NEAR's MPC network and storage on NEAR with
+FastFS; web pages. Open items are listed at the end.
 
 ## What a collection is
 
@@ -205,21 +206,68 @@ layout in `migrate`; this version reads its own. Only approve code that keeps
 the promises collections made to buyers: public prompt, starter, TEE
 requirement, terms.
 
-## Storage
+## Context keys from NEAR's MPC network
 
-With `S3_BUCKET` set, the keeper stores every encrypted context in an
-S3-compatible bucket (AWS, R2, MinIO, B2) before its hash moves on-chain, and
-keeps the disk only as a cache that refills from the bucket. Requests are
-signed with SigV4 (checked against AWS's documented example). The bucket is
-trusted to keep blobs, not to keep them secret or intact: they are encrypted,
-and checked against the on-chain hash when read.
+Without this, every token key derives from the keeper's root secret: whoever
+holds that secret holds the keys, and a collection can't change keeper
+without someone handing the secret across. With a `key_source`, keys come
+from NEAR's MPC network through confidential key derivation (CKD):
+
+1. The launchpad's admin sets `key_source` (`{ mpc_contract_id, domain_id }`)
+   with `set_key_source`, and the launchpad writes it into every launch's
+   init arguments, so creators can't point it elsewhere. It is fixed for the
+   collection's life.
+2. To serve a collection, the keeper makes a throwaway BLS12-381 key pair
+   and calls the collection's `request_context_key(app_public_key)`. Only the
+   keeper account may call it, and for a TEE collection only with an
+   attested key, so the attestation is registered first.
+3. The collection calls `request_app_private_key` on the MPC contract with
+   the path `nearkat/contexts/v1`. The network derives
+   `K = msk · H(pk ‖ app_id)`, where `app_id` hashes the caller (the
+   collection's account) and the path, and returns it ElGamal-encrypted to
+   the throwaway key.
+4. The keeper decrypts it and checks the pairing
+   `e(K, G2) = e(H(pk ‖ app_id), pk)`: it is the network's BLS signature on
+   this collection's app id. It then derives a 32-byte root with HKDF and
+   every token key from that root.
+
+Consequences: no keeper's own secret opens the contexts. Any keeper the
+contract names gets the same key, so changing keeper needs no hand-over, and
+an admin who wants to cut a keeper off changes `keeper_id` (and for a TEE
+collection the new keeper must be attested in the same app). A keeper that
+once held the key still knows it; changing keeper does not re-encrypt old
+contexts.
+
+`mock-mpc/` is a test-only contract with the network's real maths, for the
+sandbox and browser tests. The keeper's TypeScript client is checked against
+a response produced by its Rust code.
+
+## Storage on NEAR: FastFS
+
+The keeper stores each encrypted context on NEAR as a FastFS file: a
+`__fastdata_fastfs` call from the keeper account to the collection's
+account, whose argument is the Borsh-encoded file
+(`nearkat/<sha256>.bin`). The collection contract accepts and ignores the
+call; the data lives in NEAR's transaction history, not contract state, so
+it costs a transaction fee rather than storage staking. The contract records
+`fastfs:<uploader>:<sha256>:<tx hash>` as the token's `context_ref`, and its
+fingerprint as before.
+
+To read a context, the keeper tries its disk cache, then a FastFS gateway
+(`https://<uploader>.fastfs.io/<collection>/<path>` on mainnet), then the
+transaction itself from any archival RPC node. Whatever answers is checked
+against the hash in the ref. The verify page links to the file or its
+transaction. `STORAGE=file` keeps contexts only on the keeper's disk.
 
 ## Still open
 
 - **On real infrastructure.** The Phala flow (dstack key derivation, PCCS
-  collateral, on-chain registration) and S3 storage are tested against
-  stand-ins and real recorded data here, not yet on a live Phala CVM or bucket.
+  collateral, on-chain registration), CKD and FastFS are tested against
+  stand-ins and real recorded data here (a sandbox node, a mock MPC contract
+  with the real maths), not yet on a live Phala CVM, the live MPC network or
+  FastNear's indexer. Check the MPC contract's CKD domain id and gas needs on
+  testnet before launch.
+- **Archival reads.** Reading a context back without a gateway needs an
+  archival RPC node; FastNear runs public ones, but they are rate limited.
 - **Migrations.** The upgrade path is in place; the first version that changes
   the state layout has to write its conversion.
-- **NOVA.** Contexts could also be stored with NEAR's NOVA; S3 was chosen for
-  this step because any provider works with it.

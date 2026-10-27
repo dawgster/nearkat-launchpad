@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { Shell } from "../components/Shell.tsx";
 import { describeProblem } from "../lib/problems.ts";
 import { recallProof } from "../lib/proof.ts";
+import { type ContextLocation, contextLocation } from "../lib/storage.ts";
 import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import {
@@ -62,10 +63,35 @@ function safeHash(compute: () => string): string | null {
   }
 }
 
+/** Where the encrypted mind is kept, and where anyone can fetch it. */
+function Stored({ location }: { location: ContextLocation }) {
+  if (location.kind === "keeper") {
+    return <p>The encrypted mind is kept by the keeper.</p>;
+  }
+  const link = location.url ?? location.explorer;
+  return (
+    <p>
+      The encrypted mind is stored on NEAR itself, with FastFS, in a transaction from{" "}
+      <Mono>{location.uploader}</Mono>
+      {link ? (
+        <>
+          {" "}
+          (
+          <a className="underline" href={link} target="_blank" rel="noreferrer">
+            {location.url ? "download it" : "see the transaction"}
+          </a>
+          )
+        </>
+      ) : null}
+      . Anyone can fetch it; only the key opens it.
+    </p>
+  );
+}
+
 export function Verify() {
   const { id = "" } = useParams();
   const wallet = useWallet();
-  const { keeper, session } = useServices();
+  const { config, keeper, session } = useServices();
   const scope = useScope();
   const { contract } = scope;
   const name = `${scope.name} #${id}`;
@@ -176,6 +202,9 @@ export function Verify() {
               <p>
                 Fingerprint <Mono>{kat.context_hash}</Mono>
               </p>
+              <Stored
+                location={contextLocation(kat.context_ref, scope.contractId, config.networkId)}
+              />
             </>
           ) : (
             <p>This kat is still waking up and has no recorded mind yet.</p>

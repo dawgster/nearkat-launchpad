@@ -44,6 +44,7 @@ The wasm is written to `target/near/nearkat_launchpad.wasm`.
 | `is_code_approved({ code_hash })`, `get_approved_code_hashes()` | view | Versions collections may upgrade to. The launch version is always one. |
 | `record_upgrade({ code_hash })` | a collection | Records that a collection moved to an approved version. |
 | `set_collection_code_hash`, `approve_code_hash`, `revoke_code_hash`, `set_keeper`, `set_prices`, `reserve`, `withdraw_fees` | admin, 1 yocto | Operating the launchpad. Only approve versions that keep every promise a collection made to its buyers. |
+| `set_key_source({ key_source })` | admin, 1 yocto | NEAR's MPC network (`{ mpc_contract_id, domain_id }`, e.g. `v1.signer` and its CKD domain) that every new launch gets its context keys from. The launchpad sets it in each launch; creators can't. `null` turns it off for new launches. |
 
 `launch` takes:
 
@@ -65,7 +66,7 @@ The wasm is written to `target/near/nearkat_launchpad.wasm`.
 }
 ```
 
-`max_supply`, `tee`, `keeper_id`, `base_uri`, `media_extension`, `terms` and
+`key_source` comes from the launchpad, not the creator. `max_supply`, `tee`, `keeper_id`, `base_uri`, `media_extension`, `terms` and
 `sealed_prompt` are optional; see `../contract/README.md` for what they mean. A collection that requires a
 Phala app needs a keeper running as that app; name it in `keeper_id` if the
 launchpad's keeper isn't one.

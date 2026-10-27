@@ -67,6 +67,8 @@ Click **Verify this kat**.
 
 - The browser recomputes the fingerprint of the mind the keeper sent and
   matches it against the contract: the keeper can't quietly swap minds.
+- It shows where the encrypted mind is stored: on NEAR, in a FastFS
+  transaction anyone can fetch.
 - It checks the signature on the last reply.
 - Be straightforward about the last check: in local mode the operator can read
   minds; in Phala mode the page checks the TDX quote against the keeper's
@@ -96,6 +98,8 @@ Open **Launchpad**.
   this browser to a key that only exists inside the enclave. "Contexts for
   this collection can only be opened inside that enclave app. A keeper
   running as anything else refuses to serve it. That's fixed at launch."
+- Point out under **Who can open the tokens' minds**: keys come from NEAR's
+  MPC network, bound to the collection's account.
 - Launch. It becomes its own NEAR account, running the same audited code as
   every other collection, published once on-chain by hash.
 - On the collection page: the public prompt and starting context, who can
@@ -120,8 +124,13 @@ Open **Launchpad**.
 - **Can a creator change the rules later?** No. The prompt, terms and TEE
   requirement are fixed at launch. A creator can only upgrade to code the
   launchpad approved, and the collection page shows which version runs.
-- **Where are the minds stored?** Encrypted, in an S3-compatible bucket, with
-  a fingerprint of each on-chain.
+- **Where are the minds stored?** On NEAR itself, encrypted, as FastFS files
+  addressed to the collection, with a fingerprint of each in the contract.
+  Anyone can fetch them; the verify page links to them.
+- **Who holds the keys?** NEAR's MPC network derives each collection's key
+  for that collection's account and hands it, encrypted, only to the keeper
+  the contract names. No single keeper's secret opens the minds, and a new
+  keeper can take over.
 - **How do I know the TEE claim is real?** The collection's contract verifies
   the keeper's Intel TDX quote itself, and then only accepts updates signed
   by that key. The verify page shows whether that has happened.
@@ -131,12 +140,14 @@ Open **Launchpad**.
 ### Local sandbox (fastest)
 
 The browser test harness starts everything: a sandbox chain, both contracts,
-the keeper with a stand-in model, and the web app. Build the contracts, then
+the keeper with a stand-in model, and the web app. It also deploys a stand-in for
+NEAR's MPC network that does its real key maths. Build the contracts, then
 run it from `web/`:
 
 ```bash
 (cd contract && cargo near build non-reproducible-wasm)
 (cd launchpad && cargo near build non-reproducible-wasm)
+(cd mock-mpc && cargo near build non-reproducible-wasm --no-abi)
 cd web && npm run e2e
 ```
 
@@ -149,8 +160,12 @@ To present against it, start the same pieces by hand following
    `contract/README.md`).
 2. Publish the same wasm as a global contract by hash, deploy `launchpad/`,
    and call `set_collection_code_hash` (see `launchpad/README.md`).
-3. Run the keeper (`keeper/README.md`) with `LAUNCHPAD_ID` set to the
+3. Call `set_key_source` on the launchpad with NEAR's MPC contract
+   (`v1.signer-prod.testnet` on testnet, `v1.signer` on mainnet) and its CKD
+   domain id, and pass the same `key_source` in the home contract's
+   `collection`.
+4. Run the keeper (`keeper/README.md`) with `LAUNCHPAD_ID` set to the
    launchpad, and register its key on the keeper account. It then serves
    every launch that names it.
-4. Set `VITE_CONTRACT_ID`, `VITE_KEEPER_URL` and `VITE_FACTORY_ID` for the
+5. Set `VITE_CONTRACT_ID`, `VITE_KEEPER_URL` and `VITE_FACTORY_ID` for the
    web app and run `npm run dev`.

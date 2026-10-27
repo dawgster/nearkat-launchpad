@@ -10,6 +10,9 @@ import { Sandbox } from "near-kit/sandbox";
 
 const KEEPER_DIR = resolve(process.env.KEEPER_DIR ?? "../keeper");
 const WASM = resolve(process.env.CONTRACT_WASM ?? "../contract/target/near/nearkat_nft.wasm");
+const MOCK_MPC_WASM = resolve(
+  process.env.MOCK_MPC_WASM ?? "../mock-mpc/target/near/nearkat_mock_mpc.wasm",
+);
 const LAUNCHPAD_WASM = resolve(
   process.env.LAUNCHPAD_WASM ?? "../launchpad/target/near/nearkat_launchpad.wasm",
 );
@@ -87,7 +90,7 @@ async function requireFree(url: string): Promise<void> {
 }
 
 export default async function globalSetup() {
-  for (const wasm of [WASM, LAUNCHPAD_WASM]) {
+  for (const wasm of [WASM, LAUNCHPAD_WASM, MOCK_MPC_WASM]) {
     if (!existsSync(wasm)) {
       throw new Error(`Build the contracts first: ${wasm} is missing`);
     }
@@ -105,6 +108,7 @@ export default async function globalSetup() {
     keeper: `keeper-${stamp}.${root}`,
     alice: `alice-${stamp}.${root}`,
     bob: `bob-${stamp}.${root}`,
+    mpc: `mpc-${stamp}.${root}`,
   };
   const model = startFakeModel();
 
@@ -142,6 +146,24 @@ export default async function globalSetup() {
   await account(names.bob, bob.publicKey.toString());
   await account(names.contract, owner.publicKey.toString());
   await account(names.launchpad, owner.publicKey.toString());
+  await account(names.mpc, owner.publicKey.toString());
+
+  // A stand-in for NEAR's MPC network, doing its real key derivation maths.
+  const keySource = { mpc_contract_id: names.mpc, domain_id: 2 };
+  await new Near({
+    network: sandbox,
+    privateKey: owner.secretKey as PrivateKey,
+    defaultSignerId: names.mpc,
+  })
+    .transaction(names.mpc)
+    .deployContract(names.mpc, readFileSync(MOCK_MPC_WASM))
+    .functionCall(
+      names.mpc,
+      "new",
+      { master_secret: "22".repeat(32), domain_id: 2 },
+      { gas: "300 Tgas" },
+    )
+    .send();
   await new Near({
     network: sandbox,
     privateKey: owner.secretKey as PrivateKey,
@@ -154,7 +176,7 @@ export default async function globalSetup() {
       keeper_id: names.keeper,
       treasury_id: root,
       mint_price: (10n ** 24n).toString(),
-      collection: { name: "Nearkat", symbol: "KAT", base_uri: "" },
+      collection: { name: "Nearkat", symbol: "KAT", base_uri: "", key_source: keySource },
     })
     .send();
 
@@ -181,6 +203,12 @@ export default async function globalSetup() {
       names.launchpad,
       "set_collection_code_hash",
       { code_hash: base58.encode(createHash("sha256").update(code).digest()) },
+      { attachedDeposit: "1 yocto" },
+    )
+    .functionCall(
+      names.launchpad,
+      "set_key_source",
+      { key_source: keySource },
       { attachedDeposit: "1 yocto" },
     )
     .send();

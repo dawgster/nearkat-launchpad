@@ -21,6 +21,14 @@ export interface CollectionView {
   /** The launchpad that approves this collection's upgrades. */
   factory_id: string | null;
   code_hash: string | null;
+  /** Where its context keys come from. Absent on older contracts. */
+  key_source?: KeySource | null;
+}
+
+/** NEAR's MPC network, which derives a collection's context key for its account alone. */
+export interface KeySource {
+  mpc_contract_id: string;
+  domain_id: number;
 }
 
 /** Amounts are yoctoNEAR strings. */
@@ -42,6 +50,8 @@ export interface LaunchpadConfig {
   collection_code_hash: string | null;
   launch_fee: string;
   collection_funding: string;
+  /** The key source every new collection gets. */
+  key_source?: KeySource | null;
 }
 
 export interface CollectionListing {

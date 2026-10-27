@@ -140,6 +140,20 @@ export function Collection() {
               Who can open the tokens' minds
             </h2>
             <Privacy tee={c.tee} />
+            {c.key_source ? (
+              <p className="mt-2 text-sm leading-relaxed text-mist">
+                <span className="font-bold text-cream">Keys from NEAR's MPC network.</span> Each
+                token's key derives from a key the network (
+                <span className="font-mono">{c.key_source.mpc_contract_id}</span>, domain{" "}
+                {c.key_source.domain_id}) makes for this collection's account alone, and hands only
+                to the keeper this contract names. No keeper holds a key of its own that could open
+                them, and a new keeper can take over without anything being handed across.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm leading-relaxed text-mist">
+                Keys come from the keeper's own secret.
+              </p>
+            )}
             {c.sealed_prompt && (
               <p className="mt-2 text-sm leading-relaxed text-mist">
                 <span className="font-bold text-cream">It also has secret instructions</span>,

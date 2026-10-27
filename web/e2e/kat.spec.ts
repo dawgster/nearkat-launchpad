@@ -50,6 +50,9 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   await expect(page.getByRole("heading", { name: "Verify Nearkat #1" })).toBeVisible();
   const row = (title: string) => page.getByRole("listitem").filter({ hasText: title });
   await expect(row("Its mind is recorded on-chain")).toContainText("Checked");
+  await expect(row("Its mind is recorded on-chain")).toContainText(
+    "stored on NEAR itself, with FastFS",
+  );
   await expect(row("What you see is what's recorded")).toContainText("matches the contract");
   // Holding the reported key is necessary but not sufficient, so this is never a full pass.
   await expect(row("The keeper is the one the contract trusts")).toContainText("Partly checked");
@@ -117,6 +120,10 @@ test("a creator launches a collection with its own prompt, and mints from it", a
   );
   await expect(page.getByRole("region", { name: "Who can open the tokens' minds" })).toContainText(
     "only Phala app 0a1b2c3d",
+  );
+  // The launchpad gives every launch its context keys from the MPC network.
+  await expect(page.getByRole("region", { name: "Who can open the tokens' minds" })).toContainText(
+    "Keys from NEAR's MPC network.",
   );
   await expect(page.getByText("0 minted of 2")).toBeVisible();
 
