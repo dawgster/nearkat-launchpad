@@ -1,11 +1,11 @@
 mod admin;
 pub mod attestation;
-mod ckd;
+pub(crate) mod ckd;
 mod kat;
 mod keeper;
 mod nft;
 mod payout;
-mod upgrade;
+pub(crate) mod upgrade;
 
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
@@ -38,6 +38,7 @@ enum StorageKey {
     Approval,
     Kats,
     AttestedKeys,
+    KatEpochs,
 }
 
 #[derive(PanicOnDefault)]
@@ -86,6 +87,10 @@ pub struct Contract {
     key_source: KeySource,
     /// Contexts are saved under this epoch's key. Starts at 1.
     key_epoch: u32,
+    /// The key epoch each token's context is saved under. Kept apart from
+    /// `Kat` so token records from before epochs still read; a token missing
+    /// here was saved under epoch 0, the key from before epochs.
+    kat_epochs: LookupMap<TokenId, u32>,
 }
 
 #[near]
@@ -203,6 +208,7 @@ impl Contract {
             code_hash: code_hash.map(Into::into),
             key_source,
             key_epoch: 1,
+            kat_epochs: LookupMap::new(StorageKey::KatEpochs),
         }
     }
 
@@ -273,7 +279,8 @@ impl Contract {
     pub fn get_kat(&self, token_id: TokenId) -> Option<KatView> {
         let kat = self.kats.get(&token_id)?;
         let owner_id = self.tokens.owner_by_id.get(&token_id)?;
-        Some(KatView::new(owner_id, kat))
+        let epoch = self.kat_epochs.get(&token_id).copied().unwrap_or(0);
+        Some(KatView::new(owner_id, kat, epoch))
     }
 
     /// How the collection presents itself: its public prompt, the context

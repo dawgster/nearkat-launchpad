@@ -7,8 +7,6 @@ pub struct Kat {
     pub context_ref: Option<String>,
     pub context_version: u64,
     pub balance: NearToken,
-    /// The key epoch its current context is encrypted under.
-    pub key_epoch: u32,
 }
 
 impl Kat {
@@ -18,7 +16,6 @@ impl Kat {
             context_ref: None,
             context_version: 0,
             balance,
-            key_epoch: 0,
         }
     }
 }
@@ -31,19 +28,20 @@ pub struct KatView {
     pub context_ref: Option<String>,
     pub context_version: U64,
     pub balance: NearToken,
-    /// The key epoch its current context is encrypted under; 0 before the first.
+    /// The key epoch its current context is encrypted under. 0 means the key
+    /// from before epochs existed, which is also what a token without a context shows.
     pub key_epoch: u32,
 }
 
 impl KatView {
-    pub fn new(owner_id: AccountId, kat: &Kat) -> Self {
+    pub fn new(owner_id: AccountId, kat: &Kat, key_epoch: u32) -> Self {
         Self {
             owner_id,
             context_hash: kat.context_hash.map(|h| h.to_vec().into()),
             context_ref: kat.context_ref.clone(),
             context_version: kat.context_version.into(),
             balance: kat.balance,
-            key_epoch: kat.key_epoch,
+            key_epoch,
         }
     }
 }

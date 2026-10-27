@@ -12,6 +12,8 @@
 //! asking for it moves to the next epoch, whose key the previous keeper never
 //! saw. The current keeper may still fetch earlier epochs' keys, to read
 //! contexts saved before; each token's next save moves it to the new key.
+//! Epoch 0 is the key from before epochs existed (the bare path), which only
+//! collections upgraded from that version have contexts under.
 
 use near_sdk::{env, near, require, Gas, GasWeight, NearToken, Promise};
 
@@ -25,7 +27,11 @@ pub const CONTEXT_KEY_PATH: &str = "nearkat/contexts/v1";
 const GAS_FOR_CKD: Gas = Gas::from_tgas(15);
 
 pub fn context_key_path(epoch: u32) -> String {
-    format!("{CONTEXT_KEY_PATH}/{epoch}")
+    if epoch == 0 {
+        CONTEXT_KEY_PATH.to_string()
+    } else {
+        format!("{CONTEXT_KEY_PATH}/{epoch}")
+    }
 }
 
 #[near]
@@ -43,8 +49,8 @@ impl Contract {
         self.assert_keeper();
         let epoch = key_epoch.unwrap_or(self.key_epoch);
         require!(
-            (1..=self.key_epoch).contains(&epoch),
-            format!("key_epoch must be 1 to {}", self.key_epoch)
+            epoch <= self.key_epoch,
+            format!("key_epoch must be at most {}", self.key_epoch)
         );
         let args = near_sdk::serde_json::json!({
             "request": {
@@ -63,8 +69,13 @@ impl Contract {
         )
     }
 
-    /// Moves to a new key epoch. Admin only. Use it when a keeper may have
-    /// been compromised without being replaced.
+    /// Moves to a new key epoch. Admin only.
+    ///
+    /// The keeper named now can fetch the new key too, so this alone doesn't
+    /// lock anyone out. It protects what is saved next when a context key
+    /// leaked but the keeper's signing keys didn't. If the keeper itself may
+    /// be compromised, change keeper (`set_keeper`) or, for a TEE collection,
+    /// revoke its key: both move the epoch as well.
     #[payable]
     pub fn rotate_context_key(&mut self) {
         self.assert_admin();

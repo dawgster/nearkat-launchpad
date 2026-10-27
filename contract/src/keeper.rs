@@ -38,7 +38,7 @@ impl Contract {
         kat.context_hash = Some(hash);
         kat.context_ref = Some(context_ref);
         kat.context_version = version.0;
-        kat.key_epoch = key_epoch;
+        self.kat_epochs.insert(token_id, key_epoch);
     }
 
     /// Moves each amount from a kat's balance: the creator's share to the

@@ -1001,7 +1001,7 @@ fn the_keeper_can_request_the_current_or_an_earlier_context_key() {
 }
 
 #[test]
-#[should_panic(expected = "key_epoch must be 1 to 1")]
+#[should_panic(expected = "key_epoch must be at most 1")]
 fn nobody_can_request_a_future_epoch() {
     let mut c = deploy();
     ctx("keeper.near", NearToken::from_yoctonear(0));
@@ -1080,4 +1080,96 @@ fn a_context_under_an_old_key_is_refused() {
     c.rotate_context_key();
     ctx("keeper.near", NearToken::from_yoctonear(0));
     c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
+}
+
+// Upgrading from the layout before key epochs.
+
+fn previous_layout(
+    c: Contract,
+    key_source: Option<crate::KeySource>,
+) -> crate::upgrade::PreviousContract {
+    crate::upgrade::PreviousContract {
+        tokens: c.tokens,
+        kats: c.kats,
+        admin_id: c.admin_id,
+        keeper_id: c.keeper_id,
+        treasury_id: c.treasury_id,
+        mint_price: c.mint_price,
+        base_uri: c.base_uri,
+        name: c.name,
+        symbol: c.symbol,
+        prompt: c.prompt,
+        starter: c.starter,
+        max_supply: c.max_supply,
+        tee: c.tee,
+        next_token_id: c.next_token_id,
+        treasury_accrued: c.treasury_accrued,
+        inference_accrued: c.inference_accrued,
+        debit_seq: c.debit_seq,
+        attested_keys: c.attested_keys,
+        media_extension: c.media_extension,
+        terms: c.terms,
+        sealed_prompt: c.sealed_prompt,
+        sealed_key_attested: c.sealed_key_attested,
+        factory_id: c.factory_id,
+        code_hash: c.code_hash,
+        key_source,
+    }
+}
+
+/// A collection in the previous layout, with token 1 holding a context saved
+/// before epochs. Tokens are written the same way in both layouts.
+fn stored_in_previous_layout(key_source: Option<crate::KeySource>) {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    // Save the token as the previous version did: no entry in `kat_epochs`.
+    let kat = c.kat_mut(&"1".to_string());
+    kat.context_hash = Some([7u8; 32]);
+    kat.context_ref = Some("ref-old".to_string());
+    kat.context_version = 1;
+    c.kats.flush();
+    near_sdk::env::state_write(&previous_layout(c, key_source));
+}
+
+#[test]
+fn upgrading_from_before_key_epochs_keeps_tokens_and_starts_at_epoch_1() {
+    stored_in_previous_layout(Some(mpc_source()));
+    ctx("admin.near", NearToken::from_yoctonear(0));
+    let c = Contract::migrate([9u8; 32].into());
+    let view = c.get_collection();
+    assert_eq!(view.key_epoch, 1);
+    assert_eq!(view.key_source, mpc_source());
+    let kat = c.get_kat("1".to_string()).unwrap();
+    assert_eq!(kat.context_ref.as_deref(), Some("ref-old"));
+    assert_eq!(kat.key_epoch, 0, "saved under the key from before epochs");
+    assert_eq!(kat.owner_id, acc("alice.near"));
+}
+
+#[test]
+fn a_migrated_collection_lets_its_keeper_read_the_old_key() {
+    stored_in_previous_layout(Some(mpc_source()));
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let mut c = Contract::migrate([9u8; 32].into());
+    let _ = c.request_context_key(APP_KEY.to_string(), Some(0));
+    assert_eq!(crate::ckd::context_key_path(0), "nearkat/contexts/v1");
+    assert_eq!(crate::ckd::context_key_path(1), "nearkat/contexts/v1/1");
+}
+
+#[test]
+#[should_panic(expected = "this version takes keys only from NEAR's MPC network")]
+fn a_collection_without_a_key_source_cannot_take_this_version() {
+    stored_in_previous_layout(None);
+    ctx("admin.near", NearToken::from_yoctonear(0));
+    let _ = Contract::migrate([9u8; 32].into());
+}
+
+#[test]
+fn migrating_the_current_layout_keeps_it() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.rotate_context_key();
+    near_sdk::env::state_write(&c);
+    let c = Contract::migrate([9u8; 32].into());
+    assert_eq!(c.get_collection().key_epoch, 2);
 }

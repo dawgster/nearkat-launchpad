@@ -52,6 +52,11 @@ async fn setup() -> TestResult<Env> {
 
 /// Deploys the contract, with `tee` as the collection's TEE requirement.
 async fn setup_with(tee: Value) -> TestResult<Env> {
+    setup_with_code(wasm(), tee).await
+}
+
+/// Deploys `code` and initialises it as the collection.
+async fn setup_with_code(code: &[u8], tee: Value) -> TestResult<Env> {
     let names = ["nearkat", "admin", "keeper", "treasury", "alice", "bob"];
     let accounts = names
         .iter()
@@ -76,7 +81,7 @@ async fn setup_with(tee: Value) -> TestResult<Env> {
         bob: User::new(&accounts[5])?,
     };
     Contract::deploy(owner.id.clone())
-        .use_code(wasm().to_vec())
+        .use_code(code.to_vec())
         .with_init_call(
             "new",
             json!({
@@ -532,4 +537,70 @@ async fn setup_with_key_source() -> TestResult<Env> {
         .await?
         .assert_success();
     Ok(env)
+}
+
+/// The collection contract as of commit c74795b: the layout before key epochs.
+const PREVIOUS_LAYOUT_WASM: &[u8] = include_bytes!("fixtures/nearkat_nft-c74795b.wasm");
+
+#[tokio::test]
+async fn a_collection_from_before_key_epochs_upgrades_and_keeps_its_tokens() -> TestResult {
+    let env = setup_with_code(PREVIOUS_LAYOUT_WASM, Value::Null).await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
+    // Saved as the previous version did, without an epoch.
+    call(
+        &env,
+        &env.keeper,
+        "set_context",
+        json!({ "token_id": id, "context_hash": hash_b64(7), "context_ref": "ref-old", "version": "1" }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+
+    // The new code, published by hash; the admin moves the collection to it.
+    Contract::deploy_global_contract_code(wasm().to_vec())
+        .as_hash()
+        .with_signer(env.admin.id.clone(), env.admin.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+    let code_hash: near_sdk::json_types::Base58CryptoHash =
+        near_sdk::env::sha256_array(wasm()).into();
+    env.contract
+        .call_function("upgrade", json!({ "code_hash": code_hash }))
+        .transaction()
+        .deposit(YOCTO)
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(env.admin.id.clone(), env.admin.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .into_result()?;
+
+    let collection: Value = env
+        .contract
+        .call_function("get_collection", json!({}))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    assert_eq!(collection["key_epoch"], 1);
+    assert_eq!(collection["code_hash"], json!(code_hash));
+    let before = kat(&env, &id).await?;
+    assert_eq!(before["owner_id"], env.alice.id.as_str());
+    assert_eq!(before["context_ref"], "ref-old");
+    assert_eq!(
+        before["key_epoch"], 0,
+        "saved under the key from before epochs"
+    );
+
+    // The next save moves the token to epoch 1.
+    call(
+        &env,
+        &env.keeper,
+        "set_context",
+        json!({ "token_id": id, "context_hash": hash_b64(8), "context_ref": "ref-new", "version": "2", "key_epoch": 1 }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+    assert_eq!(kat(&env, &id).await?["key_epoch"], 1);
+    Ok(())
 }
