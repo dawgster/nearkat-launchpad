@@ -76,6 +76,19 @@ pub struct SealedPrompt {
     pub sealed_to: String,
 }
 
+/// Where the keys that encrypt this collection's contexts come from: NEAR's
+/// MPC network, through confidential key derivation (CKD). The key is bound
+/// to this collection's account, so no other account can obtain it, and the
+/// collection only requests it for its keeper. Fixed at deployment.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeySource {
+    /// The MPC signer contract, e.g. `v1.signer` on mainnet.
+    pub mpc_contract_id: AccountId,
+    /// Its CKD domain.
+    pub domain_id: u64,
+}
+
 /// Economic terms, fixed at deployment so buyers know them before minting.
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -165,6 +178,9 @@ pub struct Collection {
     /// Instructions only the TEE app can read, added after `prompt`. Needs `tee`.
     #[serde(default)]
     pub sealed_prompt: Option<SealedPrompt>,
+    /// Where context keys come from. None means the keeper's own keys.
+    #[serde(default)]
+    pub key_source: Option<KeySource>,
 }
 
 #[near(serializers = [json])]
@@ -182,6 +198,7 @@ pub struct CollectionView {
     pub sealed_prompt: Option<SealedPrompt>,
     /// Whether a key attested inside the required app is the one the prompt is sealed to.
     pub sealed_key_attested: bool,
+    pub key_source: Option<KeySource>,
     /// Tokens minted so far.
     pub minted: U64,
     /// The launchpad this collection came from, which approves its upgrades.

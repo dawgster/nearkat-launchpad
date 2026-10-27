@@ -59,6 +59,7 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         media_extension: String::new(),
         terms: crate::Terms::default(),
         sealed_prompt: None,
+        key_source: None,
     }
 }
 
@@ -966,4 +967,62 @@ fn only_the_admin_upgrades() {
     let mut c = deploy();
     ctx("alice.near", YOCTO);
     let _ = c.upgrade([1u8; 32].into());
+}
+
+// Context keys from NEAR's MPC network.
+
+fn with_key_source(tee: Option<crate::TeeRequirement>) -> Contract {
+    deploy_with(Collection {
+        tee,
+        key_source: Some(crate::KeySource {
+            mpc_contract_id: acc("v1.signer"),
+            domain_id: 2,
+        }),
+        ..collection("Lantern", "LNT", "")
+    })
+}
+
+const APP_KEY: &str = "bls12381g1:6qN4d5pLRWcd9RsE3YdQ1ShEJJcTyCa7hxVdT8RT6nUK";
+
+#[test]
+fn a_collection_publishes_where_its_keys_come_from() {
+    let c = with_key_source(None);
+    assert_eq!(
+        c.get_collection().key_source,
+        Some(crate::KeySource {
+            mpc_contract_id: acc("v1.signer"),
+            domain_id: 2
+        })
+    );
+}
+
+#[test]
+fn the_keeper_can_request_the_context_key() {
+    let mut c = with_key_source(None);
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_context_key(APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper can call this method")]
+fn nobody_else_can_request_the_context_key() {
+    let mut c = with_key_source(None);
+    ctx("alice.near", NearToken::from_yoctonear(0));
+    let _ = c.request_context_key(APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "only accepts keeper calls signed by an attested key")]
+fn a_tee_collection_releases_its_key_only_to_an_attested_keeper() {
+    let mut c = with_key_source(phala());
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_context_key(APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "This collection has no key source")]
+fn a_collection_without_a_key_source_has_no_key_to_request() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_context_key(APP_KEY.to_string());
 }

@@ -1,5 +1,6 @@
 mod admin;
 pub mod attestation;
+mod ckd;
 mod kat;
 mod keeper;
 mod nft;
@@ -17,8 +18,8 @@ use near_sdk::{
 };
 
 pub use kat::{
-    Collection, CollectionView, ConfigView, Kat, KatView, SealedPrompt, TeeRequirement, Terms,
-    DEFAULT_PROMPT, DEFAULT_STARTER,
+    Collection, CollectionView, ConfigView, Kat, KatView, KeySource, SealedPrompt, TeeRequirement,
+    Terms, DEFAULT_PROMPT, DEFAULT_STARTER,
 };
 use kat::{MAX_PROMPT_LEN, MAX_SEALED_PROMPT_LEN, MAX_STARTER_LEN};
 pub use payout::Payout;
@@ -81,6 +82,8 @@ pub struct Contract {
     factory_id: Option<AccountId>,
     /// The published code this runs, when known.
     code_hash: Option<CryptoHash>,
+    /// Where context keys come from. Fixed at deployment.
+    key_source: Option<KeySource>,
 }
 
 #[near]
@@ -105,6 +108,7 @@ impl Contract {
             media_extension,
             terms,
             sealed_prompt,
+            key_source,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -195,6 +199,7 @@ impl Contract {
             sealed_key_attested: false,
             factory_id,
             code_hash: code_hash.map(Into::into),
+            key_source,
         }
     }
 
@@ -283,6 +288,7 @@ impl Contract {
             terms: self.terms.clone(),
             sealed_prompt: self.sealed_prompt.clone(),
             sealed_key_attested: self.sealed_key_attested,
+            key_source: self.key_source.clone(),
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),

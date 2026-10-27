@@ -75,7 +75,7 @@ impl Contract {
 }
 
 impl Contract {
-    fn assert_keeper(&self) {
+    pub(crate) fn assert_keeper(&self) {
         require!(
             env::predecessor_account_id() == self.keeper_id,
             "Only the keeper can call this method"

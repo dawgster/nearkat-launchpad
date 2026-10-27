@@ -407,3 +407,128 @@ async fn a_real_tdx_quote_verifies_on_chain_within_the_gas_limit() -> TestResult
     assert!(burnt.as_tgas() < 250, "{} Tgas", burnt.as_tgas());
     Ok(())
 }
+
+fn mock_mpc_wasm() -> Vec<u8> {
+    let artifact = cargo_near_build::build(
+        cargo_near_build::BuildOpts::builder()
+            .manifest_path("../mock-mpc/Cargo.toml")
+            .no_abi(true)
+            .build(),
+    )
+    .expect("mock MPC build failed");
+    std::fs::read(artifact.path).expect("cannot read built wasm")
+}
+
+/// The keeper asks the collection for its context key; the collection asks
+/// the MPC contract, which answers with the key encrypted to the keeper's
+/// throwaway key. Only the keeper may ask.
+#[tokio::test]
+async fn the_keeper_gets_the_context_key_from_the_mpc_network_through_the_collection() -> TestResult
+{
+    let env = setup_with_key_source().await?;
+    // The BLS12-381 G1 generator, compressed: a valid point anyone can use for a test.
+    let generator = hex::decode(
+        "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb",
+    )?;
+    let app_key = format!("bls12381g1:{}", bs58::encode(generator).into_string());
+    let app_key = app_key.as_str();
+
+    // Anyone else is refused before the MPC network is asked.
+    let refused = call(
+        &env,
+        &env.alice,
+        "request_context_key",
+        json!({ "app_public_key": app_key }),
+        NearToken::from_yoctonear(0),
+    )
+    .await?;
+    assert!(refused.unwrap_err().contains("Only the keeper"));
+
+    let outcome = env
+        .contract
+        .call_function("request_context_key", json!({ "app_public_key": app_key }))
+        .transaction()
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(env.keeper.id.clone(), env.keeper.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    let near_api::types::transaction::result::TransactionResult::Full(result) = &outcome else {
+        return Err("the transaction did not finish".into());
+    };
+    eprintln!(
+        "request_context_key burnt {} Tgas",
+        result.total_gas_burnt.as_tgas()
+    );
+    let response: Value = outcome.into_result()?.json()?;
+    assert!(response["big_y"]
+        .as_str()
+        .unwrap()
+        .starts_with("bls12381g1:"));
+    assert!(response["big_c"]
+        .as_str()
+        .unwrap()
+        .starts_with("bls12381g1:"));
+    Ok(())
+}
+
+async fn setup_with_key_source() -> TestResult<Env> {
+    let mpc = GenesisAccount::generate_with_name("mpc".parse()?);
+    let names = ["nearkat", "admin", "keeper", "treasury", "alice", "bob"];
+    let mut accounts = names
+        .iter()
+        .map(|name| Ok(GenesisAccount::generate_with_name(name.parse()?)))
+        .collect::<TestResult<Vec<_>>>()?;
+    accounts.push(mpc.clone());
+    let sandbox = Sandbox::start_sandbox_with_config(SandboxConfig {
+        additional_accounts: accounts.clone(),
+        ..Default::default()
+    })
+    .await?;
+    let network = NetworkConfig::from_rpc_url("sandbox", sandbox.rpc_addr.parse()?);
+    let mpc_user = User::new(&mpc)?;
+    Contract::deploy(mpc_user.id.clone())
+        .use_code(mock_mpc_wasm())
+        .with_init_call(
+            "new",
+            json!({ "master_secret": "11".repeat(32), "domain_id": 2 }),
+        )?
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(mpc_user.signer.clone())
+        .send_to(&network)
+        .await?
+        .assert_success();
+
+    let owner = User::new(&accounts[0])?;
+    let env = Env {
+        _sandbox: sandbox,
+        network,
+        contract: Contract(owner.id.clone()),
+        admin: User::new(&accounts[1])?,
+        keeper: User::new(&accounts[2])?,
+        treasury: User::new(&accounts[3])?,
+        alice: User::new(&accounts[4])?,
+        bob: User::new(&accounts[5])?,
+    };
+    Contract::deploy(owner.id.clone())
+        .use_code(wasm().to_vec())
+        .with_init_call(
+            "new",
+            json!({
+                "admin_id": env.admin.id,
+                "keeper_id": env.keeper.id,
+                "treasury_id": env.treasury.id,
+                "mint_price": PRICE,
+                "collection": {
+                    "name": "Nearkat",
+                    "symbol": "KAT",
+                    "base_uri": "",
+                    "key_source": { "mpc_contract_id": mpc_user.id, "domain_id": 2 },
+                },
+            }),
+        )?
+        .with_signer(owner.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+    Ok(env)
+}

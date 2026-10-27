@@ -63,6 +63,16 @@ pub struct CollectionArgs {
     pub sealed_prompt: Option<near_sdk::serde_json::Value>,
 }
 
+/// Where every launched collection's context keys come from: NEAR's MPC
+/// network. Set by the launchpad, never by a creator, who could otherwise
+/// name an MPC contract they control and read every context.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeySource {
+    pub mpc_contract_id: AccountId,
+    pub domain_id: u64,
+}
+
 #[near(serializers = [json])]
 pub struct LaunchArgs {
     /// The collection's account is `<slug>.<launchpad>`.
@@ -107,6 +117,7 @@ pub struct LaunchpadConfig {
     /// Moved to each new collection's account, for its own storage.
     pub collection_funding: NearToken,
     pub fees_accrued: NearToken,
+    pub key_source: Option<KeySource>,
 }
 
 #[derive(PanicOnDefault)]
@@ -124,6 +135,7 @@ pub struct Launchpad {
     /// Versions of the collection code that collections may run. The current
     /// launch version is always one.
     approved: IterableSet<CryptoHash>,
+    key_source: Option<KeySource>,
 }
 
 #[near]
@@ -145,6 +157,7 @@ impl Launchpad {
             collections: IterableMap::new(StorageKey::Collections),
             reserved: LookupSet::new(StorageKey::Reserved),
             approved: IterableSet::new(StorageKey::Approved),
+            key_source: None,
         }
     }
 
@@ -192,7 +205,7 @@ impl Launchpad {
             "keeper_id": keeper_id,
             "treasury_id": creator_id,
             "mint_price": args.mint_price,
-            "collection": args.collection,
+            "collection": with_key_source(&args.collection, self.key_source.as_ref()),
             "code_hash": Base58CryptoHash::from(code_hash),
         });
         Promise::new(account_id.clone())
@@ -293,6 +306,7 @@ impl Launchpad {
             launch_fee: self.launch_fee,
             collection_funding: self.collection_funding,
             fees_accrued: self.fees_accrued,
+            key_source: self.key_source.clone(),
         }
     }
 
@@ -310,6 +324,14 @@ impl Launchpad {
     /// Lets collections move to this version without making it the one new
     /// launches use. Only approve code that keeps every promise a collection
     /// makes to its buyers.
+    /// Sets where the context keys of collections launched from now on come
+    /// from. Existing collections keep theirs.
+    #[payable]
+    pub fn set_key_source(&mut self, key_source: Option<KeySource>) {
+        self.assert_admin();
+        self.key_source = key_source;
+    }
+
     #[payable]
     pub fn approve_code_hash(&mut self, code_hash: Base58CryptoHash) {
         self.assert_admin();
@@ -405,4 +427,19 @@ impl Launchpad {
             "Only the admin can call this method"
         );
     }
+}
+
+/// The creator's choices, with the launchpad's key source added. A creator
+/// can't set it: `CollectionArgs` has no such field, and it is added here.
+fn with_key_source(
+    collection: &CollectionArgs,
+    key_source: Option<&KeySource>,
+) -> near_sdk::serde_json::Value {
+    let mut value = near_sdk::serde_json::to_value(collection)
+        .unwrap_or_else(|_| env::panic_str("Collection arguments can't be encoded"));
+    if let Some(source) = key_source {
+        value["key_source"] = near_sdk::serde_json::to_value(source)
+            .unwrap_or_else(|_| env::panic_str("Key source can't be encoded"));
+    }
+    value
 }

@@ -185,6 +185,7 @@ fn tee_collection() -> Contract {
             media_extension: String::new(),
             terms: crate::Terms::default(),
             sealed_prompt: None,
+            key_source: None,
         },
         None,
     );
@@ -267,6 +268,7 @@ fn registration_needs_a_tee_requirement() {
             media_extension: String::new(),
             terms: crate::Terms::default(),
             sealed_prompt: None,
+            key_source: None,
         },
         None,
     );
