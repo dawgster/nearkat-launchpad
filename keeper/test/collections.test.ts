@@ -246,6 +246,15 @@ describe("Collections, context keys from NEAR's MPC network", () => {
     expect((await kats?.getContext("alice.near", "1"))?.personality).toBe("You are rotated.");
   });
 
+  test("stops serving a collection that names another keeper", async () => {
+    const { collections, chainFor } = setup();
+    await collections.add("lantern.near");
+    chainFor("lantern.near").keeperId = "other-keeper.near";
+    await collections.recheck();
+    expect(collections.get("lantern.near")).toBeUndefined();
+    expect(collections.waiting()[0]?.reason).toMatch(/now names other-keeper.near/);
+  });
+
   test("waits on a collection whose contract has no key source", async () => {
     const { collections, chainFor } = setup();
     const { key_source: _, ...old } = FAKE_COLLECTION;

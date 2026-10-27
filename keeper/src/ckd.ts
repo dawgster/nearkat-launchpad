@@ -24,7 +24,12 @@ export interface KeySource {
 /** The derivation path prefix the collection contract requests; the epoch follows it. Must match the contract. */
 export const CONTEXT_KEY_PATH = "nearkat/contexts/v1";
 
-export const contextKeyPath = (epoch: number) => `${CONTEXT_KEY_PATH}/${epoch}`;
+/** Epoch 0 is the key from before epochs existed: the bare path. */
+export const contextKeyPath = (epoch: number) =>
+  epoch === 0 ? CONTEXT_KEY_PATH : `${CONTEXT_KEY_PATH}/${epoch}`;
+
+/** How long a failed key request is remembered before it is tried again. */
+const RETRY_FAILED_KEY_MS = 30_000;
 const NEAR_CKD_DOMAIN = "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_";
 const APP_ID_DERIVATION_PREFIX = "near-mpc v0.1.0 app_id derivation:";
 
@@ -137,18 +142,28 @@ export class MpcKeyring implements Keyring {
   readonly #collectionId: string;
   readonly #source: KeySource;
   readonly #chain: KeyChain;
+  readonly #now: () => number;
   readonly #roots = new Map<number, Promise<Buffer>>();
+  /** Requests that failed, so a failing epoch doesn't cost a paid request on every read. */
+  readonly #failed = new Map<number, { error: unknown; at: number }>();
   #epoch: Promise<number> | null = null;
+  /** The highest epoch seen. Epochs only move forward on-chain, so neither may this. */
+  #highest = 0;
 
-  constructor(collectionId: string, source: KeySource, chain: KeyChain) {
+  constructor(collectionId: string, source: KeySource, chain: KeyChain, now = Date.now) {
     this.#collectionId = collectionId;
     this.#source = source;
     this.#chain = chain;
+    this.#now = now;
   }
 
   currentEpoch(): Promise<number> {
     if (!this.#epoch) {
-      const epoch = this.#chain.getKeyEpoch();
+      const epoch = this.#chain.getKeyEpoch().then((seen) => {
+        // A view can trail the contract by a block or two.
+        this.#highest = Math.max(this.#highest, seen);
+        return this.#highest;
+      });
       this.#epoch = epoch;
       epoch.catch(() => {
         if (this.#epoch === epoch) {
@@ -160,12 +175,18 @@ export class MpcKeyring implements Keyring {
   }
 
   refresh(epoch?: number): void {
-    // The contract's own answer beats a view, which may trail it by a block or two.
-    this.#epoch = epoch === undefined ? null : Promise.resolve(epoch);
+    if (epoch === undefined) {
+      this.#epoch = null;
+    } else if (epoch > this.#highest) {
+      // The contract's own answer beats a view. A lower one comes from a
+      // refusal that raced a newer one, and is ignored.
+      this.#highest = epoch;
+      this.#epoch = Promise.resolve(epoch);
+    }
   }
 
   async katKey(tokenId: string, epoch: number): Promise<Buffer> {
-    if (!Number.isInteger(epoch) || epoch < 1) {
+    if (!Number.isInteger(epoch) || epoch < 0) {
       throw new Error(`No context key for epoch ${epoch}`);
     }
     return Buffer.from(
@@ -179,11 +200,19 @@ export class MpcKeyring implements Keyring {
   }
 
   #root(epoch: number): Promise<Buffer> {
+    const failed = this.#failed.get(epoch);
+    if (failed && this.#now() - failed.at < RETRY_FAILED_KEY_MS) {
+      return Promise.reject(failed.error);
+    }
     let root = this.#roots.get(epoch);
     if (!root) {
       root = fetchContextRoot(this.#collectionId, this.#source, this.#chain, epoch);
       this.#roots.set(epoch, root);
-      root.catch(() => this.#roots.delete(epoch));
+      this.#failed.delete(epoch);
+      root.catch((error) => {
+        this.#roots.delete(epoch);
+        this.#failed.set(epoch, { error, at: this.#now() });
+      });
     }
     return root;
   }

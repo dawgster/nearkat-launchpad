@@ -18,6 +18,8 @@ const SAVE_ATTEMPTS = 3;
 /** Unsaved messages kept per kat; the oldest are dropped beyond this. */
 const MAX_SESSION_MESSAGES = 40;
 const MAX_SUMMARY_CHARS = 2000;
+/** How many earlier replies a new one is checked together with for leaks. */
+const LEAK_WINDOW = 6;
 
 /** An evolved character description is cut to this length. */
 const MAX_CHARACTER_CHARS = 2000;
@@ -204,10 +206,15 @@ export class KatService {
         throw new HttpError(403, "not_owner", `Only the owner of kat ${tokenId} can do this`);
       }
       const persona = await this.#collection();
+      // Checked with the recent replies, so a quote fed out a few words at a time is caught too.
+      const recent = session.messages
+        .filter((message) => message.role === "assistant")
+        .slice(-LEAK_WINDOW)
+        .map((message) => message.content);
       const withheld =
         persona.secret_prompt !== undefined &&
         leaksSecret(
-          result.reply,
+          [...recent, result.reply].join("\n"),
           promptFor({ ...persona, prompt: persona.secret_prompt }, tokenId),
         );
       if (withheld) {

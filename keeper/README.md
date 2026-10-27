@@ -101,12 +101,19 @@ first run downloads a NEAR sandbox binary.
   corrupting state, but users would see refused saves.
 - Unsettled charges are journaled to `METER_JOURNAL` and settled on SIGTERM.
   Keep that file across restarts.
-- Chat is limited per account (20 messages at once, then one every 3 s) and
-  sign-in per client (30, then one every 2 s). Behind a reverse proxy, set
-  `TRUST_PROXY=true` so clients are told apart by `X-Forwarded-For`.
-- A reply that quotes a collection's secret instructions (any six words in a
-  row) is replaced before the owner or the conversation sees it, and logged.
-  Paraphrase still gets through.
+- Chat is limited per account (20 messages at once, then one every 3 s),
+  reading minds per account (30, then one a second) and sign-in per client
+  (30, then one every 2 s). Behind one reverse proxy, set `TRUST_PROXY=true`
+  so clients are told apart by the address the proxy appended to
+  `X-Forwarded-For`. The limiter keeps at most 50,000 clients, dropping the
+  least recently seen.
+- A reply that quotes a collection's secret instructions is replaced before
+  the owner or the conversation sees it, and logged. It is checked together
+  with the last six replies, by word runs (six in a row) and by letters (24
+  in a row, ignoring spaces and punctuation). Paraphrase still gets through.
+- A failed key request is not retried for 30 seconds, since each is a paid
+  transaction. A collection that names another keeper is dropped on the next
+  discovery pass.
 - `npm run live-check` checks the live pieces: the MPC contract's CKD
   domain and key, a collection's key source, a real key request, and a
   FastFS round trip. Set `NEAR_NETWORK`, and for the collection steps

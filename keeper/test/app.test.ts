@@ -12,7 +12,10 @@ import { FAKE_COLLECTION, FakeChain, FakeInference, keyringFor, NEAR } from "./f
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 
-async function setup(limits?: { chat: RateLimiter; auth: RateLimiter }) {
+async function setup(
+  limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter },
+  trustProxy = false,
+) {
   const chain = new FakeChain();
   const inference = new FakeInference();
   const kats = new KatService({
@@ -42,6 +45,7 @@ async function setup(limits?: { chat: RateLimiter; auth: RateLimiter }) {
     webOrigins: ["http://localhost:3000", "http://localhost:3001"],
     homeContractId: "kats.near",
     limits,
+    trustProxy,
   });
   chain.mint("1", "alice.near", NEAR);
   await kats.wakeNew();
@@ -286,10 +290,52 @@ describe("export and limits", () => {
       chat: new RateLimiter({ burst: 100, refillMs: 1 }),
       auth: new RateLimiter({ burst: 2, refillMs: 60_000 }),
     });
-    const challenge = () => app.request("/auth/challenge", { method: "POST" });
+    const challenge = () =>
+      app.request("/auth/challenge", {
+        method: "POST",
+        headers: { origin: "http://localhost:3000" },
+      });
     expect((await challenge()).status).toBe(200);
+    // A preflight costs nothing.
+    await app.request("/auth/challenge", {
+      method: "OPTIONS",
+      headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" },
+    });
     expect((await challenge()).status).toBe(200);
-    expect((await challenge()).status).toBe(429);
+    const refused = await challenge();
+    expect(refused.status).toBe(429);
+    // The browser can read the refusal: it carries the CORS headers.
+    expect(refused.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+  });
+
+  test("behind a proxy, tells clients apart by the address the proxy added, not what they sent", async () => {
+    const { app } = await setup(
+      {
+        chat: new RateLimiter({ burst: 100, refillMs: 1 }),
+        auth: new RateLimiter({ burst: 1, refillMs: 60_000 }),
+      },
+      true,
+    );
+    const from = (forwarded: string) =>
+      app.request("/auth/challenge", {
+        method: "POST",
+        headers: { "x-forwarded-for": forwarded },
+      });
+    expect((await from("1.1.1.1, 203.0.113.9")).status).toBe(200);
+    // A made-up first entry doesn't buy a new bucket.
+    expect((await from("2.2.2.2, 203.0.113.9")).status).toBe(429);
+    expect((await from("203.0.113.10")).status).toBe(200);
+  });
+
+  test("limits how often an account reads minds", async () => {
+    const { app, signIn, as } = await setup({
+      chat: new RateLimiter({ burst: 100, refillMs: 1 }),
+      read: new RateLimiter({ burst: 1, refillMs: 60_000 }),
+      auth: new RateLimiter({ burst: 100, refillMs: 1 }),
+    });
+    const token = await signIn("alice.near");
+    expect((await app.request("/kats/1/context", as(token, undefined, "GET"))).status).toBe(200);
+    expect((await app.request("/kats/1/export", as(token, undefined, "GET"))).status).toBe(429);
   });
 });
 

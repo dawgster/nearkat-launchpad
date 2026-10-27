@@ -32,12 +32,16 @@ export interface AppOptions {
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
   /**
-   * Per-account limit on chat messages, and per-client limit on sign-in
-   * requests. Defaults: 20 messages at once, then one every 3 seconds; 30
-   * sign-in requests at once, then one every 2 seconds.
+   * Per-account limits on chat messages and on reading minds, and a
+   * per-client limit on sign-in requests. Defaults: 20 messages at once, then
+   * one every 3 seconds; 30 reads, then one a second; 30 sign-in requests,
+   * then one every 2 seconds.
    */
-  limits?: { chat: RateLimiter; auth: RateLimiter };
-  /** Behind a reverse proxy, the client is the first X-Forwarded-For address. */
+  limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter };
+  /**
+   * Behind one reverse proxy, the client is the address that proxy appended:
+   * the last in X-Forwarded-For. Earlier entries are whatever the client sent.
+   */
   trustProxy?: boolean;
 }
 
@@ -61,9 +65,10 @@ async function jsonBody(request: Request): Promise<Record<string, unknown>> {
 export function createApp(options: AppOptions): Hono<Env> {
   const { auth, kats } = options;
   const app = new Hono<Env>();
-  const limits = options.limits ?? {
-    chat: new RateLimiter({ burst: 20, refillMs: 3_000 }),
-    auth: new RateLimiter({ burst: 30, refillMs: 2_000 }),
+  const limits = {
+    chat: options.limits?.chat ?? new RateLimiter({ burst: 20, refillMs: 3_000 }),
+    read: options.limits?.read ?? new RateLimiter({ burst: 30, refillMs: 1_000 }),
+    auth: options.limits?.auth ?? new RateLimiter({ burst: 30, refillMs: 2_000 }),
   };
   const limit = (limiter: RateLimiter, key: string) => {
     const waitMs = limiter.take(key);
@@ -75,7 +80,7 @@ export function createApp(options: AppOptions): Hono<Env> {
   };
   const clientOf = (c: Context<Env>): string => {
     if (options.trustProxy) {
-      const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+      const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
       if (forwarded) {
         return forwarded;
       }
@@ -86,10 +91,6 @@ export function createApp(options: AppOptions): Hono<Env> {
       return "unknown";
     }
   };
-  app.use("/auth/*", async (c, next) => {
-    limit(limits.auth, clientOf(c));
-    await next();
-  });
 
   // Art is public, and fetched by wallets and marketplaces from anywhere;
   // everything else answers only the web app.
@@ -109,6 +110,15 @@ export function createApp(options: AppOptions): Hono<Env> {
       },
     }),
   );
+
+  // After CORS, so a refusal still carries the headers the browser needs to
+  // read it; preflights are free.
+  app.use("/auth/*", async (c, next) => {
+    if (c.req.method !== "OPTIONS") {
+      limit(limits.auth, clientOf(c));
+    }
+    await next();
+  });
 
   app.notFound((c) => c.json({ error: "not_found", message: "No such route" }, 404));
 
@@ -194,13 +204,15 @@ export function createApp(options: AppOptions): Hono<Env> {
   };
 
   for (const prefix of ["", "/c/:contract"]) {
-    app.get(`${prefix}/kats/:id/context`, async (c) =>
-      c.json(
+    app.get(`${prefix}/kats/:id/context`, async (c) => {
+      limit(limits.read, c.get("accountId"));
+      return c.json(
         await serving(c.req.param("contract")).getContext(c.get("accountId"), c.req.param("id")),
-      ),
-    );
+      );
+    });
 
     app.get(`${prefix}/kats/:id/export`, async (c) => {
+      limit(limits.read, c.get("accountId"));
       const mind = await serving(c.req.param("contract")).exportMind(
         c.get("accountId"),
         c.req.param("id"),

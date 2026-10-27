@@ -184,8 +184,8 @@ export class FakeChain implements Chain {
     if (this.ckdFailure) {
       throw new Error(this.ckdFailure);
     }
-    if (keyEpoch < 1 || keyEpoch > this.collection.key_epoch) {
-      throw new Error(`key_epoch must be 1 to ${this.collection.key_epoch}`);
+    if (keyEpoch < 0 || keyEpoch > this.collection.key_epoch) {
+      throw new Error(`key_epoch must be at most ${this.collection.key_epoch}`);
     }
     // What the MPC network computes: K = msk·H(pk ‖ app_id), ElGamal-encrypted to the app key.
     const G1 = bls.G1.Point;

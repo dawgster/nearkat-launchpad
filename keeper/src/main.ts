@@ -121,7 +121,9 @@ async function discover(): Promise<void> {
     }
   }
   // Collections that name another keeper are checked again on every pass, so
-  // one that switches to this keeper is picked up.
+  // one that switches to this keeper is picked up, and one that switches away
+  // is dropped.
+  await collections.recheck();
   await Promise.all([...ids].map((id) => collections.add(id)));
 }
 

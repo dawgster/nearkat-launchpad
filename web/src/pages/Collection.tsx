@@ -386,7 +386,9 @@ function KeeperPanel({
             onSubmit={(event) => {
               event.preventDefault();
               const id = newKeeper.trim();
-              if (id) {
+              if (id === keeperId) {
+                setOutcome(`${id} is already the keeper.`);
+              } else if (id) {
                 void run(
                   (contract) => contract.setKeeper(id),
                   `Handed to ${id}. Contexts saved from now on use key epoch ${(epoch ?? 1) + 1}.`,
@@ -426,8 +428,10 @@ function KeeperPanel({
             Rotate the key
           </button>
           <p className="text-xs text-mist">
-            Rotate if you suspect the keeper was compromised. Old contexts stay readable to the
-            current keeper; each token moves to the new key on its next save.
+            Rotating protects what is saved next if a context key leaked. The current keeper gets
+            the new key too, so if you don't trust the keeper itself, change keeper instead. Old
+            contexts stay readable to the current keeper; each token moves to the new key on its
+            next save.
           </p>
         </div>
       )}

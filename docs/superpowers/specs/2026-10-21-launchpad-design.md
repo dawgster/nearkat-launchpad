@@ -242,6 +242,19 @@ on the token (`get_kat().key_epoch`). The current keeper may request any
 epoch up to the current one, so it can read contexts saved before a
 rotation; each token moves to the new key on its next save.
 
+`rotate_context_key` alone doesn't lock anyone out, since the keeper it
+names can fetch the new key too. It protects what is saved next when a
+context key leaked but the keeper's signing keys didn't; a keeper that may be
+compromised is replaced with `set_keeper`, or for a TEE collection has its
+key revoked.
+
+Collections upgraded from the version before epochs keep their tokens: per
+token epochs live in their own map, a token missing there was saved under
+epoch 0 (the bare path `nearkat/contexts/v1`, which the keeper may still
+request), and `migrate` converts the old state. A collection whose keys came
+from its keeper's own secret can't take this version. A sandbox test upgrades
+a collection deployed with the previous version's wasm.
+
 What this buys: a keeper that is replaced, or whose attested key is revoked,
 can't get any key from then on, so it can't read anything saved after it
 left. What it doesn't: that keeper still knows the keys of the epochs it
@@ -288,5 +301,5 @@ transaction. `STORAGE=file` keeps contexts only on the keeper's disk.
   charges) lives in one process; it doesn't scale out yet.
 - **Archival reads.** Reading a context back without a gateway needs an
   archival RPC node; FastNear runs public ones, but they are rate limited.
-- **Migrations.** The upgrade path is in place; the first version that changes
-  the state layout has to write its conversion.
+- **Migrations.** Each version that changes the state layout converts the
+  previous one in `migrate`, tested against the previous version's real wasm.

@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 import {
   appId,
   CONTEXT_KEY_PATH,
+  contextKeyPath,
   contextRoot,
   fetchContextRoot,
   hashAppId,
@@ -115,15 +116,31 @@ describe("MpcKeyring", () => {
     expect(await a.katKey("1", 1)).not.toEqual(await b.katKey("1", 1));
   });
 
-  test("asks the network once per epoch, and again after a failure", async () => {
+  test("asks the network once per epoch, and after a failure waits before asking again", async () => {
     const chain = new FakeChain();
-    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    let now = 0;
+    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain, () => now);
     chain.ckdFailure = "MPC timed out";
     await expect(keyring.katKey("1", 1)).rejects.toThrow(/MPC timed out/);
     chain.ckdFailure = null;
+    // Each request is a paid transaction: a failure isn't retried on every read.
+    await expect(keyring.katKey("1", 1)).rejects.toThrow(/MPC timed out/);
+    expect(chain.ckdRequests).toBe(1);
+    now += 30_000;
     await keyring.katKey("1", 1);
     await keyring.katKey("2", 1);
     expect(chain.ckdRequests).toBe(2);
+  });
+
+  test("never moves its epoch backwards", async () => {
+    const chain = new FakeChain();
+    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    keyring.refresh(3);
+    keyring.refresh(2);
+    expect(await keyring.currentEpoch()).toBe(3);
+    // A view that trails the contract doesn't take it back either.
+    keyring.refresh();
+    expect(await keyring.currentEpoch()).toBe(3);
   });
 
   test("notices a new epoch only when told to", async () => {
@@ -136,10 +153,13 @@ describe("MpcKeyring", () => {
     expect(await keyring.currentEpoch()).toBe(2);
   });
 
-  test("has no key for epoch 0 or one that doesn't exist yet", async () => {
+  test("gets epoch 0, the key from before epochs, from the bare path; none for a future epoch", async () => {
     const chain = new FakeChain();
     const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
-    await expect(keyring.katKey("1", 0)).rejects.toThrow(/epoch 0/);
-    await expect(keyring.katKey("1", 2)).rejects.toThrow(/key_epoch must be 1 to 1/);
+    expect(contextKeyPath(0)).toBe(CONTEXT_KEY_PATH);
+    expect(contextKeyPath(1)).toBe(`${CONTEXT_KEY_PATH}/1`);
+    expect(await keyring.katKey("1", 0)).not.toEqual(await keyring.katKey("1", 1));
+    await expect(keyring.katKey("1", -1)).rejects.toThrow(/epoch -1/);
+    await expect(keyring.katKey("1", 2)).rejects.toThrow(/key_epoch must be at most 1/);
   });
 });

@@ -146,6 +146,25 @@ export class Collections {
     return true;
   }
 
+  /**
+   * Stops serving collections that have named another keeper since they were
+   * picked up. That keeper can't save or charge anything for them any more,
+   * and their contexts from now on use a key this one can't get.
+   */
+  async recheck(): Promise<void> {
+    for (const [contractId, served] of this.#served) {
+      try {
+        const keeperId = await served.chain.getKeeperId();
+        if (keeperId !== this.#o.keeperAccountId) {
+          this.#served.delete(contractId);
+          this.#wait(contractId, `it now names ${keeperId} as its keeper`);
+        }
+      } catch (error) {
+        this.#log(`Checking ${contractId}'s keeper failed: ${String(error)}`);
+      }
+    }
+  }
+
   /** Registers the keeper's key with a TEE collection. Returns why it failed, or null. */
   async #attest(chain: Chain): Promise<string | null> {
     try {

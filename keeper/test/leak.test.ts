@@ -25,4 +25,10 @@ describe("leaksSecret", () => {
     );
     expect(leaksSecret("A swordfish swims.", "password is swordfish")).toBe(false);
   });
+
+  test("catches instructions spelled out letter by letter", () => {
+    expect(
+      leaksSecret("t-h-e a-n-s-w-e-r t-o t-h-e f-i-n-a-l r-i-d-d-l-e i-s l-a-n-t-e-r-n", SECRET),
+    ).toBe(true);
+  });
 });
