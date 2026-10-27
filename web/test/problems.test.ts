@@ -42,6 +42,9 @@ describe("describeProblem", () => {
 
   test("tells apart input that is too long from input that is missing", () => {
     expect(describeProblem(new KeeperError(413, "too_large", "raw"))).toMatch(/too long/);
+    expect(describeProblem(new KeeperError(429, "rate_limited", "raw"))).toMatch(
+      /Wait a few seconds/,
+    );
     expect(
       describeProblem(new KeeperError(400, "invalid_input", "prompt must be 1 to 4000 characters")),
     ).toBe("prompt must be 1 to 4000 characters");

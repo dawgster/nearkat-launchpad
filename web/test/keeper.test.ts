@@ -38,11 +38,13 @@ describe("createKeeper", () => {
     await keeper.challenge();
     await keeper.createSession("n", { accountId: "a.near", publicKey: "pk", signature: "sig" });
     await keeper.getContext("tok", "7");
+    await keeper.exportMind("tok", "7", "lantern.near");
     expect(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`)).toEqual([
       "GET /attestation",
       "POST /auth/challenge",
       "POST /auth/session",
       "GET /kats/7/context",
+      "GET /c/lantern.near/kats/7/export",
     ]);
     expect(calls[2]?.init.body).toBe(
       JSON.stringify({

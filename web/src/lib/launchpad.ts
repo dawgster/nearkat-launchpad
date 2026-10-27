@@ -23,6 +23,8 @@ export interface CollectionView {
   code_hash: string | null;
   /** Where its context keys come from. Absent on older contracts. */
   key_source?: KeySource | null;
+  /** The key epoch new contexts are saved under. It moves on when the keeper changes. */
+  key_epoch?: number;
 }
 
 /** NEAR's MPC network, which derives a collection's context key for its account alone. */

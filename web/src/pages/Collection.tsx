@@ -177,6 +177,13 @@ export function Collection() {
               Everything here is fixed at launch.
             </p>
           </section>
+          <KeeperPanel
+            contractId={contractId}
+            collection={c}
+            adminId={s.admin_id}
+            keeperId={s.keeper_id}
+            onChange={() => void reloadCollection()}
+          />
           <Version contractId={contractId} collection={c} adminId={s.admin_id} />
         </div>
 
@@ -315,6 +322,124 @@ function Terms({ terms }: { terms: CollectionTerms }) {
  * versions its launchpad has approved. Upgrading keeps every token and its
  * mind; a launchpad only approves versions that keep the collection's promises.
  */
+/**
+ * Who keeps the tokens' minds, and the admin's controls over it: hand the
+ * collection to another keeper, or move to a new key epoch.
+ */
+function KeeperPanel({
+  contractId,
+  collection,
+  adminId,
+  keeperId,
+  onChange,
+}: {
+  contractId: string;
+  collection: CollectionView;
+  adminId: string;
+  keeperId: string;
+  onChange: () => void;
+}) {
+  const wallet = useWallet();
+  const [newKeeper, setNewKeeper] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const isAdmin = wallet.accountId === adminId && wallet.near !== null;
+  const epoch = collection.key_epoch;
+
+  async function run(action: (contract: KatContract) => Promise<void>, done: string) {
+    if (!wallet.near) {
+      return;
+    }
+    setBusy(true);
+    setOutcome(null);
+    try {
+      await action(new KatContract(wallet.near, contractId));
+      setOutcome(done);
+      onChange();
+    } catch (error) {
+      setOutcome(describeProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-8" aria-labelledby="keeper">
+      <h2 id="keeper" className="font-sans text-lg font-bold">
+        Keeper
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-mist">
+        Kept by <span className="font-mono text-cream">{keeperId}</span>
+        {epoch !== undefined && (
+          <>
+            , under key epoch <span className="text-cream">{epoch}</span>. The epoch moves on
+            whenever the keeper changes, so a keeper that is replaced can't read anything saved
+            after it left
+          </>
+        )}
+        .
+      </p>
+      {isAdmin && (
+        <div className="mt-3 space-y-3">
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const id = newKeeper.trim();
+              if (id) {
+                void run(
+                  (contract) => contract.setKeeper(id),
+                  `Handed to ${id}. Contexts saved from now on use key epoch ${(epoch ?? 1) + 1}.`,
+                );
+              }
+            }}
+          >
+            <label className="text-sm">
+              <span className="block text-mist">Hand the collection to another keeper</span>
+              <input
+                className="field mt-1 w-64 font-mono"
+                value={newKeeper}
+                onChange={(event) => setNewKeeper(event.target.value)}
+                placeholder="keeper account id"
+                aria-label="New keeper account"
+              />
+            </label>
+            <button
+              type="submit"
+              className="button button-quiet"
+              disabled={busy || !newKeeper.trim()}
+            >
+              Change keeper
+            </button>
+          </form>
+          <button
+            type="button"
+            className="button button-quiet"
+            disabled={busy}
+            onClick={() =>
+              void run(
+                (contract) => contract.rotateContextKey(),
+                `Moved to key epoch ${(epoch ?? 1) + 1}.`,
+              )
+            }
+          >
+            Rotate the key
+          </button>
+          <p className="text-xs text-mist">
+            Rotate if you suspect the keeper was compromised. Old contexts stay readable to the
+            current keeper; each token moves to the new key on its next save.
+          </p>
+        </div>
+      )}
+      {outcome && (
+        <p className="mt-2 text-sm" role="status">
+          {outcome}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Version({
   contractId,
   collection,

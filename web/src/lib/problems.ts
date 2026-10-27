@@ -25,6 +25,8 @@ export function describeProblem(error: unknown): string {
         return "The keeper doesn't know this kat. It may be watching a different contract.";
       case "too_large":
         return "That's too long. Keep it under 4,000 characters.";
+      case "rate_limited":
+        return "That's faster than the keeper allows. Wait a few seconds and send it again.";
       default:
         return error.message;
     }

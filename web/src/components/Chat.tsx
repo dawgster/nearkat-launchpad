@@ -6,6 +6,7 @@ import { describeProblem } from "../lib/problems.ts";
 interface Line {
   from: "you" | "kat";
   text: string;
+  withheld?: boolean;
 }
 
 export interface ChatProps {
@@ -55,7 +56,10 @@ export function Chat({
     setDraft("");
     try {
       const reply = await send(message);
-      setLines((current) => [...current, { from: "kat", text: reply.reply }]);
+      setLines((current) => [
+        ...current,
+        { from: "kat", text: reply.reply, withheld: reply.withheld === true },
+      ]);
       onReply(reply);
     } catch (error) {
       // The message was not answered, so it goes back into the box to resend.
@@ -117,6 +121,11 @@ export function Chat({
             >
               {line.text}
             </p>
+            {line.withheld && (
+              <p className="mt-1 text-xs text-mist">
+                The keeper held back a reply that quoted this collection's secret instructions.
+              </p>
+            )}
           </div>
         ))}
         {thinking && <p className="text-sm text-lamp">{katName} is thinking…</p>}

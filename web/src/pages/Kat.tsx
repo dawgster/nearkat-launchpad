@@ -158,6 +158,15 @@ function Den({
             about ten exchanges.
           </p>
         </section>
+        <ExportPanel
+          noun={scope.noun}
+          download={async () => {
+            const mind = await session.call((token) =>
+              keeper.exportMind(token, tokenId, scope.keeperCollection),
+            );
+            saveJson(`${scope.contractId}-${tokenId}-mind.json`, mind);
+          }}
+        />
         <FundPanel
           noun={scope.noun}
           balance={balance}
@@ -187,6 +196,60 @@ function Den({
         />
       </aside>
     </div>
+  );
+}
+
+/** Lets the browser save a JSON document as a file. */
+function saveJson(filename: string, data: unknown): void {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** The owner's copy of the mind: theirs to keep, checkable against the chain. */
+function ExportPanel({ noun, download }: { noun: string; download: () => Promise<void> }) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | string>("idle");
+  return (
+    <section aria-labelledby="export">
+      <h2 id="export" className="font-sans text-lg font-bold">
+        Keep a copy
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-mist">
+        Download this {noun}'s mind with the on-chain record that proves it is the one the contract
+        holds. It's yours to keep, whatever happens to this keeper.
+      </p>
+      <button
+        type="button"
+        className="button button-quiet mt-3"
+        disabled={state === "busy"}
+        onClick={async () => {
+          setState("busy");
+          try {
+            await download();
+            setState("done");
+          } catch (error) {
+            setState(describeProblem(error));
+          }
+        }}
+      >
+        {state === "busy" ? "Preparing…" : "Download its mind"}
+      </button>
+      {state === "done" && (
+        <p className="mt-2 text-sm text-glow" role="status">
+          Downloaded.
+        </p>
+      )}
+      {state !== "idle" && state !== "busy" && state !== "done" && (
+        <p className="mt-2 text-sm text-alarm" role="alert">
+          {state}
+        </p>
+      )}
+    </section>
   );
 }
 

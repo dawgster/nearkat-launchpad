@@ -64,7 +64,7 @@ function safeHash(compute: () => string): string | null {
 }
 
 /** Where the encrypted mind is kept, and where anyone can fetch it. */
-function Stored({ location }: { location: ContextLocation }) {
+function Stored({ location, keyEpoch }: { location: ContextLocation; keyEpoch?: number }) {
   if (location.kind === "keeper") {
     return <p>The encrypted mind is kept by the keeper.</p>;
   }
@@ -83,7 +83,14 @@ function Stored({ location }: { location: ContextLocation }) {
           )
         </>
       ) : null}
-      . Anyone can fetch it; only the key opens it.
+      . Anyone can fetch it; only the key opens it
+      {keyEpoch ? (
+        <>
+          : this collection's key for epoch {keyEpoch}, which NEAR's MPC network gives only to the
+          keeper the contract names
+        </>
+      ) : null}
+      .
     </p>
   );
 }
@@ -204,6 +211,7 @@ export function Verify() {
               </p>
               <Stored
                 location={contextLocation(kat.context_ref, scope.contractId, config.networkId)}
+                keyEpoch={kat.key_epoch}
               />
             </>
           ) : (

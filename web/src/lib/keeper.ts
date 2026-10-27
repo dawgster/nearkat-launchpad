@@ -28,6 +28,17 @@ export interface ChatReply {
   verification: Verification;
   /** The kat's balance in yoctoNEAR after this message. */
   balance: string;
+  /** Set when the model's reply quoted the collection's secret instructions and was replaced. */
+  withheld?: boolean;
+}
+
+/** A token's mind as its owner downloads it, with the on-chain record that proves it. */
+export interface MindExport {
+  format: "nearkat-mind/1";
+  collection: string | null;
+  token_id: string;
+  context: ContextDoc;
+  record: { context_hash: string; context_ref: string; version: number; key_epoch: number };
 }
 
 export interface Session {
@@ -81,6 +92,7 @@ export interface Keeper {
   /** `collection` is the contract of a launched collection; omitted for the home one. */
   getContext(token: string, tokenId: string, collection?: string): Promise<ContextDoc>;
   chat(token: string, tokenId: string, message: string, collection?: string): Promise<ChatReply>;
+  exportMind(token: string, tokenId: string, collection?: string): Promise<MindExport>;
 }
 
 export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): Keeper {
@@ -130,5 +142,7 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
       request("GET", `${kat(tokenId, collection)}/context`, { token }),
     chat: (token, tokenId, message, collection) =>
       request("POST", `${kat(tokenId, collection)}/chat`, { token, body: { message } }),
+    exportMind: (token, tokenId, collection) =>
+      request("GET", `${kat(tokenId, collection)}/export`, { token }),
   };
 }

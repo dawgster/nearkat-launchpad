@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { ALICE_URL, BOB_URL, KEEPER_URL } from "./global-setup.ts";
 
@@ -171,6 +172,31 @@ test("an owner talks to a token from a launched collection", async ({ page }) =>
   await expect(character).toContainText("The adventure has not started.", { timeout: 90_000 });
   // The keeper's price, raised to cover the creator's 20%.
   await expect(page.getByText("Each message costs 0.0025 NEAR")).toBeVisible();
+
+  // The owner can take the mind away, with the record that proves it.
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download its mind" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe(`lantern.${launchpad}-1-mind.json`);
+  const mind = JSON.parse(readFileSync((await file.path()) as string, "utf8"));
+  expect(mind).toMatchObject({
+    format: "nearkat-mind/1",
+    token_id: "1",
+    context: { personality: expect.stringContaining("The adventure has not started.") },
+    record: { version: 1, key_epoch: 1 },
+  });
+
+  // As the creator, rotate the collection's key. The token, saved under the
+  // old key, still answers: the keeper fetches that epoch's key too.
+  await page.goto(`${ALICE_URL}/c/lantern.${launchpad}`);
+  const keeperPanel = page.getByRole("region", { name: "Keeper" });
+  await expect(keeperPanel).toContainText("key epoch 1");
+  await keeperPanel.getByRole("button", { name: "Rotate the key" }).click();
+  await expect(keeperPanel).toContainText("Moved to key epoch 2.", { timeout: 30_000 });
+  await expect(keeperPanel).toContainText("key epoch 2", { timeout: 30_000 });
+  await page.goto(`${ALICE_URL}/c/lantern.${launchpad}/kat/1`);
+  await expect(character).toContainText("The adventure has not started.", { timeout: 30_000 });
+
   await page.getByRole("button", { name: "Hello! Who are you?" }).click();
   await expect(page.getByText("Meow! You said: Hello! Who are you?")).toBeVisible();
   await expect(page.getByRole("region", { name: "Growth" })).toContainText("New");

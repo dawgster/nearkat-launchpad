@@ -8,6 +8,8 @@ export interface KatView {
   context_ref: string | null;
   context_version: string;
   balance: string;
+  /** The key epoch its context is encrypted under; 0 before it has one. Absent on older contracts. */
+  key_epoch?: number;
 }
 
 export interface ContractConfig {
@@ -115,6 +117,29 @@ export class KatContract {
       },
     );
     return returnValue<{ token_id: string }>(outcome)?.token_id ?? null;
+  }
+
+  /**
+   * Hands the collection to another keeper. Admin only. The contract moves
+   * to a new key epoch, so the old keeper can't read what is saved next.
+   */
+  async setKeeper(keeperId: string): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "set_keeper",
+      { keeper_id: keeperId },
+      { gas: "30 Tgas", attachedDeposit: yocto(1n) },
+    );
+  }
+
+  /** Moves to a new key epoch without changing keeper. Admin only. */
+  async rotateContextKey(): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "rotate_context_key",
+      {},
+      { gas: "30 Tgas", attachedDeposit: yocto(1n) },
+    );
   }
 
   /** Moves the collection to another published version. Admin only. */
