@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { createMiddleware } from "hono/factory";
@@ -7,6 +8,7 @@ import type { SignedMessage } from "near-kit";
 import type { Auth } from "./auth.ts";
 import { CorruptContextError, HttpError } from "./errors.ts";
 import type { KatService } from "./kats.ts";
+import { RateLimiter } from "./ratelimit.ts";
 
 export interface AppOptions {
   auth: Auth;
@@ -29,6 +31,14 @@ export interface AppOptions {
   info: { chat_price: string; save_price: string; model: string };
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
+  /**
+   * Per-account limit on chat messages, and per-client limit on sign-in
+   * requests. Defaults: 20 messages at once, then one every 3 seconds; 30
+   * sign-in requests at once, then one every 2 seconds.
+   */
+  limits?: { chat: RateLimiter; auth: RateLimiter };
+  /** Behind a reverse proxy, the client is the first X-Forwarded-For address. */
+  trustProxy?: boolean;
 }
 
 type Env = { Variables: { accountId: string } };
@@ -51,6 +61,35 @@ async function jsonBody(request: Request): Promise<Record<string, unknown>> {
 export function createApp(options: AppOptions): Hono<Env> {
   const { auth, kats } = options;
   const app = new Hono<Env>();
+  const limits = options.limits ?? {
+    chat: new RateLimiter({ burst: 20, refillMs: 3_000 }),
+    auth: new RateLimiter({ burst: 30, refillMs: 2_000 }),
+  };
+  const limit = (limiter: RateLimiter, key: string) => {
+    const waitMs = limiter.take(key);
+    if (waitMs > 0) {
+      throw new HttpError(429, "rate_limited", "Too many requests; slow down", {
+        retry_after_ms: waitMs,
+      });
+    }
+  };
+  const clientOf = (c: Context<Env>): string => {
+    if (options.trustProxy) {
+      const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+      if (forwarded) {
+        return forwarded;
+      }
+    }
+    try {
+      return getConnInfo(c).remote.address ?? "unknown";
+    } catch {
+      return "unknown";
+    }
+  };
+  app.use("/auth/*", async (c, next) => {
+    limit(limits.auth, clientOf(c));
+    await next();
+  });
 
   // Art is public, and fetched by wallets and marketplaces from anywhere;
   // everything else answers only the web app.
@@ -161,7 +200,20 @@ export function createApp(options: AppOptions): Hono<Env> {
       ),
     );
 
+    app.get(`${prefix}/kats/:id/export`, async (c) => {
+      const mind = await serving(c.req.param("contract")).exportMind(
+        c.get("accountId"),
+        c.req.param("id"),
+      );
+      return c.json(
+        { ...mind, collection: c.req.param("contract") ?? options.homeContractId ?? null },
+        200,
+        { "content-disposition": `attachment; filename="mind-${mind.token_id}.json"` },
+      );
+    });
+
     app.post(`${prefix}/kats/:id/chat`, async (c) => {
+      limit(limits.chat, c.get("accountId"));
       const body = await jsonBody(c.req.raw);
       return c.json(
         await serving(c.req.param("contract")).chat(

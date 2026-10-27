@@ -36,6 +36,8 @@ export interface Config {
   authRecipient: string;
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
+  /** Behind a reverse proxy: rate limits key on X-Forwarded-For. */
+  trustProxy: boolean;
   /** yoctoNEAR */
   chatPrice: bigint;
   /** yoctoNEAR */
@@ -137,6 +139,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
+    trustProxy: env.TRUST_PROXY === "true",
     // 0.002 NEAR and 0.05 NEAR
     chatPrice: yocto(env, "CHAT_PRICE_YOCTO", "2000000000000000000000"),
     savePrice: yocto(env, "SAVE_PRICE_YOCTO", "50000000000000000000000"),

@@ -191,6 +191,7 @@ const app = createApp({
     model: config.nearAiModel,
   },
   webOrigins: config.webOrigins,
+  trustProxy: config.trustProxy,
 });
 
 /** Runs a background job on an interval, never overlapping itself. */

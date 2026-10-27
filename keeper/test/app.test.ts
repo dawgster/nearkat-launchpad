@@ -6,12 +6,13 @@ import { STARTER_PERSONALITY } from "../src/context.ts";
 import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
+import { RateLimiter } from "../src/ratelimit.ts";
 import { MemoryStore } from "../src/store.ts";
 import { FAKE_COLLECTION, FakeChain, FakeInference, keyringFor, NEAR } from "./fakes.ts";
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 
-async function setup() {
+async function setup(limits?: { chat: RateLimiter; auth: RateLimiter }) {
   const chain = new FakeChain();
   const inference = new FakeInference();
   const kats = new KatService({
@@ -39,6 +40,8 @@ async function setup() {
       model: "m",
     },
     webOrigins: ["http://localhost:3000", "http://localhost:3001"],
+    homeContractId: "kats.near",
+    limits,
   });
   chain.mint("1", "alice.near", NEAR);
   await kats.wakeNew();
@@ -243,6 +246,50 @@ describe("keeper HTTP API", () => {
       headers: { origin: "https://evil.example" },
     });
     expect(other.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
+
+describe("export and limits", () => {
+  test("lets the owner download their token's mind with its on-chain record", async () => {
+    const { app, signIn, as } = await setup();
+    const token = await signIn("alice.near");
+    const response = await app.request("/kats/1/export", as(token, undefined, "GET"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("mind-1.json");
+    expect(await response.json()).toMatchObject({
+      format: "nearkat-mind/1",
+      collection: "kats.near",
+      token_id: "1",
+      context: { personality: STARTER_PERSONALITY },
+      record: { version: 1, key_epoch: 1 },
+    });
+    const mallory = await signIn("mallory.near");
+    expect((await app.request("/kats/1/export", as(mallory, undefined, "GET"))).status).toBe(403);
+  });
+
+  test("slows down an account that sends messages too fast", async () => {
+    const { app, signIn, as } = await setup({
+      chat: new RateLimiter({ burst: 2, refillMs: 60_000 }),
+      auth: new RateLimiter({ burst: 100, refillMs: 1 }),
+    });
+    const token = await signIn("alice.near");
+    for (const message of ["one", "two"]) {
+      expect((await app.request("/kats/1/chat", as(token, { message }))).status).toBe(200);
+    }
+    const third = await app.request("/kats/1/chat", as(token, { message: "three" }));
+    expect(third.status).toBe(429);
+    expect(await third.json()).toMatchObject({ error: "rate_limited" });
+  });
+
+  test("slows down sign-in requests from one client", async () => {
+    const { app } = await setup({
+      chat: new RateLimiter({ burst: 100, refillMs: 1 }),
+      auth: new RateLimiter({ burst: 2, refillMs: 60_000 }),
+    });
+    const challenge = () => app.request("/auth/challenge", { method: "POST" });
+    expect((await challenge()).status).toBe(200);
+    expect((await challenge()).status).toBe(200);
+    expect((await challenge()).status).toBe(429);
   });
 });
 

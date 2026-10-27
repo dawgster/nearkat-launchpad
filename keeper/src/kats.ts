@@ -4,6 +4,7 @@ import { DEFAULT_COLLECTION, type Persona, promptFor } from "./collection.ts";
 import { contextHash, newContext, openContext, sealContext } from "./context.ts";
 import { HttpError, InferenceError } from "./errors.ts";
 import type { ChatResult, Inference, Verification } from "./inference.ts";
+import { leaksSecret } from "./leak.ts";
 import type { Meter } from "./meter.ts";
 import type { ContextStore } from "./store.ts";
 import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
@@ -92,6 +93,22 @@ export interface ChatReply {
   verification: Verification;
   /** The kat's balance in yoctoNEAR after this message's charges. */
   balance: string;
+  /** Set when the model's reply quoted the secret instructions and was replaced. */
+  withheld?: true;
+}
+
+/** Said in place of a reply that quoted the collection's secret instructions. */
+export const WITHHELD_REPLY = "That's something I can't share.";
+
+/**
+ * A token's mind as its owner can take it away: the context, and the
+ * on-chain record that proves it is the one the collection holds.
+ */
+export interface MindExport {
+  format: "nearkat-mind/1";
+  token_id: string;
+  context: ContextDoc;
+  record: { context_hash: string; context_ref: string; version: number; key_epoch: number };
 }
 
 interface ChatSession {
@@ -138,6 +155,24 @@ export class KatService {
     });
   }
 
+  /** The token's mind and its on-chain record, for its owner to keep. */
+  async exportMind(accountId: string, tokenId: string): Promise<MindExport> {
+    return this.#locked(tokenId, async () => {
+      const owned = await this.#owned(accountId, tokenId);
+      return {
+        format: "nearkat-mind/1",
+        token_id: tokenId,
+        context: await this.#load(tokenId, owned),
+        record: {
+          context_hash: owned.hash,
+          context_ref: owned.ref,
+          version: owned.version,
+          key_epoch: owned.epoch,
+        },
+      };
+    });
+  }
+
   async chat(accountId: string, tokenId: string, message: string): Promise<ChatReply> {
     requireText(message, "message");
     return this.#locked(tokenId, async () => {
@@ -168,7 +203,18 @@ export class KatService {
         this.#sessions.delete(tokenId);
         throw new HttpError(403, "not_owner", `Only the owner of kat ${tokenId} can do this`);
       }
-      session.messages.push(user, { role: "assistant", content: result.reply });
+      const persona = await this.#collection();
+      const withheld =
+        persona.secret_prompt !== undefined &&
+        leaksSecret(
+          result.reply,
+          promptFor({ ...persona, prompt: persona.secret_prompt }, tokenId),
+        );
+      if (withheld) {
+        this.#log(`Withheld a reply from ${tokenId} that quoted its secret instructions`);
+      }
+      const reply = withheld ? WITHHELD_REPLY : result.reply;
+      session.messages.push(user, { role: "assistant", content: reply });
       session.lastActive = this.#now();
       this.#o.meter.charge(tokenId, this.#o.prices.chat);
 
@@ -179,9 +225,10 @@ export class KatService {
         session.messages.splice(0, session.messages.length - MAX_SESSION_MESSAGES);
       }
       return {
-        reply: result.reply,
+        reply,
         verification: result.verification,
         balance: this.#available(tokenId, owned.kat).toString(),
+        ...(withheld ? { withheld: true as const } : {}),
       };
     });
   }
