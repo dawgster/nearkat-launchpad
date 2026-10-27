@@ -7,7 +7,7 @@ import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { MemoryStore } from "../src/store.ts";
-import { FakeChain, FakeInference, NEAR } from "./fakes.ts";
+import { FAKE_COLLECTION, FakeChain, FakeInference, keyringFor, NEAR } from "./fakes.ts";
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 
@@ -17,7 +17,7 @@ async function setup() {
   const kats = new KatService({
     chain,
     store: new MemoryStore(),
-    keys,
+    keyring: keyringFor(chain),
     inference,
     meter: new Meter(chain),
     prices: { chat: 2n * 10n ** 21n, save: 5n * 10n ** 22n },
@@ -250,16 +250,17 @@ describe("collections served alongside the home one", () => {
   async function setupMany() {
     const home = await setup();
     const chain = new FakeChain();
+    chain.contractId = "tutor.near";
     chain.collection = {
+      ...FAKE_COLLECTION,
       name: "Magister",
       prompt: "You are {name} #{token_id}, a tutor.",
       starter: "No student yet.",
-      tee: null,
     };
     const tutor = new KatService({
       chain,
       store: new MemoryStore(),
-      keys: keys.forContract("tutor.near"),
+      keyring: keyringFor(chain),
       inference: home.inference,
       meter: new Meter(chain),
       prices: { chat: 2n * 10n ** 21n, save: 5n * 10n ** 22n },

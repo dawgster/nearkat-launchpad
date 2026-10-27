@@ -1,9 +1,9 @@
-import type { Chain } from "./chain.ts";
-import { type CollectionInfo, DEFAULT_COLLECTION, promptFor } from "./collection.ts";
+import { KeyEpochChanged, type TokenChain } from "./chain.ts";
+import type { Keyring } from "./ckd.ts";
+import { DEFAULT_COLLECTION, type Persona, promptFor } from "./collection.ts";
 import { contextHash, newContext, openContext, sealContext } from "./context.ts";
 import { HttpError, InferenceError } from "./errors.ts";
 import type { ChatResult, Inference, Verification } from "./inference.ts";
-import type { Keys } from "./keys.ts";
 import type { Meter } from "./meter.ts";
 import type { ContextStore } from "./store.ts";
 import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
@@ -62,9 +62,10 @@ export interface Prices {
 }
 
 export interface KatServiceOptions {
-  chain: Chain;
+  chain: TokenChain;
   store: ContextStore;
-  keys: Keys;
+  /** The collection's context keys, from NEAR's MPC network. */
+  keyring: Keyring;
   inference: Inference;
   meter: Meter;
   prices: Prices;
@@ -73,7 +74,7 @@ export interface KatServiceOptions {
    * loader is called before every use; it should cache, and may throw to
    * refuse service. Defaults to the original nearkat.
    */
-  collection?: CollectionInfo | (() => Promise<CollectionInfo>);
+  collection?: Persona | (() => Promise<Persona>);
   now?: () => number;
   /** Delay before retrying a failed save; multiplied by the attempt number. */
   retryDelayMs?: number;
@@ -103,21 +104,19 @@ interface SavedContext {
   version: number;
   hash: string;
   ref: string;
+  epoch: number;
 }
 
 /** A kat that is owned by the caller and has a context. */
-interface OwnedKat {
+interface OwnedKat extends SavedContext {
   kat: KatView;
-  version: number;
-  hash: string;
-  ref: string;
 }
 
 export class KatService {
   readonly #o: KatServiceOptions;
   readonly #now: () => number;
   readonly #log: (message: string) => void;
-  readonly #collection: () => Promise<CollectionInfo>;
+  readonly #collection: () => Promise<Persona>;
   readonly #sessions = new Map<string, ChatSession>();
   readonly #saved = new Map<string, SavedContext>();
   readonly #locks = new Map<string, Promise<unknown>>();
@@ -328,19 +327,55 @@ export class KatService {
     if (chainVersion === 0 || !kat.context_hash || !kat.context_ref) {
       return null;
     }
-    return { kat, version: chainVersion, hash: kat.context_hash, ref: kat.context_ref };
+    return {
+      kat,
+      version: chainVersion,
+      hash: kat.context_hash,
+      ref: kat.context_ref,
+      epoch: kat.key_epoch,
+    };
   }
 
   async #load(tokenId: string, owned: OwnedKat): Promise<ContextDoc> {
-    return openContext(this.#o.keys, tokenId, await this.#o.store.get(owned.ref), owned.hash);
+    const [key, blob] = await Promise.all([
+      this.#o.keyring.katKey(tokenId, owned.epoch),
+      this.#o.store.get(owned.ref),
+    ]);
+    return openContext(key, tokenId, blob, owned.hash);
   }
 
-  /** Uploads first; the on-chain hash only moves once the blob is stored. */
+  /**
+   * Encrypts under the collection's current key epoch and uploads first; the
+   * on-chain hash only moves once the blob is stored. If the collection moved
+   * to a new epoch meanwhile, the contract refuses it and it is saved again
+   * under the new key.
+   */
   async #save(doc: ContextDoc): Promise<void> {
     const hash = contextHash(doc).toString("base64");
-    const ref = await this.#retry(() => this.#o.store.put(sealContext(this.#o.keys, doc)));
-    await this.#retry(() => this.#o.chain.setContext(doc.token_id, hash, ref, doc.version));
-    this.#saved.set(doc.token_id, { version: doc.version, hash, ref });
+    for (let attempt = 1; ; attempt++) {
+      const epoch = await this.#o.keyring.currentEpoch();
+      const key = await this.#o.keyring.katKey(doc.token_id, epoch);
+      const ref = await this.#retry(() => this.#o.store.put(sealContext(key, doc)));
+      try {
+        await this.#retry(() =>
+          this.#o.chain.setContext({
+            tokenId: doc.token_id,
+            hashB64: hash,
+            ref,
+            version: doc.version,
+            keyEpoch: epoch,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof KeyEpochChanged && attempt < SAVE_ATTEMPTS) {
+          this.#o.keyring.refresh();
+          continue;
+        }
+        throw error;
+      }
+      this.#saved.set(doc.token_id, { version: doc.version, hash, ref, epoch });
+      return;
+    }
   }
 
   async #retry<T>(run: () => Promise<T>): Promise<T> {
@@ -348,7 +383,7 @@ export class KatService {
       try {
         return await run();
       } catch (error) {
-        if (attempt >= SAVE_ATTEMPTS) {
+        if (attempt >= SAVE_ATTEMPTS || error instanceof KeyEpochChanged) {
           throw error;
         }
         const delay = (this.#o.retryDelayMs ?? 500) * attempt;
@@ -400,7 +435,7 @@ export class KatService {
  * The collection's fixed prompt, then who this token has become. The prompt
  * frames the model; without a frame, hosted models answer as themselves.
  */
-function systemMessage(collection: CollectionInfo, doc: ContextDoc): ChatMessage {
+function systemMessage(collection: Persona, doc: ContextDoc): ChatMessage {
   const memory = doc.memory_summary
     ? `\n\nWhat you remember from earlier:\n${doc.memory_summary}`
     : "";
@@ -418,7 +453,7 @@ function systemMessage(collection: CollectionInfo, doc: ContextDoc): ChatMessage
  * can read. They go into conversations only, never into the update that
  * rewrites a token's character, which its owner can read.
  */
-function secretInstructions(collection: CollectionInfo, tokenId: string): string {
+function secretInstructions(collection: Persona, tokenId: string): string {
   if (!collection.secret_prompt) {
     return "";
   }

@@ -1,26 +1,31 @@
 import type { KeySource } from "./ckd.ts";
 
 /**
- * What a collection publishes on-chain about its tokens. The keeper builds
- * every prompt from it, so the same keeper code serves a talking meerkat, a
- * tutor or a game master.
+ * Who a collection's tokens are. The keeper builds every prompt from it, so
+ * the same keeper code serves a talking meerkat, a tutor or a game master.
  */
-export interface CollectionInfo {
+export interface Persona {
   name: string;
   /** Instructions shared by every token. `{name}` and `{token_id}` are filled in. */
   prompt: string;
   /** The context every token starts from. */
   starter: string;
+  /** The sealed prompt, opened by this keeper. Never leaves the keeper. */
+  secret_prompt?: string;
+}
+
+/** What a collection publishes on-chain about its tokens. */
+export interface CollectionInfo extends Persona {
   /** Where contexts may be opened, if the collection restricts it. */
   tee: TeeRequirement | null;
   /** Prices and the creator's share, as the contract publishes them. */
   terms?: Terms;
   /** Instructions only the TEE app can read, encrypted to its sealing key. */
   sealed_prompt?: { ciphertext: string; sealed_to: string } | null;
-  /** Where context keys come from: NEAR's MPC network. Null means the keeper's own. */
-  key_source?: KeySource | null;
-  /** The sealed prompt, opened by this keeper. Never leaves the keeper. */
-  secret_prompt?: string;
+  /** NEAR's MPC network, which derives the collection's context keys. */
+  key_source: KeySource;
+  /** The key epoch new contexts are saved under. */
+  key_epoch: number;
 }
 
 /** Amounts are yoctoNEAR strings. */
@@ -62,8 +67,8 @@ export function collectionPrices(
 
 export type TeeRequirement = { Phala: { app_id: string } };
 
-/** The original collection. Must match the contract's defaults. */
-export const DEFAULT_COLLECTION: CollectionInfo = {
+/** The original collection's persona. Must match the contract's defaults. */
+export const DEFAULT_COLLECTION: Persona = {
   name: "Nearkat",
   prompt:
     "You are {name} #{token_id}, a meerkat-like creature who lives in a burrow. " +
@@ -72,15 +77,14 @@ export const DEFAULT_COLLECTION: CollectionInfo = {
   starter:
     "You are a newly hatched nearkat: curious, playful and a little mischievous. " +
     "You do not know much about the world yet, and you are eager to learn from your owner.",
-  tee: null,
 };
 
 /** The collection prompt for one token. */
-export function promptFor(collection: CollectionInfo, tokenId: string): string {
+export function promptFor(collection: Persona, tokenId: string): string {
   return collection.prompt.replaceAll("{name}", collection.name).replaceAll("{token_id}", tokenId);
 }
 
 /** The Phala app a collection requires, or null. */
-export function requiredPhalaApp(collection: CollectionInfo): string | null {
+export function requiredPhalaApp(collection: Pick<CollectionInfo, "tee">): string | null {
   return collection.tee?.Phala?.app_id ?? null;
 }

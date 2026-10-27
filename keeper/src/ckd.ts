@@ -2,6 +2,7 @@ import { hkdfSync } from "node:crypto";
 import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
 import { sha3_256 } from "@noble/hashes/sha3.js";
 import { base58 } from "@scure/base";
+import type { KeyChain } from "./chain.ts";
 
 /**
  * Context keys from NEAR's MPC network (confidential key derivation, CKD).
@@ -20,8 +21,10 @@ export interface KeySource {
   domain_id: number;
 }
 
-/** The derivation path the collection contract requests. Must match the contract. */
+/** The derivation path prefix the collection contract requests; the epoch follows it. Must match the contract. */
 export const CONTEXT_KEY_PATH = "nearkat/contexts/v1";
+
+export const contextKeyPath = (epoch: number) => `${CONTEXT_KEY_PATH}/${epoch}`;
 const NEAR_CKD_DOMAIN = "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_";
 const APP_ID_DERIVATION_PREFIX = "near-mpc v0.1.0 app_id derivation:";
 
@@ -81,29 +84,93 @@ export function contextRoot(derivedKey: Uint8Array): Buffer {
   return Buffer.from(hkdfSync("sha256", derivedKey, "nearkat-ckd-v1", "nearkat/contexts", 32));
 }
 
-export interface CkdChain {
-  /** Asks the collection contract to fetch its context key, encrypted to `appPublicKey`. */
-  requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }>;
-  /** The MPC network's public key for a CKD domain, `bls12381g2:<base58>`. */
-  mpcPublicKey(source: KeySource): Promise<string>;
-}
-
-/** Fetches, decrypts and checks a collection's context root. */
+/** Fetches, decrypts and checks a collection's context root for one key epoch. */
 export async function fetchContextRoot(
   collectionId: string,
   source: KeySource,
-  chain: CkdChain,
+  chain: KeyChain,
+  epoch: number,
 ): Promise<Buffer> {
   const key = newAppKey();
   const [response, mpcPublicKey] = await Promise.all([
-    chain.requestContextKey(key.publicKey),
+    chain.requestContextKey(key.publicKey, epoch),
     chain.mpcPublicKey(source),
   ]);
   const derived = openResponse(
     response,
     key.secret,
     mpcPublicKey,
-    appId(collectionId, CONTEXT_KEY_PATH),
+    appId(collectionId, contextKeyPath(epoch)),
   );
   return contextRoot(derived);
+}
+
+/** A collection's context keys, by key epoch. */
+export interface Keyring {
+  /** The epoch new contexts are saved under. */
+  currentEpoch(): Promise<number>;
+  /** The AES-256-GCM key of one token's context under an epoch. */
+  katKey(tokenId: string, epoch: number): Promise<Buffer>;
+  /** Forgets the current epoch, once the collection has moved on. */
+  refresh(): void;
+}
+
+/**
+ * Context keys from NEAR's MPC network. Each epoch's root is fetched once,
+ * when first needed, and kept in memory only; a failed fetch is retried on
+ * the next use.
+ */
+export class MpcKeyring implements Keyring {
+  readonly #collectionId: string;
+  readonly #source: KeySource;
+  readonly #chain: KeyChain;
+  readonly #roots = new Map<number, Promise<Buffer>>();
+  #epoch: Promise<number> | null = null;
+
+  constructor(collectionId: string, source: KeySource, chain: KeyChain) {
+    this.#collectionId = collectionId;
+    this.#source = source;
+    this.#chain = chain;
+  }
+
+  currentEpoch(): Promise<number> {
+    if (!this.#epoch) {
+      const epoch = this.#chain.getKeyEpoch();
+      this.#epoch = epoch;
+      epoch.catch(() => {
+        if (this.#epoch === epoch) {
+          this.#epoch = null;
+        }
+      });
+    }
+    return this.#epoch;
+  }
+
+  refresh(): void {
+    this.#epoch = null;
+  }
+
+  async katKey(tokenId: string, epoch: number): Promise<Buffer> {
+    if (!Number.isInteger(epoch) || epoch < 1) {
+      throw new Error(`No context key for epoch ${epoch}`);
+    }
+    return Buffer.from(
+      hkdfSync("sha256", await this.#root(epoch), Buffer.alloc(0), `nearkat/kat/${tokenId}`, 32),
+    );
+  }
+
+  /** Fetches the current epoch's key, so a collection whose key can't be had isn't served. */
+  async ready(): Promise<void> {
+    await this.#root(await this.currentEpoch());
+  }
+
+  #root(epoch: number): Promise<Buffer> {
+    let root = this.#roots.get(epoch);
+    if (!root) {
+      root = fetchContextRoot(this.#collectionId, this.#source, this.#chain, epoch);
+      this.#roots.set(epoch, root);
+      root.catch(() => this.#roots.delete(epoch));
+    }
+    return root;
+  }
 }

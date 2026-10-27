@@ -121,7 +121,7 @@ export function reportDataFor(publicKey: string, sealPublicKeyHex: string): Buff
  * collection that names a Phala app is served only from inside that app.
  */
 export function teeMismatch(
-  collection: CollectionInfo,
+  collection: Pick<CollectionInfo, "tee">,
   runningAs: { mode: "local" } | { mode: "phala"; appId: string },
 ): string | null {
   const required = requiredPhalaApp(collection);

@@ -7,10 +7,9 @@ import {
   sealContext,
 } from "../src/context.ts";
 import { CorruptContextError } from "../src/errors.ts";
-import { keysFromRootSecret } from "../src/keys.ts";
 import type { ContextDoc } from "../src/types.ts";
 
-const keys = keysFromRootSecret(Buffer.alloc(32, 7));
+const keys = Buffer.alloc(32, 7);
 const doc: ContextDoc = {
   token_id: "1",
   version: 3,

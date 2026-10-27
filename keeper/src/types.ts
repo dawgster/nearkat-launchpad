@@ -5,6 +5,8 @@ export interface KatView {
   context_ref: string | null;
   context_version: string;
   balance: string;
+  /** The key epoch its context is encrypted under; 0 before it has one. */
+  key_epoch: number;
 }
 
 /** The plaintext context of one kat. Encrypted as a single blob. */

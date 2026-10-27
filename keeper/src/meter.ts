@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Chain } from "./chain.ts";
+import type { TokenChain } from "./chain.ts";
 
 /** The contract's gas limit allows about 500 items per call; stay well under it. */
 const MAX_BATCH_ITEMS = 200;
@@ -65,7 +65,7 @@ interface Batch {
 
 /** Accumulates per-kat charges and settles them on-chain in numbered batches. */
 export class Meter {
-  readonly #chain: Chain;
+  readonly #chain: TokenChain;
   readonly #journal: MeterJournal | undefined;
   readonly #log: (message: string) => void;
   readonly #pending = new Map<string, bigint>();
@@ -75,7 +75,7 @@ export class Meter {
   /** Kats put back by `#shrink`; skipped until the next flush so a flush always ends. */
   readonly #deferred = new Set<string>();
 
-  constructor(chain: Chain, options: MeterOptions = {}) {
+  constructor(chain: TokenChain, options: MeterOptions = {}) {
     this.#chain = chain;
     this.#journal = options.journal;
     this.#log = options.log ?? console.error;

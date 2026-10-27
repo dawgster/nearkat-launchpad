@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { DstackAgent, keyProof, phalaRootSecret, reportDataFor, teeMismatch } from "../src/tee.ts";
 
 const APP = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
-const phala = { ...DEFAULT_COLLECTION, tee: { Phala: { app_id: APP } } };
+const open = { tee: null };
+const phala = { tee: { Phala: { app_id: APP } } };
 
 describe("teeMismatch", () => {
   test("lets any keeper serve a collection without a requirement", () => {
-    expect(teeMismatch(DEFAULT_COLLECTION, { mode: "local" })).toBeNull();
-    expect(teeMismatch(DEFAULT_COLLECTION, { mode: "phala", appId: "ff" })).toBeNull();
+    expect(teeMismatch(open, { mode: "local" })).toBeNull();
+    expect(teeMismatch(open, { mode: "phala", appId: "ff" })).toBeNull();
   });
 
   test("refuses a local keeper for a collection that requires a Phala app", () => {

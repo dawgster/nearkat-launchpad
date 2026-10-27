@@ -2,14 +2,12 @@ import { describe, expect, test } from "vitest";
 import { contextHash, openContext, STARTER_PERSONALITY } from "../src/context.ts";
 import { CorruptContextError } from "../src/errors.ts";
 import { KatService } from "../src/kats.ts";
-import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { MemoryStore } from "../src/store.ts";
-import { FakeChain, FakeInference, NEAR } from "./fakes.ts";
+import { FakeChain, FakeInference, keyringFor, NEAR } from "./fakes.ts";
 
 const CHAT = 2n * 10n ** 21n;
 const SAVE = 5n * 10n ** 22n;
-const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 
 async function setup(balance: bigint = NEAR) {
   const chain = new FakeChain();
@@ -21,7 +19,7 @@ async function setup(balance: bigint = NEAR) {
   const kats = new KatService({
     chain,
     store,
-    keys,
+    keyring: keyringFor(chain),
     inference,
     meter,
     prices: { chat: CHAT, save: SAVE },
@@ -54,7 +52,8 @@ async function onChainContext(chain: FakeChain, store: MemoryStore, tokenId = "1
   if (!kat?.context_ref || !kat.context_hash) {
     throw new Error("kat has no context");
   }
-  return openContext(keys, tokenId, await store.get(kat.context_ref), kat.context_hash);
+  const key = await keyringFor(chain).katKey(tokenId, kat.key_epoch);
+  return openContext(key, tokenId, await store.get(kat.context_ref), kat.context_hash);
 }
 
 describe("wakeNew", () => {
@@ -595,7 +594,7 @@ describe("a launched collection", () => {
     const kats = new KatService({
       chain,
       store,
-      keys,
+      keyring: keyringFor(chain),
       inference,
       meter: new Meter(chain),
       prices: { chat: CHAT, save: SAVE },
@@ -647,7 +646,7 @@ describe("a collection with a sealed prompt", () => {
     const kats = new KatService({
       chain,
       store,
-      keys,
+      keyring: keyringFor(chain),
       inference,
       meter: new Meter(chain),
       prices: { chat: CHAT, save: SAVE },

@@ -6,9 +6,11 @@ import {
   CONTEXT_KEY_PATH,
   contextRoot,
   fetchContextRoot,
+  MpcKeyring,
   newAppKey,
   openResponse,
 } from "../src/ckd.ts";
+import { FakeChain, KEY_SOURCE } from "./fakes.ts";
 
 /** A response from the mock MPC contract's Rust implementation of the network's maths. */
 const vector = JSON.parse(
@@ -54,19 +56,66 @@ describe("CKD", () => {
     expect(newAppKey().publicKey).toMatch(/^bls12381g1:/);
   });
 
-  test("fetches a collection's root through the contract, the same every time", async () => {
-    // Plays the network with the vector's answer, re-encrypted to each request's key.
+  test("refuses an answer that isn't for this request's throwaway key", async () => {
+    // Replays the vector's answer to a request made with a different key.
     const chain = {
-      requestContextKey: async (appPublicKey: string) => {
-        expect(appPublicKey).toMatch(/^bls12381g1:/);
-        return response;
-      },
+      getKeyEpoch: async () => 1,
+      requestContextKey: async () => response,
       mpcPublicKey: async () => vector.mpc_public_key as string,
     };
-    // With a different throwaway key the vector can't be opened: the check catches it.
     await expect(
-      fetchContextRoot(vector.caller as string, { mpc_contract_id: "mpc", domain_id: 2 }, chain),
+      fetchContextRoot(vector.caller as string, { mpc_contract_id: "mpc", domain_id: 2 }, chain, 1),
     ).rejects.toThrow(/not a valid key/);
     expect(CONTEXT_KEY_PATH).toBe(vector.path);
+  });
+});
+
+describe("MpcKeyring", () => {
+  test("gives the same keys to every keeper of a collection, and different keys per epoch", async () => {
+    const chain = new FakeChain();
+    chain.rotate();
+    const a = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    const b = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    expect(await a.currentEpoch()).toBe(2);
+    expect(await a.katKey("1", 2)).toEqual(await b.katKey("1", 2));
+    expect(await a.katKey("1", 1)).not.toEqual(await a.katKey("1", 2));
+    expect(await a.katKey("1", 2)).not.toEqual(await a.katKey("2", 2));
+  });
+
+  test("gives another collection's tokens other keys", async () => {
+    const chain = new FakeChain();
+    const other = new FakeChain();
+    other.contractId = "other.near";
+    const a = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    const b = new MpcKeyring(other.contractId, KEY_SOURCE, other);
+    expect(await a.katKey("1", 1)).not.toEqual(await b.katKey("1", 1));
+  });
+
+  test("asks the network once per epoch, and again after a failure", async () => {
+    const chain = new FakeChain();
+    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    chain.ckdFailure = "MPC timed out";
+    await expect(keyring.katKey("1", 1)).rejects.toThrow(/MPC timed out/);
+    chain.ckdFailure = null;
+    await keyring.katKey("1", 1);
+    await keyring.katKey("2", 1);
+    expect(chain.ckdRequests).toBe(2);
+  });
+
+  test("notices a new epoch only when told to", async () => {
+    const chain = new FakeChain();
+    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    expect(await keyring.currentEpoch()).toBe(1);
+    chain.rotate();
+    expect(await keyring.currentEpoch()).toBe(1);
+    keyring.refresh();
+    expect(await keyring.currentEpoch()).toBe(2);
+  });
+
+  test("has no key for epoch 0 or one that doesn't exist yet", async () => {
+    const chain = new FakeChain();
+    const keyring = new MpcKeyring(chain.contractId, KEY_SOURCE, chain);
+    await expect(keyring.katKey("1", 0)).rejects.toThrow(/epoch 0/);
+    await expect(keyring.katKey("1", 2)).rejects.toThrow(/key_epoch must be 1 to 1/);
   });
 });

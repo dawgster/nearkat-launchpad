@@ -1,13 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { KeyProof } from "../src/chain.ts";
-import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { Collections } from "../src/collections.ts";
 import { KatService } from "../src/kats.ts";
-import { type Keys, keysFromRootSecret } from "../src/keys.ts";
+import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { sealTo } from "../src/sealing.ts";
 import { MemoryStore } from "../src/store.ts";
-import { FakeChain, FakeInference, NEAR } from "./fakes.ts";
+import { FAKE_COLLECTION, FakeChain, FakeInference, KEY_SOURCE, NEAR } from "./fakes.ts";
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 const APP = "0a1b2c";
@@ -21,7 +20,7 @@ const PROOF: KeyProof = {
 
 function setup(
   runningAs: { mode: "local" } | { mode: "phala"; appId: string } = { mode: "local" },
-  shared: { keys?: Keys; chains?: Map<string, FakeChain>; store?: MemoryStore } = {},
+  shared: { chains?: Map<string, FakeChain>; store?: MemoryStore } = {},
 ) {
   const chains = shared.chains ?? new Map<string, FakeChain>();
   const chainFor = (id: string) => {
@@ -43,13 +42,12 @@ function setup(
     chainFor,
     keeperPrices: { chat: 10n, save: 100n },
     sealing: keys.sealing(),
-    keys: shared.keys ?? keys,
-    build: (_contractId, chain, info, prices, collectionKeys) => {
+    build: (_contractId, chain, info, prices, keyring) => {
       const meter = new Meter(chain);
       const kats = new KatService({
         chain,
         store,
-        keys: collectionKeys,
+        keyring,
         inference,
         meter,
         prices,
@@ -68,7 +66,7 @@ describe("Collections", () => {
   test("serves collections that name this keeper, each with its own prompt", async () => {
     const { collections, chainFor, inference } = setup();
     chainFor("tutor.near").collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       name: "Magister",
       prompt: "You are {name} #{token_id}, a tutor.",
       starter: "No student yet.",
@@ -98,7 +96,7 @@ describe("Collections", () => {
       chainFor("b.near").kats.get("1")?.context_hash,
     );
     const a = await collections.get("a.near")?.kats.getContext("alice.near", "1");
-    expect(a?.personality).toBe(DEFAULT_COLLECTION.starter);
+    expect(a?.personality).toBe(FAKE_COLLECTION.starter);
   });
 
   test("waits on a collection that names another keeper, and picks it up once it switches", async () => {
@@ -120,7 +118,7 @@ describe("Collections", () => {
   test("refuses a TEE collection from a local keeper", async () => {
     const { collections, chainFor } = setup();
     chainFor("private.near").collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       tee: { Phala: { app_id: APP } },
     };
     expect(await collections.add("private.near")).toBe(false);
@@ -130,7 +128,7 @@ describe("Collections", () => {
   test("registers its attested key with a TEE collection before serving it", async () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     const chain = chainFor("private.near");
-    chain.collection = { ...DEFAULT_COLLECTION, tee: { Phala: { app_id: APP } } };
+    chain.collection = { ...FAKE_COLLECTION, tee: { Phala: { app_id: APP } } };
     expect(await collections.add("private.near")).toBe(true);
     expect(chain.proofs).toEqual([PROOF]);
   });
@@ -138,7 +136,7 @@ describe("Collections", () => {
   test("doesn't register again when the contract already accepts its key", async () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     const chain = chainFor("private.near");
-    chain.collection = { ...DEFAULT_COLLECTION, tee: { Phala: { app_id: APP } } };
+    chain.collection = { ...FAKE_COLLECTION, tee: { Phala: { app_id: APP } } };
     chain.attested.add(keys.nearPublicKey());
     expect(await collections.add("private.near")).toBe(true);
     expect(chain.proofs).toHaveLength(0);
@@ -147,7 +145,7 @@ describe("Collections", () => {
   test("waits when the contract refuses its attestation", async () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     const chain = chainFor("private.near");
-    chain.collection = { ...DEFAULT_COLLECTION, tee: { Phala: { app_id: APP } } };
+    chain.collection = { ...FAKE_COLLECTION, tee: { Phala: { app_id: APP } } };
     chain.registerKeeperKey = async () => {
       throw new Error("the quote's report data does not commit to this key");
     };
@@ -171,7 +169,7 @@ describe("Collections, terms and sealed prompts", () => {
   test("serves a collection at its own prices, and lists them", async () => {
     const { collections, chainFor } = setup();
     chainFor("tutor.near").collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       terms: { royalty_bps: 0, creator_share_bps: 0, chat_price: "20", save_price: null },
     };
     expect(await collections.add("tutor.near")).toBe(true);
@@ -181,7 +179,7 @@ describe("Collections, terms and sealed prompts", () => {
   test("waits on a collection whose prices don't cover the keeper", async () => {
     const { collections, chainFor } = setup();
     chainFor("cheap.near").collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       terms: { royalty_bps: 0, creator_share_bps: 0, chat_price: "1", save_price: null },
     };
     expect(await collections.add("cheap.near")).toBe(false);
@@ -192,7 +190,7 @@ describe("Collections, terms and sealed prompts", () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     const chain = chainFor("oracle.near");
     chain.collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       tee: { Phala: { app_id: APP } },
       sealed_prompt: {
         ciphertext: sealTo(keys.sealing().publicKeyHex, "The answer is LANTERN."),
@@ -206,7 +204,7 @@ describe("Collections, terms and sealed prompts", () => {
   test("waits on a prompt sealed to another keeper", async () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     chainFor("oracle.near").collection = {
-      ...DEFAULT_COLLECTION,
+      ...FAKE_COLLECTION,
       tee: { Phala: { app_id: APP } },
       sealed_prompt: { ciphertext: "AAAA", sealed_to: "ab".repeat(32) },
     };
@@ -216,45 +214,49 @@ describe("Collections, terms and sealed prompts", () => {
 });
 
 describe("Collections, context keys from NEAR's MPC network", () => {
-  const KEY_SOURCE = { mpc_contract_id: "v1.signer", domain_id: 2 };
-
   test("any keeper the collection names can open its contexts, without sharing a secret", async () => {
     const first = setup();
-    first.chainFor("lantern.near").collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
     expect(await first.collections.add("lantern.near")).toBe(true);
     expect(first.chainFor("lantern.near").ckdRequests).toBe(1);
     first.chainFor("lantern.near").mint("1", "alice.near", NEAR);
     await first.collections.get("lantern.near")?.kats.wakeNew();
 
-    // Another keeper, with its own root secret, reading the same chain and storage.
-    const other = setup(
-      { mode: "local" },
-      { keys: keysFromRootSecret(Buffer.alloc(32, 9)), chains: first.chains, store: first.store },
-    );
+    // Another keeper process, reading the same chain and storage. It shares no secret with the first.
+    const other = setup({ mode: "local" }, { chains: first.chains, store: first.store });
     expect(await other.collections.add("lantern.near")).toBe(true);
     const context = await other.collections.get("lantern.near")?.kats.getContext("alice.near", "1");
-    expect(context?.personality).toBe(DEFAULT_COLLECTION.starter);
+    expect(context?.personality).toBe(FAKE_COLLECTION.starter);
   });
 
-  test("without a key source, another keeper's secret can't open the contexts", async () => {
-    const first = setup();
-    await first.collections.add("plain.near");
-    first.chainFor("plain.near").mint("1", "alice.near", NEAR);
-    await first.collections.get("plain.near")?.kats.wakeNew();
-    const other = setup(
-      { mode: "local" },
-      { keys: keysFromRootSecret(Buffer.alloc(32, 9)), chains: first.chains, store: first.store },
-    );
-    await other.collections.add("plain.near");
-    await expect(
-      other.collections.get("plain.near")?.kats.getContext("alice.near", "1"),
-    ).rejects.toThrow();
+  test("after a rotation, reads the old key's contexts and saves under the new key", async () => {
+    const { collections, chainFor, inference } = setup();
+    const chain = chainFor("lantern.near");
+    await collections.add("lantern.near");
+    chain.mint("1", "alice.near", NEAR);
+    const kats = collections.get("lantern.near")?.kats;
+    await kats?.wakeNew();
+    expect(chain.kats.get("1")?.key_epoch).toBe(1);
+
+    chain.rotate();
+    inference.evolveTo = { character: "You are rotated.", memory: "" };
+    for (let i = 0; i < 10; i++) {
+      await kats?.chat("alice.near", "1", `hello ${i}`);
+    }
+    expect(chain.kats.get("1")?.key_epoch).toBe(2);
+    expect((await kats?.getContext("alice.near", "1"))?.personality).toBe("You are rotated.");
+  });
+
+  test("waits on a collection whose contract has no key source", async () => {
+    const { collections, chainFor } = setup();
+    const { key_source: _, ...old } = FAKE_COLLECTION;
+    chainFor("old.near").collection = old as typeof FAKE_COLLECTION;
+    expect(await collections.add("old.near")).toBe(false);
+    expect(collections.waiting()[0]?.reason).toMatch(/no key source/);
   });
 
   test("waits, and retries later, when the MPC network doesn't answer", async () => {
     const { collections, chainFor } = setup();
     const chain = chainFor("lantern.near");
-    chain.collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
     chain.ckdFailure = "MPC timed out";
     expect(await collections.add("lantern.near")).toBe(false);
     expect(collections.waiting()[0]?.reason).toMatch(
@@ -267,7 +269,6 @@ describe("Collections, context keys from NEAR's MPC network", () => {
   test("refuses a key that isn't the network's", async () => {
     const { collections, chainFor } = setup();
     const chain = chainFor("lantern.near");
-    chain.collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
     // The answer comes from a different master secret than the published key.
     const published = await chain.mpcPublicKey(KEY_SOURCE);
     chain.mpcSecret += 1n;
@@ -279,16 +280,12 @@ describe("Collections, context keys from NEAR's MPC network", () => {
   test("asks a TEE collection for its key only after registering its attested key", async () => {
     const { collections, chainFor } = setup({ mode: "phala", appId: APP });
     const chain = chainFor("vault.near");
-    chain.collection = {
-      ...DEFAULT_COLLECTION,
-      tee: { Phala: { app_id: APP } },
-      key_source: KEY_SOURCE,
-    };
+    chain.collection = { ...FAKE_COLLECTION, tee: { Phala: { app_id: APP } } };
     let attestedWhenAsked = false;
     const request = chain.requestContextKey.bind(chain);
-    chain.requestContextKey = async (key) => {
+    chain.requestContextKey = async (key, epoch) => {
       attestedWhenAsked = chain.attested.has(PROOF.public_key);
-      return request(key);
+      return request(key, epoch);
     };
     expect(await collections.add("vault.near")).toBe(true);
     expect(attestedWhenAsked).toBe(true);

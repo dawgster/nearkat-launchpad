@@ -9,10 +9,14 @@ export type DebitResult =
   | { status: "insufficient"; tokenId: string }
   | { status: "out_of_sequence"; lastApplied: number };
 
-/** Everything the keeper needs from the NFT contract. */
-export interface Chain {
+/** What serving a collection's tokens needs: their records, contexts and charges. */
+export interface TokenChain {
   getKat(tokenId: string): Promise<KatView | null>;
-  setContext(tokenId: string, hashB64: string, ref: string, version: number): Promise<void>;
+  /**
+   * Records a token's new context. Throws `KeyEpochChanged` when the
+   * collection has moved to another key epoch than the one it was saved under.
+   */
+  setContext(save: ContextSave): Promise<void>;
   /**
    * Items are `[token_id, amount in yoctoNEAR]`; the batch applies as a whole
    * or not at all. Resolves once the contract has answered. Throws only when
@@ -21,9 +25,21 @@ export interface Chain {
   debitBatch(seq: number, items: Array<[string, string]>): Promise<DebitResult>;
   /** Sequence number of the last applied batch. */
   getDebitSeq(): Promise<number>;
+}
+
+export interface ContextSave {
+  tokenId: string;
+  hashB64: string;
+  ref: string;
+  version: number;
+  keyEpoch: number;
+}
+
+/** What deciding whether to serve a collection, and running it, needs. */
+export interface CollectionChain {
   /** The account the contract accepts keeper calls from. */
   getKeeperId(): Promise<string>;
-  /** The collection's public prompt, starter and TEE requirement. */
+  /** The collection's public prompt, starter, TEE requirement and key source. */
   getCollection(): Promise<CollectionInfo>;
   /** yoctoNEAR the contract holds for the keeper from inference charges. */
   getInferenceAccrued(): Promise<bigint>;
@@ -33,12 +49,40 @@ export interface Chain {
   isKeyAttested(publicKey: string): Promise<boolean>;
   /** Proves to the contract that this key runs inside the required TEE app. */
   registerKeeperKey(proof: KeyProof): Promise<void>;
-  /** Has the collection fetch its context key from the MPC network, encrypted to `appPublicKey`. */
-  requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }>;
+}
+
+/** The collection's way to NEAR's MPC network. */
+export interface KeyChain {
+  /** The epoch new contexts are saved under. */
+  getKeyEpoch(): Promise<number>;
+  /**
+   * Has the collection fetch its context key for `keyEpoch` from the MPC
+   * network, encrypted to `appPublicKey`.
+   */
+  requestContextKey(
+    appPublicKey: string,
+    keyEpoch: number,
+  ): Promise<{ big_y: string; big_c: string }>;
   /** The MPC network's public key for a CKD domain. */
   mpcPublicKey(source: KeySource): Promise<string>;
-  /** Stores a FastFS file addressed to this collection; resolves to the transaction hash. */
+}
+
+/** Stores a FastFS file addressed to the collection; resolves to the transaction hash. */
+export interface FastfsUploader {
   uploadFastfs(args: Uint8Array): Promise<string>;
+}
+
+/** Everything the keeper needs from one collection contract. */
+export type Chain = TokenChain & CollectionChain & KeyChain & FastfsUploader;
+
+/** The collection moved to another key epoch while a context was being saved. */
+export class KeyEpochChanged extends Error {
+  readonly current: number;
+
+  constructor(current: number) {
+    super(`The collection now saves contexts under key epoch ${current}`);
+    this.current = current;
+  }
 }
 
 /** What `register_keeper_key` takes. */
@@ -58,11 +102,18 @@ export class NearChain implements Chain {
   readonly #near: Near;
   readonly #contractId: string;
   readonly #finality: "final" | "optimistic";
+  readonly #signerId: string;
 
-  constructor(near: Near, contractId: string, finality: "final" | "optimistic" = "final") {
+  /** `signerId` is the keeper account, which signs every call. */
+  constructor(
+    near: Near,
+    contractId: string,
+    options: { signerId: string; finality?: "final" | "optimistic" },
+  ) {
     this.#near = near;
     this.#contractId = contractId;
-    this.#finality = finality;
+    this.#signerId = options.signerId;
+    this.#finality = options.finality ?? "final";
   }
 
   async getKat(tokenId: string): Promise<KatView | null> {
@@ -75,13 +126,28 @@ export class NearChain implements Chain {
     return kat ?? null;
   }
 
-  async setContext(tokenId: string, hashB64: string, ref: string, version: number): Promise<void> {
-    await this.#near.call(
-      this.#contractId,
-      "set_context",
-      { token_id: tokenId, context_hash: hashB64, context_ref: ref, version: String(version) },
-      { gas: "30 Tgas" },
-    );
+  async setContext(save: ContextSave): Promise<void> {
+    try {
+      await this.#near.call(
+        this.#contractId,
+        "set_context",
+        {
+          token_id: save.tokenId,
+          context_hash: save.hashB64,
+          context_ref: save.ref,
+          version: String(save.version),
+          key_epoch: save.keyEpoch,
+        },
+        { gas: "30 Tgas", signerId: this.#signerId },
+      );
+    } catch (error) {
+      const panic = error instanceof FunctionCallError ? (error.panic ?? "") : "";
+      const epoch = /saved under key epoch (\d+)/.exec(panic);
+      if (epoch?.[1]) {
+        throw new KeyEpochChanged(Number(epoch[1]));
+      }
+      throw error;
+    }
   }
 
   async debitBatch(seq: number, items: Array<[string, string]>): Promise<DebitResult> {
@@ -91,7 +157,7 @@ export class NearChain implements Chain {
         this.#contractId,
         "debit_batch",
         { seq: String(seq), items },
-        { gas: "100 Tgas", waitUntil: "FINAL" },
+        { gas: "100 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
       );
       return { status: "applied" };
     } catch (error) {
@@ -133,8 +199,13 @@ export class NearChain implements Chain {
       tee: view.tee ?? null,
       terms: view.terms,
       sealed_prompt: view.sealed_prompt ?? null,
-      key_source: view.key_source ?? null,
+      key_source: view.key_source,
+      key_epoch: view.key_epoch,
     };
+  }
+
+  async getKeyEpoch(): Promise<number> {
+    return (await this.getCollection()).key_epoch;
   }
 
   async getInferenceAccrued(): Promise<bigint> {
@@ -142,7 +213,15 @@ export class NearChain implements Chain {
   }
 
   async withdrawInference(): Promise<void> {
-    await this.#near.call(this.#contractId, "withdraw_inference", {}, { gas: "30 Tgas" });
+    await this.#near.call(
+      this.#contractId,
+      "withdraw_inference",
+      {},
+      {
+        gas: "30 Tgas",
+        signerId: this.#signerId,
+      },
+    );
   }
 
   async isKeyAttested(publicKey: string): Promise<boolean> {
@@ -161,16 +240,20 @@ export class NearChain implements Chain {
     await this.#near.call(this.#contractId, "register_keeper_key", proof, {
       gas: "300 Tgas",
       waitUntil: "FINAL",
+      signerId: this.#signerId,
     });
   }
 
-  async requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }> {
+  async requestContextKey(
+    appPublicKey: string,
+    keyEpoch: number,
+  ): Promise<{ big_y: string; big_c: string }> {
     // The MPC network answers a few blocks later; the transaction's result is its answer.
     const outcome = (await this.#near.call(
       this.#contractId,
       "request_context_key",
-      { app_public_key: appPublicKey },
-      { gas: "300 Tgas", waitUntil: "FINAL" },
+      { app_public_key: appPublicKey, key_epoch: keyEpoch },
+      { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
     )) as unknown as { status?: { SuccessValue?: string } };
     const value = outcome.status?.SuccessValue;
     if (!value) {
@@ -201,18 +284,10 @@ export class NearChain implements Chain {
 
   async uploadFastfs(args: Uint8Array): Promise<string> {
     const outcome = (await this.#near
-      .transaction(this.#signerId())
+      .transaction(this.#signerId)
       .functionCall(this.#contractId, "__fastdata_fastfs", args, { gas: "10 Tgas" })
       .send({ waitUntil: "FINAL" })) as unknown as { transaction_outcome: { id: string } };
     return outcome.transaction_outcome.id;
-  }
-
-  #signerId(): string {
-    const signer = (this.#near as unknown as { defaultSignerId?: string }).defaultSignerId;
-    if (!signer) {
-      throw new Error("The keeper has no signer for FastFS uploads");
-    }
-    return signer;
   }
 
   async #config(): Promise<{ keeper_id: string; debit_seq: string; inference_accrued?: string }> {

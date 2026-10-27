@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { DEFAULT_COLLECTION } from "./collection.ts";
 import { open, seal } from "./crypto.ts";
 import { CorruptContextError } from "./errors.ts";
-import type { Keys } from "./keys.ts";
 import type { ContextDoc } from "./types.ts";
 
 /** The original collection's starter context. */
@@ -42,20 +41,21 @@ export function newContext(
   };
 }
 
-export function sealContext(keys: Keys, doc: ContextDoc): Buffer {
-  return seal(keys.katKey(doc.token_id), Buffer.from(JSON.stringify(doc), "utf8"));
+/** Encrypts a context with its token's key. */
+export function sealContext(key: Uint8Array, doc: ContextDoc): Buffer {
+  return seal(key, Buffer.from(JSON.stringify(doc), "utf8"));
 }
 
 /** Decrypts a context and checks it against the hash recorded on-chain. */
 export function openContext(
-  keys: Keys,
+  key: Uint8Array,
   tokenId: string,
   blob: Uint8Array,
   expectedHashB64: string,
 ): ContextDoc {
   let doc: ContextDoc;
   try {
-    doc = JSON.parse(open(keys.katKey(tokenId), blob).toString("utf8")) as ContextDoc;
+    doc = JSON.parse(open(key, blob).toString("utf8")) as ContextDoc;
   } catch {
     throw new CorruptContextError(`Context of kat ${tokenId} cannot be decrypted`);
   }

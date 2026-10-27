@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
 import { base58 } from "@scure/base";
-import type { Chain, DebitResult, KeyProof } from "../src/chain.ts";
-import { appId, CONTEXT_KEY_PATH, type KeySource } from "../src/ckd.ts";
+import {
+  type Chain,
+  type ContextSave,
+  type DebitResult,
+  KeyEpochChanged,
+  type KeyProof,
+} from "../src/chain.ts";
+import { appId, contextKeyPath, type KeySource, MpcKeyring } from "../src/ckd.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
@@ -10,13 +16,35 @@ import type { ChatMessage, KatView } from "../src/types.ts";
 
 export const NEAR = 10n ** 24n;
 
+export const KEY_SOURCE: KeySource = { mpc_contract_id: "v1.signer", domain_id: 2 };
+
+/** The original collection, as its contract publishes it. */
+export const FAKE_COLLECTION: CollectionInfo = {
+  ...DEFAULT_COLLECTION,
+  tee: null,
+  key_source: KEY_SOURCE,
+  key_epoch: 1,
+};
+
+const keyrings = new WeakMap<FakeChain, MpcKeyring>();
+
+/** The keyring for a fake chain, fetching keys from its simulated MPC network. One per chain. */
+export function keyringFor(chain: FakeChain): MpcKeyring {
+  let keyring = keyrings.get(chain);
+  if (!keyring) {
+    keyring = new MpcKeyring(chain.contractId, chain.collection.key_source, chain);
+    keyrings.set(chain, keyring);
+  }
+  return keyring;
+}
+
 /** In-memory stand-in for the contract, enforcing the same rules. */
 export class FakeChain implements Chain {
   readonly kats = new Map<string, KatView>();
   /** Every applied batch, as `[seq, items]`. */
   readonly debits: Array<[number, Array<[string, string]>]> = [];
   keeperId = "keeper.near";
-  collection: CollectionInfo = DEFAULT_COLLECTION;
+  collection: CollectionInfo = FAKE_COLLECTION;
   inferenceAccrued = 0n;
   withdrawals = 0;
   readonly attested = new Set<string>();
@@ -45,6 +73,7 @@ export class FakeChain implements Chain {
       context_ref: null,
       context_version: "0",
       balance: balance.toString(),
+      key_epoch: 0,
     });
   }
 
@@ -61,10 +90,18 @@ export class FakeChain implements Chain {
     return { ...(stale ?? kat), owner_id: kat.owner_id, balance: kat.balance };
   }
 
-  async setContext(tokenId: string, hashB64: string, ref: string, version: number): Promise<void> {
+  /** Moves to a new key epoch, as changing keeper or `rotate_context_key` does. */
+  rotate(): void {
+    this.collection = { ...this.collection, key_epoch: this.collection.key_epoch + 1 };
+  }
+
+  async setContext({ tokenId, hashB64, ref, version, keyEpoch }: ContextSave): Promise<void> {
     if (this.failSetContext > 0) {
       this.failSetContext -= 1;
       throw new Error("RPC unavailable");
+    }
+    if (keyEpoch !== this.collection.key_epoch) {
+      throw new KeyEpochChanged(this.collection.key_epoch);
     }
     const kat = this.#kat(tokenId);
     if (version !== Number(kat.context_version) + 1) {
@@ -74,6 +111,7 @@ export class FakeChain implements Chain {
     kat.context_hash = hashB64;
     kat.context_ref = ref;
     kat.context_version = String(version);
+    kat.key_epoch = keyEpoch;
   }
 
   async debitBatch(seq: number, items: Array<[string, string]>): Promise<DebitResult> {
@@ -134,17 +172,27 @@ export class FakeChain implements Chain {
     this.attested.add(proof.public_key);
   }
 
-  async requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }> {
+  async getKeyEpoch(): Promise<number> {
+    return this.collection.key_epoch;
+  }
+
+  async requestContextKey(
+    appPublicKey: string,
+    keyEpoch: number,
+  ): Promise<{ big_y: string; big_c: string }> {
     this.ckdRequests += 1;
     if (this.ckdFailure) {
       throw new Error(this.ckdFailure);
+    }
+    if (keyEpoch < 1 || keyEpoch > this.collection.key_epoch) {
+      throw new Error(`key_epoch must be 1 to ${this.collection.key_epoch}`);
     }
     // What the MPC network computes: K = msk·H(pk ‖ app_id), ElGamal-encrypted to the app key.
     const G1 = bls.G1.Point;
     const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
     const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
     const hashed = bls.G1.hashToCurve(
-      new Uint8Array([...pk, ...appId(this.contractId, CONTEXT_KEY_PATH)]),
+      new Uint8Array([...pk, ...appId(this.contractId, contextKeyPath(keyEpoch))]),
       { DST: "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_" },
     ) as unknown as InstanceType<typeof G1>;
     const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());

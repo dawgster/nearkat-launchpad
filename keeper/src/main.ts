@@ -80,16 +80,15 @@ const collections = new Collections({
   keeperAccountId: config.keeperAccountId,
   keeperPublicKey: keys.nearPublicKey(),
   runningAs: appInfo ? { mode: "phala", appId: appInfo.app_id } : { mode: "local" },
-  chainFor: (contractId) => new NearChain(near, contractId),
+  chainFor: (contractId) => new NearChain(near, contractId, { signerId: config.keeperAccountId }),
   keeperPrices: { chat: config.chatPrice, save: config.savePrice },
   sealing: keys.sealing(),
-  keys,
-  build: (contractId, chain, info, prices, collectionKeys) => {
+  build: (contractId, chain, info, prices, keyring) => {
     const meter = new Meter(chain, { journal: new FileJournal(journalFor(contractId)) });
     const kats = new KatService({
       chain,
       store: storeFor(contractId, chain),
-      keys: collectionKeys,
+      keyring,
       inference,
       meter,
       prices,
