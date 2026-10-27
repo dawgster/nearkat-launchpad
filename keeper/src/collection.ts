@@ -1,3 +1,5 @@
+import type { KeySource } from "./ckd.ts";
+
 /**
  * What a collection publishes on-chain about its tokens. The keeper builds
  * every prompt from it, so the same keeper code serves a talking meerkat, a
@@ -15,6 +17,8 @@ export interface CollectionInfo {
   terms?: Terms;
   /** Instructions only the TEE app can read, encrypted to its sealing key. */
   sealed_prompt?: { ciphertext: string; sealed_to: string } | null;
+  /** Where context keys come from: NEAR's MPC network. Null means the keeper's own. */
+  key_source?: KeySource | null;
   /** The sealed prompt, opened by this keeper. Never leaves the keeper. */
   secret_prompt?: string;
 }

@@ -5,15 +5,15 @@ import { katSvg, sigilSvg } from "../../art/svg.ts";
 import { stageOf } from "../../art/traits.ts";
 import { createApp } from "./app.ts";
 import { Auth } from "./auth.ts";
-import { NearChain } from "./chain.ts";
+import { type Chain, NearChain, transactionArgsFrom } from "./chain.ts";
 import { Collections } from "./collections.ts";
 import { loadConfig } from "./config.ts";
+import { FastfsStore } from "./fastfs.ts";
 import { NearAiInference } from "./inference.ts";
 import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
 import { FileJournal, Meter } from "./meter.ts";
-import { MirroredStore, S3Store } from "./s3.ts";
-import { FileStore } from "./store.ts";
+import { type ContextStore, FileStore, MirroredStore } from "./store.ts";
 import { DstackAgent, keyProof, phalaCollateral, phalaRootSecret, reportDataFor } from "./tee.ts";
 
 const WAKE_EVERY_MS = 5_000;
@@ -43,12 +43,27 @@ const near = new Near({
   defaultSignerId: config.keeperAccountId,
 });
 
-// Blobs are encrypted per collection and named by their hash, so one store
-// serves all. With S3 configured, every blob is stored there first and the
-// disk only caches it.
-const store = config.s3
-  ? new MirroredStore(new FileStore(config.storeDir), new S3Store(config.s3))
-  : new FileStore(config.storeDir);
+// Blobs are encrypted and named by their hash, so one disk cache serves every
+// collection. With FastFS, each blob is first stored on NEAR, addressed to its
+// collection's account, and read back from a FastFS gateway or an archival node.
+const disk = new FileStore(config.storeDir);
+const transactionArgs = transactionArgsFrom(config.archivalRpcUrl);
+const storeFor = (contractId: string, chain: Chain): ContextStore =>
+  config.storage === "file"
+    ? disk
+    : new MirroredStore(
+        disk,
+        new FastfsStore({
+          uploader: config.keeperAccountId,
+          receiver: contractId,
+          upload: (_receiver, args) => chain.uploadFastfs(args),
+          transactionArgs,
+          gatewayUrl: config.fastfsGateway
+            ? (uploader, receiver, path) =>
+                `${(config.fastfsGateway as string).replace("{uploader}", uploader)}/${receiver}/${path}`
+            : null,
+        }),
+      );
 const inference = new NearAiInference({
   baseUrl: config.nearAiBaseUrl,
   apiKey: config.nearAiApiKey,
@@ -68,12 +83,13 @@ const collections = new Collections({
   chainFor: (contractId) => new NearChain(near, contractId),
   keeperPrices: { chat: config.chatPrice, save: config.savePrice },
   sealing: keys.sealing(),
-  build: (contractId, chain, info, prices) => {
+  keys,
+  build: (contractId, chain, info, prices, collectionKeys) => {
     const meter = new Meter(chain, { journal: new FileJournal(journalFor(contractId)) });
     const kats = new KatService({
       chain,
-      store,
-      keys: keys.forContract(contractId),
+      store: storeFor(contractId, chain),
+      keys: collectionKeys,
       inference,
       meter,
       prices,
@@ -87,11 +103,6 @@ const collections = new Collections({
 /** The collections to serve: the configured ones, and launches that name this keeper. */
 async function discover(): Promise<void> {
   const ids = new Set([config.contractId, ...config.extraContractIds]);
-  console.log(
-    config.s3
-      ? `Contexts are stored in S3 bucket ${config.s3.bucket}, cached in ${config.storeDir}`
-      : `Contexts are stored only in ${config.storeDir}; set S3_BUCKET for durable storage`,
-  );
   if (config.launchpadId) {
     for (let from = 0; ; from += 100) {
       const page =
@@ -234,9 +245,9 @@ every(DISCOVER_EVERY_MS, "discover", discover);
 const server = serve({ fetch: app.fetch, port: config.port });
 console.log(`Keeper listening on :${config.port} for ${config.contractId} (${config.network})`);
 console.log(
-  config.s3
-    ? `Contexts are stored in S3 bucket ${config.s3.bucket}, cached in ${config.storeDir}`
-    : `Contexts are stored only in ${config.storeDir}; set S3_BUCKET for durable storage`,
+  config.storage === "fastfs"
+    ? `Contexts are stored on NEAR with FastFS, cached in ${config.storeDir}`
+    : `Contexts are stored only in ${config.storeDir}; set STORAGE=fastfs to keep them on NEAR`,
 );
 if (config.launchpadId) {
   console.log(`Also serving collections launched on ${config.launchpadId} that name this keeper`);

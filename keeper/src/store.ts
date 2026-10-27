@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { parseRef } from "./fastfs.ts";
 
 /** Holds encrypted context blobs. Never sees plaintext. */
 export interface ContextStore {
@@ -29,10 +30,42 @@ export class FileStore implements ContextStore {
   }
 
   async get(ref: string): Promise<Uint8Array> {
-    if (!/^[0-9a-f]{64}$/.test(ref)) {
+    // A FastFS ref names the same hash, so its cached copy is found by it.
+    const hash = ref.startsWith("fastfs:") ? parseRef(ref).sha256 : ref;
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
       throw new Error(`Invalid context ref: ${ref}`);
     }
-    return readFile(join(this.#dir, ref));
+    return readFile(join(this.#dir, hash));
+  }
+}
+
+/**
+ * Durable storage with a local cache. A blob is stored durably before its
+ * reference is returned, so its hash never moves on-chain ahead of it.
+ */
+export class MirroredStore implements ContextStore {
+  readonly #local: ContextStore;
+  readonly #durable: ContextStore;
+
+  constructor(local: ContextStore, durable: ContextStore) {
+    this.#local = local;
+    this.#durable = durable;
+  }
+
+  async put(blob: Uint8Array): Promise<string> {
+    const ref = await this.#durable.put(blob);
+    await this.#local.put(blob).catch(() => undefined);
+    return ref;
+  }
+
+  async get(ref: string): Promise<Uint8Array> {
+    try {
+      return await this.#local.get(ref);
+    } catch {
+      const blob = await this.#durable.get(ref);
+      await this.#local.put(blob).catch(() => undefined);
+      return blob;
+    }
   }
 }
 

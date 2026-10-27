@@ -141,35 +141,33 @@ describe("serving many collections", () => {
   });
 });
 
-describe("durable storage", () => {
+describe("storage", () => {
   const env = { CONTRACT_ID: "a.near", KEEPER_ACCOUNT_ID: "k.near", NEAR_AI_API_KEY: "x" };
 
-  test("keeps contexts on disk only, unless a bucket is set", () => {
-    expect(loadConfig(env).s3).toBeUndefined();
+  test("stores contexts on NEAR with FastFS by default, read back from an archival node", () => {
+    const config = loadConfig(env);
+    expect(config.storage).toBe("fastfs");
+    expect(config.archivalRpcUrl).toBe("https://archival-rpc.testnet.fastnear.com");
+    expect(config.fastfsGateway).toBeNull();
   });
 
-  test("reads the S3 settings, with defaults", () => {
+  test("uses the FastFS gateway on mainnet", () => {
+    const config = loadConfig({ ...env, NEAR_NETWORK: "mainnet" });
+    expect(config.fastfsGateway).toBe("https://{uploader}.fastfs.io");
+    expect(config.archivalRpcUrl).toBe("https://archival-rpc.mainnet.fastnear.com");
+  });
+
+  test("reads a sandbox's transactions from the sandbox itself", () => {
     const config = loadConfig({
       ...env,
-      S3_BUCKET: "contexts",
-      S3_ENDPOINT: "https://r2.example",
-      S3_ACCESS_KEY_ID: "id",
-      S3_SECRET_ACCESS_KEY: "secret",
+      NEAR_NETWORK: "sandbox",
+      NEAR_RPC_URL: "http://127.0.0.1:3030",
     });
-    expect(config.s3).toEqual({
-      endpoint: "https://r2.example",
-      bucket: "contexts",
-      region: "us-east-1",
-      accessKeyId: "id",
-      secretAccessKey: "secret",
-      prefix: "nearkat/",
-      virtualHost: false,
-    });
+    expect(config.archivalRpcUrl).toBe("http://127.0.0.1:3030");
   });
 
-  test("insists on credentials once a bucket is set", () => {
-    expect(() => loadConfig({ ...env, S3_BUCKET: "contexts", S3_ENDPOINT: "https://x" })).toThrow(
-      /S3_ACCESS_KEY_ID/,
-    );
+  test("can keep contexts on disk only, and refuses other storage", () => {
+    expect(loadConfig({ ...env, STORAGE: "file" }).storage).toBe("file");
+    expect(() => loadConfig({ ...env, STORAGE: "s3" })).toThrow(/STORAGE/);
   });
 });

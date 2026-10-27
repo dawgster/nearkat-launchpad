@@ -20,18 +20,15 @@ export interface Config {
   nearAiApiKey: string;
   nearAiModel: string;
   storeDir: string;
-  /** Durable storage for contexts. Without it, contexts live only on this disk. */
-  s3:
-    | {
-        endpoint: string;
-        bucket: string;
-        region: string;
-        accessKeyId: string;
-        secretAccessKey: string;
-        prefix: string;
-        virtualHost: boolean;
-      }
-    | undefined;
+  /**
+   * "fastfs": contexts go on NEAR itself, as FastFS files, and the disk only
+   * caches them. "file": contexts live only in `storeDir`.
+   */
+  storage: "fastfs" | "file";
+  /** Serves FastFS files over HTTP; `{uploader}` is filled in. Null: read from the chain only. */
+  fastfsGateway: string | null;
+  /** An archival RPC node, which returns old transactions, so FastFS files can be read back. */
+  archivalRpcUrl: string;
   meterJournal: string;
   /** Upper bound on reply length, in tokens. */
   maxTokens: number;
@@ -89,6 +86,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     // A secret from the environment is one the operator knows: refuse rather than ignore it.
     throw new Error("KEEPER_ROOT_SECRET must not be set in phala mode; keys come from dstack");
   }
+  const storage = env.STORAGE ?? "fastfs";
+  if (storage !== "fastfs" && storage !== "file") {
+    throw new Error("STORAGE must be fastfs or file");
+  }
   const port = Number(env.PORT ?? "8787");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
@@ -116,17 +117,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     nearAiApiKey: required(env, "NEAR_AI_API_KEY"),
     nearAiModel: env.NEAR_AI_MODEL ?? DEFAULT_MODEL,
     storeDir: env.STORE_DIR ?? "./data/contexts",
-    s3: env.S3_BUCKET
-      ? {
-          endpoint: required(env, "S3_ENDPOINT"),
-          bucket: env.S3_BUCKET,
-          region: env.S3_REGION ?? "us-east-1",
-          accessKeyId: required(env, "S3_ACCESS_KEY_ID"),
-          secretAccessKey: required(env, "S3_SECRET_ACCESS_KEY"),
-          prefix: env.S3_PREFIX ?? "nearkat/",
-          virtualHost: env.S3_VIRTUAL_HOST === "true",
-        }
-      : undefined,
+    storage,
+    fastfsGateway:
+      env.FASTFS_GATEWAY !== undefined
+        ? env.FASTFS_GATEWAY || null
+        : network === "mainnet"
+          ? "https://{uploader}.fastfs.io"
+          : null,
+    archivalRpcUrl:
+      env.NEAR_ARCHIVAL_RPC_URL ||
+      (network === "sandbox"
+        ? (env.NEAR_RPC_URL as string)
+        : `https://archival-rpc.${network}.fastnear.com`),
     meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
     maxTokens,
     port,

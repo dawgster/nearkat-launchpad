@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
+import { base58 } from "@scure/base";
 import type { Chain, DebitResult, KeyProof } from "../src/chain.ts";
+import { appId, CONTEXT_KEY_PATH, type KeySource } from "../src/ckd.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
@@ -24,6 +28,15 @@ export class FakeChain implements Chain {
   /** When set, views keep returning the context as it was before the last save. */
   staleViews = false;
   #stale = new Map<string, KatView>();
+  /** The collection's account, which the MPC network derives its key for. */
+  contractId = "kats.near";
+  /** The simulated MPC network's master secret. */
+  mpcSecret = 0x1234_5678_9abcn;
+  /** When set, context key requests fail with it. */
+  ckdFailure: string | null = null;
+  ckdRequests = 0;
+  /** FastFS uploads, by transaction hash. */
+  readonly uploads = new Map<string, Uint8Array>();
 
   mint(tokenId: string, owner: string, balance: bigint): void {
     this.kats.set(tokenId, {
@@ -119,6 +132,39 @@ export class FakeChain implements Chain {
   async registerKeeperKey(proof: KeyProof): Promise<void> {
     this.proofs.push(proof);
     this.attested.add(proof.public_key);
+  }
+
+  async requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }> {
+    this.ckdRequests += 1;
+    if (this.ckdFailure) {
+      throw new Error(this.ckdFailure);
+    }
+    // What the MPC network computes: K = msk·H(pk ‖ app_id), ElGamal-encrypted to the app key.
+    const G1 = bls.G1.Point;
+    const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
+    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
+    const hashed = bls.G1.hashToCurve(
+      new Uint8Array([...pk, ...appId(this.contractId, CONTEXT_KEY_PATH)]),
+      { DST: "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_" },
+    ) as unknown as InstanceType<typeof G1>;
+    const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
+    const encode = (point: InstanceType<typeof G1>) =>
+      `bls12381g1:${base58.encode(point.toBytes(true))}`;
+    return {
+      big_y: encode(G1.BASE.multiply(y)),
+      big_c: encode(hashed.multiply(this.mpcSecret).add(app.multiply(y))),
+    };
+  }
+
+  async mpcPublicKey(_source: KeySource): Promise<string> {
+    return `bls12381g2:${base58.encode(bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true))}`;
+  }
+
+  async uploadFastfs(args: Uint8Array): Promise<string> {
+    const digest = createHash("sha256").update(args).update(String(this.uploads.size)).digest();
+    const txHash = base58.encode(digest);
+    this.uploads.set(txHash, Uint8Array.from(args));
+    return txHash;
   }
 
   #kat(tokenId: string): KatView {

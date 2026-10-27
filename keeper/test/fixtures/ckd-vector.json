@@ -1,0 +1,9 @@
+{
+  "caller": "lantern.launch.near",
+  "path": "nearkat/contexts/v1",
+  "app_secret": "123456789",
+  "app_public_key": "bls12381g1:7Sa9iCtLxLNRsTnr5gVJWW2RxATtq6dEbtThqdkFwiokMiHCHoguueLLuLG7bSs1Y8",
+  "mpc_public_key": "bls12381g2:24KouzewJwJ37Rho1uZcDSJ89zAu5jHx6XUwZnuEZUKeUz1g9jk5j5PXgdQvxRVV27AS9PyKgcSMxPsCoj2Qwz7asBxbMuCZQPxVerQGGZKD1MnFjNMewGWB4NVEHFn3ThQV",
+  "big_y": "bls12381g1:5nTKm7WaGSTqRXTMN3YfvHrEg5MRBLV2FPXnYfqXjqXiSoQvByiAtkYhUnYUHjsgso",
+  "big_c": "bls12381g1:6WpozGk7hrVGDQPDXVk8d35SjdVPbxr3da3TxFNudFJeLRXUcr9cKo5QXr1Wx8H5ic"
+}

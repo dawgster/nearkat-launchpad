@@ -1,4 +1,5 @@
 import { FunctionCallError, type Near } from "near-kit";
+import type { KeySource } from "./ckd.ts";
 import type { CollectionInfo } from "./collection.ts";
 import type { KatView } from "./types.ts";
 
@@ -32,6 +33,12 @@ export interface Chain {
   isKeyAttested(publicKey: string): Promise<boolean>;
   /** Proves to the contract that this key runs inside the required TEE app. */
   registerKeeperKey(proof: KeyProof): Promise<void>;
+  /** Has the collection fetch its context key from the MPC network, encrypted to `appPublicKey`. */
+  requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }>;
+  /** The MPC network's public key for a CKD domain. */
+  mpcPublicKey(source: KeySource): Promise<string>;
+  /** Stores a FastFS file addressed to this collection; resolves to the transaction hash. */
+  uploadFastfs(args: Uint8Array): Promise<string>;
 }
 
 /** What `register_keeper_key` takes. */
@@ -126,6 +133,7 @@ export class NearChain implements Chain {
       tee: view.tee ?? null,
       terms: view.terms,
       sealed_prompt: view.sealed_prompt ?? null,
+      key_source: view.key_source ?? null,
     };
   }
 
@@ -156,6 +164,57 @@ export class NearChain implements Chain {
     });
   }
 
+  async requestContextKey(appPublicKey: string): Promise<{ big_y: string; big_c: string }> {
+    // The MPC network answers a few blocks later; the transaction's result is its answer.
+    const outcome = (await this.#near.call(
+      this.#contractId,
+      "request_context_key",
+      { app_public_key: appPublicKey },
+      { gas: "300 Tgas", waitUntil: "FINAL" },
+    )) as unknown as { status?: { SuccessValue?: string } };
+    const value = outcome.status?.SuccessValue;
+    if (!value) {
+      throw new Error(`The MPC network gave no context key: ${JSON.stringify(outcome.status)}`);
+    }
+    const answer = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as {
+      big_y?: string;
+      big_c?: string;
+    };
+    if (typeof answer.big_y !== "string" || typeof answer.big_c !== "string") {
+      throw new Error("The MPC network's answer is malformed");
+    }
+    return { big_y: answer.big_y, big_c: answer.big_c };
+  }
+
+  async mpcPublicKey(source: KeySource): Promise<string> {
+    const key = await this.#near.view<string>(
+      source.mpc_contract_id,
+      "public_key",
+      { domain_id: source.domain_id },
+      { finality: this.#finality },
+    );
+    if (typeof key !== "string") {
+      throw new Error(`${source.mpc_contract_id} returned no public key`);
+    }
+    return key;
+  }
+
+  async uploadFastfs(args: Uint8Array): Promise<string> {
+    const outcome = (await this.#near
+      .transaction(this.#signerId())
+      .functionCall(this.#contractId, "__fastdata_fastfs", args, { gas: "10 Tgas" })
+      .send({ waitUntil: "FINAL" })) as unknown as { transaction_outcome: { id: string } };
+    return outcome.transaction_outcome.id;
+  }
+
+  #signerId(): string {
+    const signer = (this.#near as unknown as { defaultSignerId?: string }).defaultSignerId;
+    if (!signer) {
+      throw new Error("The keeper has no signer for FastFS uploads");
+    }
+    return signer;
+  }
+
   async #config(): Promise<{ keeper_id: string; debit_seq: string; inference_accrued?: string }> {
     const config = await this.#near.view<{
       keeper_id: string;
@@ -167,4 +226,33 @@ export class NearChain implements Chain {
     }
     return config;
   }
+}
+
+/**
+ * Reads the arguments of a past function call from an archival RPC node, so
+ * a FastFS file can be read back without any FastFS service.
+ */
+export function transactionArgsFrom(rpcUrl: string, fetchImpl: typeof fetch = fetch) {
+  return async (txHash: string, sender: string): Promise<Uint8Array> => {
+    const response = await fetchImpl(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "nearkat",
+        method: "tx",
+        params: { tx_hash: txHash, sender_account_id: sender, wait_until: "NONE" },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await response.json()) as {
+      result?: { transaction?: { actions?: Array<{ FunctionCall?: { args?: string } }> } };
+      error?: unknown;
+    };
+    const args = body.result?.transaction?.actions?.[0]?.FunctionCall?.args;
+    if (!args) {
+      throw new Error(`Transaction ${txHash} not found: ${JSON.stringify(body.error ?? body)}`);
+    }
+    return Buffer.from(args, "base64");
+  };
 }

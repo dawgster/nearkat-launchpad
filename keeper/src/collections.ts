@@ -1,6 +1,8 @@
 import type { Chain, KeyProof } from "./chain.ts";
+import { fetchContextRoot } from "./ckd.ts";
 import { type CollectionInfo, collectionPrices, type KeeperPrices } from "./collection.ts";
 import type { KatService } from "./kats.ts";
+import type { Keys } from "./keys.ts";
 import type { Meter } from "./meter.ts";
 import type { SealingKey } from "./sealing.ts";
 import { teeMismatch } from "./tee.ts";
@@ -25,11 +27,14 @@ export interface CollectionsOptions {
   keeperPrices: KeeperPrices;
   /** Opens prompts sealed to this keeper. */
   sealing: SealingKey;
+  /** The keeper's keys. Collections without a key source get kat keys from them. */
+  keys: Keys;
   build(
     contractId: string,
     chain: Chain,
     info: CollectionInfo,
     prices: { chat: bigint; save: bigint },
+    keys: Keys,
   ): { meter: Meter; kats: KatService };
   /** Proof that the keeper's key runs inside its TEE app. Absent in local mode. */
   proof?: () => Promise<KeyProof>;
@@ -119,7 +124,24 @@ export class Collections {
         return this.#wait(contractId, "its sealed prompt cannot be opened");
       }
     }
-    const { meter, kats } = this.#o.build(contractId, chain, info, prices);
+    let keys: Keys;
+    if (info.key_source) {
+      // Asked only now: for a TEE collection, the contract hands the key only
+      // to an attested keeper key, registered above.
+      try {
+        keys = this.#o.keys.withContextRoot(
+          await fetchContextRoot(contractId, info.key_source, chain),
+        );
+      } catch (error) {
+        return this.#wait(
+          contractId,
+          `could not get its context key from ${info.key_source.mpc_contract_id}: ${String(error)}`,
+        );
+      }
+    } else {
+      keys = this.#o.keys.forContract(contractId);
+    }
+    const { meter, kats } = this.#o.build(contractId, chain, info, prices, keys);
     this.#served.set(contractId, { contractId, info, prices, chain, meter, kats });
     this.#waiting.delete(contractId);
     this.#log(

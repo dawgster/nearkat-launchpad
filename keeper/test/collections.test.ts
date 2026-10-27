@@ -3,7 +3,7 @@ import type { KeyProof } from "../src/chain.ts";
 import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { Collections } from "../src/collections.ts";
 import { KatService } from "../src/kats.ts";
-import { keysFromRootSecret } from "../src/keys.ts";
+import { type Keys, keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { sealTo } from "../src/sealing.ts";
 import { MemoryStore } from "../src/store.ts";
@@ -21,18 +21,20 @@ const PROOF: KeyProof = {
 
 function setup(
   runningAs: { mode: "local" } | { mode: "phala"; appId: string } = { mode: "local" },
+  shared: { keys?: Keys; chains?: Map<string, FakeChain>; store?: MemoryStore } = {},
 ) {
-  const chains = new Map<string, FakeChain>();
+  const chains = shared.chains ?? new Map<string, FakeChain>();
   const chainFor = (id: string) => {
     let chain = chains.get(id);
     if (!chain) {
       chain = new FakeChain();
+      chain.contractId = id;
       chains.set(id, chain);
     }
     return chain;
   };
   const logs: string[] = [];
-  const store = new MemoryStore();
+  const store = shared.store ?? new MemoryStore();
   const inference = new FakeInference();
   const collections = new Collections({
     keeperAccountId: "keeper.near",
@@ -41,12 +43,13 @@ function setup(
     chainFor,
     keeperPrices: { chat: 10n, save: 100n },
     sealing: keys.sealing(),
-    build: (contractId, chain, info, prices) => {
+    keys: shared.keys ?? keys,
+    build: (_contractId, chain, info, prices, collectionKeys) => {
       const meter = new Meter(chain);
       const kats = new KatService({
         chain,
         store,
-        keys: keys.forContract(contractId),
+        keys: collectionKeys,
         inference,
         meter,
         prices,
@@ -58,7 +61,7 @@ function setup(
     proof: runningAs.mode === "phala" ? async () => PROOF : undefined,
     log: (message) => logs.push(message),
   });
-  return { collections, chainFor, logs, inference };
+  return { collections, chainFor, logs, inference, chains, store };
 }
 
 describe("Collections", () => {
@@ -209,5 +212,85 @@ describe("Collections, terms and sealed prompts", () => {
     };
     expect(await collections.add("oracle.near")).toBe(false);
     expect(collections.waiting()[0]?.reason).toMatch(/sealed to another keeper's key/);
+  });
+});
+
+describe("Collections, context keys from NEAR's MPC network", () => {
+  const KEY_SOURCE = { mpc_contract_id: "v1.signer", domain_id: 2 };
+
+  test("any keeper the collection names can open its contexts, without sharing a secret", async () => {
+    const first = setup();
+    first.chainFor("lantern.near").collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
+    expect(await first.collections.add("lantern.near")).toBe(true);
+    expect(first.chainFor("lantern.near").ckdRequests).toBe(1);
+    first.chainFor("lantern.near").mint("1", "alice.near", NEAR);
+    await first.collections.get("lantern.near")?.kats.wakeNew();
+
+    // Another keeper, with its own root secret, reading the same chain and storage.
+    const other = setup(
+      { mode: "local" },
+      { keys: keysFromRootSecret(Buffer.alloc(32, 9)), chains: first.chains, store: first.store },
+    );
+    expect(await other.collections.add("lantern.near")).toBe(true);
+    const context = await other.collections.get("lantern.near")?.kats.getContext("alice.near", "1");
+    expect(context?.personality).toBe(DEFAULT_COLLECTION.starter);
+  });
+
+  test("without a key source, another keeper's secret can't open the contexts", async () => {
+    const first = setup();
+    await first.collections.add("plain.near");
+    first.chainFor("plain.near").mint("1", "alice.near", NEAR);
+    await first.collections.get("plain.near")?.kats.wakeNew();
+    const other = setup(
+      { mode: "local" },
+      { keys: keysFromRootSecret(Buffer.alloc(32, 9)), chains: first.chains, store: first.store },
+    );
+    await other.collections.add("plain.near");
+    await expect(
+      other.collections.get("plain.near")?.kats.getContext("alice.near", "1"),
+    ).rejects.toThrow();
+  });
+
+  test("waits, and retries later, when the MPC network doesn't answer", async () => {
+    const { collections, chainFor } = setup();
+    const chain = chainFor("lantern.near");
+    chain.collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
+    chain.ckdFailure = "MPC timed out";
+    expect(await collections.add("lantern.near")).toBe(false);
+    expect(collections.waiting()[0]?.reason).toMatch(
+      /could not get its context key from v1.signer/,
+    );
+    chain.ckdFailure = null;
+    expect(await collections.add("lantern.near")).toBe(true);
+  });
+
+  test("refuses a key that isn't the network's", async () => {
+    const { collections, chainFor } = setup();
+    const chain = chainFor("lantern.near");
+    chain.collection = { ...DEFAULT_COLLECTION, key_source: KEY_SOURCE };
+    // The answer comes from a different master secret than the published key.
+    const published = await chain.mpcPublicKey(KEY_SOURCE);
+    chain.mpcSecret += 1n;
+    chain.mpcPublicKey = async () => published;
+    expect(await collections.add("lantern.near")).toBe(false);
+    expect(collections.waiting()[0]?.reason).toMatch(/not a valid key/);
+  });
+
+  test("asks a TEE collection for its key only after registering its attested key", async () => {
+    const { collections, chainFor } = setup({ mode: "phala", appId: APP });
+    const chain = chainFor("vault.near");
+    chain.collection = {
+      ...DEFAULT_COLLECTION,
+      tee: { Phala: { app_id: APP } },
+      key_source: KEY_SOURCE,
+    };
+    let attestedWhenAsked = false;
+    const request = chain.requestContextKey.bind(chain);
+    chain.requestContextKey = async (key) => {
+      attestedWhenAsked = chain.attested.has(PROOF.public_key);
+      return request(key);
+    };
+    expect(await collections.add("vault.near")).toBe(true);
+    expect(attestedWhenAsked).toBe(true);
   });
 });
