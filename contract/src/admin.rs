@@ -11,7 +11,12 @@ impl Contract {
     #[payable]
     pub fn set_keeper(&mut self, keeper_id: AccountId) {
         self.assert_admin();
-        self.keeper_id = keeper_id;
+        if keeper_id != self.keeper_id {
+            self.keeper_id = keeper_id;
+            // The keeper that leaves knows the current key; what is saved
+            // from now on uses a key it can't get.
+            self.rotate_key_epoch();
+        }
     }
 
     #[payable]

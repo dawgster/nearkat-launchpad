@@ -7,6 +7,8 @@ pub struct Kat {
     pub context_ref: Option<String>,
     pub context_version: u64,
     pub balance: NearToken,
+    /// The key epoch its current context is encrypted under.
+    pub key_epoch: u32,
 }
 
 impl Kat {
@@ -16,6 +18,7 @@ impl Kat {
             context_ref: None,
             context_version: 0,
             balance,
+            key_epoch: 0,
         }
     }
 }
@@ -28,6 +31,8 @@ pub struct KatView {
     pub context_ref: Option<String>,
     pub context_version: U64,
     pub balance: NearToken,
+    /// The key epoch its current context is encrypted under; 0 before the first.
+    pub key_epoch: u32,
 }
 
 impl KatView {
@@ -38,6 +43,7 @@ impl KatView {
             context_ref: kat.context_ref.clone(),
             context_version: kat.context_version.into(),
             balance: kat.balance,
+            key_epoch: kat.key_epoch,
         }
     }
 }
@@ -178,9 +184,8 @@ pub struct Collection {
     /// Instructions only the TEE app can read, added after `prompt`. Needs `tee`.
     #[serde(default)]
     pub sealed_prompt: Option<SealedPrompt>,
-    /// Where context keys come from. None means the keeper's own keys.
-    #[serde(default)]
-    pub key_source: Option<KeySource>,
+    /// NEAR's MPC network, which derives the collection's context keys.
+    pub key_source: KeySource,
 }
 
 #[near(serializers = [json])]
@@ -198,7 +203,10 @@ pub struct CollectionView {
     pub sealed_prompt: Option<SealedPrompt>,
     /// Whether a key attested inside the required app is the one the prompt is sealed to.
     pub sealed_key_attested: bool,
-    pub key_source: Option<KeySource>,
+    pub key_source: KeySource,
+    /// The current key epoch. It moves on whenever the keeper changes, so a
+    /// keeper that is replaced can't read what is saved after it left.
+    pub key_epoch: u32,
     /// Tokens minted so far.
     pub minted: U64,
     /// The launchpad this collection came from, which approves its upgrades.

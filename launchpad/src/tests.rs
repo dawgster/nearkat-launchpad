@@ -29,6 +29,11 @@ fn deploy() -> Launchpad {
     let mut l = Launchpad::new(acc("admin.near"), acc("keeper.near"), FEE, FUNDING);
     ctx("admin.near", YOCTO);
     l.set_collection_code_hash(code_hash());
+    ctx("admin.near", YOCTO);
+    l.set_key_source(Some(crate::KeySource {
+        mpc_contract_id: acc("v1.signer"),
+        domain_id: 2,
+    }));
     l
 }
 
@@ -275,7 +280,7 @@ fn launches_carry_the_launchpads_key_source_not_the_creators() {
         domain_id: 2,
     };
     let collection = args("magister").collection;
-    let value = crate::with_key_source(&collection, Some(&source));
+    let value = crate::with_key_source(&collection, &source);
     assert_eq!(value["key_source"]["mpc_contract_id"], "v1.signer");
     assert_eq!(value["key_source"]["domain_id"], 2);
     // A creator who tries to name their own is ignored: the field isn't theirs to send.
@@ -285,9 +290,20 @@ fn launches_carry_the_launchpads_key_source_not_the_creators() {
             "key_source": { "mpc_contract_id": "evil.near", "domain_id": 9 },
         }))
         .unwrap();
-    assert!(crate::with_key_source(&sneaky, None)
-        .get("key_source")
-        .is_none());
+    assert_eq!(
+        crate::with_key_source(&sneaky, &source)["key_source"]["mpc_contract_id"],
+        "v1.signer"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Launching is not open yet: no key source")]
+fn launching_needs_a_key_source() {
+    let mut l = deploy();
+    ctx("admin.near", YOCTO);
+    l.set_key_source(None);
+    ctx("creator.near", FEE.saturating_add(FUNDING));
+    let _ = l.launch(args("magister"));
 }
 
 #[test]

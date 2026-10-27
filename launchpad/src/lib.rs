@@ -170,6 +170,10 @@ impl Launchpad {
         let code_hash = self
             .collection_code_hash
             .unwrap_or_else(|| env::panic_str("Launching is not open yet"));
+        let key_source = self
+            .key_source
+            .clone()
+            .unwrap_or_else(|| env::panic_str("Launching is not open yet: no key source"));
         let deposit = env::attached_deposit();
         let required = self.launch_fee.saturating_add(self.collection_funding);
         require!(
@@ -205,7 +209,7 @@ impl Launchpad {
             "keeper_id": keeper_id,
             "treasury_id": creator_id,
             "mint_price": args.mint_price,
-            "collection": with_key_source(&args.collection, self.key_source.as_ref()),
+            "collection": with_key_source(&args.collection, &key_source),
             "code_hash": Base58CryptoHash::from(code_hash),
         });
         Promise::new(account_id.clone())
@@ -325,7 +329,7 @@ impl Launchpad {
     /// launches use. Only approve code that keeps every promise a collection
     /// makes to its buyers.
     /// Sets where the context keys of collections launched from now on come
-    /// from. Existing collections keep theirs.
+    /// from. Existing collections keep theirs. Launching is closed while unset.
     #[payable]
     pub fn set_key_source(&mut self, key_source: Option<KeySource>) {
         self.assert_admin();
@@ -433,13 +437,11 @@ impl Launchpad {
 /// can't set it: `CollectionArgs` has no such field, and it is added here.
 fn with_key_source(
     collection: &CollectionArgs,
-    key_source: Option<&KeySource>,
+    key_source: &KeySource,
 ) -> near_sdk::serde_json::Value {
     let mut value = near_sdk::serde_json::to_value(collection)
         .unwrap_or_else(|_| env::panic_str("Collection arguments can't be encoded"));
-    if let Some(source) = key_source {
-        value["key_source"] = near_sdk::serde_json::to_value(source)
-            .unwrap_or_else(|_| env::panic_str("Key source can't be encoded"));
-    }
+    value["key_source"] = near_sdk::serde_json::to_value(key_source)
+        .unwrap_or_else(|_| env::panic_str("Key source can't be encoded"));
     value
 }

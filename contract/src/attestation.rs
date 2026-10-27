@@ -221,7 +221,9 @@ impl Contract {
     #[payable]
     pub fn revoke_keeper_key(&mut self, public_key: PublicKey) {
         self.assert_admin();
-        self.attested_keys.remove(&public_key);
+        if self.attested_keys.remove(&public_key).is_some() {
+            self.rotate_key_epoch();
+        }
     }
 }
 

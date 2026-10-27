@@ -15,8 +15,13 @@ impl Contract {
         context_hash: Base64VecU8,
         context_ref: String,
         version: U64,
+        key_epoch: u32,
     ) {
         self.assert_keeper();
+        require!(
+            key_epoch == self.key_epoch,
+            format!("Contexts are saved under key epoch {}", self.key_epoch)
+        );
         let hash: [u8; 32] = context_hash
             .0
             .try_into()
@@ -33,6 +38,7 @@ impl Contract {
         kat.context_hash = Some(hash);
         kat.context_ref = Some(context_ref);
         kat.context_version = version.0;
+        kat.key_epoch = key_epoch;
     }
 
     /// Moves each amount from a kat's balance: the creator's share to the

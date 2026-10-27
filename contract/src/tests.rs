@@ -59,7 +59,7 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         media_extension: String::new(),
         terms: crate::Terms::default(),
         sealed_prompt: None,
-        key_source: None,
+        key_source: crate::tests::mpc_source(),
     }
 }
 
@@ -157,7 +157,7 @@ fn set_context_stores_hash_ref_and_version() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
     let kat = c.get_kat("1".to_string()).unwrap();
     assert_eq!(kat.context_hash.unwrap().0, vec![7u8; 32]);
     assert_eq!(kat.context_ref.unwrap(), "ref-1");
@@ -170,7 +170,7 @@ fn set_context_rejects_owner() {
     let mut c = deploy();
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn set_context_rejects_skipped_version() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 2.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 2.into(), 1);
 }
 
 #[test]
@@ -190,8 +190,8 @@ fn set_context_rejects_replayed_version() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
-    c.set_context("1".to_string(), hash(8), "ref-2".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
+    c.set_context("1".to_string(), hash(8), "ref-2".to_string(), 1.into(), 1);
 }
 
 #[test]
@@ -206,6 +206,7 @@ fn set_context_rejects_short_hash() {
         vec![1u8; 31].into(),
         "ref-1".to_string(),
         1.into(),
+        1,
     );
 }
 
@@ -216,7 +217,7 @@ fn set_context_rejects_oversized_ref() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "x".repeat(257), 1.into());
+    c.set_context("1".to_string(), hash(7), "x".repeat(257), 1.into(), 1);
 }
 
 #[test]
@@ -224,7 +225,7 @@ fn set_context_rejects_oversized_ref() {
 fn set_context_rejects_unknown_kat() {
     let mut c = deploy();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("99".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("99".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
 }
 
 #[test]
@@ -292,7 +293,7 @@ fn transfer_keeps_context_and_balance_with_the_kat() {
     ctx("alice.near", NearToken::from_near(3));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
     let before = c.get_kat("1".to_string()).unwrap();
     ctx("alice.near", YOCTO);
     c.nft_transfer(acc("bob.near"), "1".to_string(), None, None);
@@ -367,7 +368,7 @@ fn replaced_keeper_loses_access() {
     ctx("admin.near", YOCTO);
     c.set_keeper(acc("keeper2.near"));
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
 }
 
 #[test]
@@ -407,7 +408,7 @@ fn storage_growth_after_mint_fits_in_the_reserve() {
     let after_mint = env::storage_usage();
 
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "x".repeat(256), 1.into());
+    c.set_context("1".to_string(), hash(7), "x".repeat(256), 1.into(), 1);
     c.kats.flush();
     ctx("alice.near", NearToken::from_millinear(10));
     let _ = c.nft_approve("1".to_string(), acc("market.near"), None);
@@ -438,7 +439,7 @@ fn set_context_rejects_empty_ref() {
     ctx("alice.near", NearToken::from_near(2));
     c.mint();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), String::new(), 1.into());
+    c.set_context("1".to_string(), hash(7), String::new(), 1.into(), 1);
 }
 
 #[test]
@@ -460,7 +461,7 @@ fn replacement_keeper_can_set_context() {
     ctx("admin.near", YOCTO);
     c.set_keeper(acc("keeper2.near"));
     ctx("keeper2.near", NearToken::from_yoctonear(0));
-    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into());
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 2);
     assert_eq!(c.get_kat("1".to_string()).unwrap().context_version.0, 1);
 }
 
@@ -971,58 +972,112 @@ fn only_the_admin_upgrades() {
 
 // Context keys from NEAR's MPC network.
 
-fn with_key_source(tee: Option<crate::TeeRequirement>) -> Contract {
-    deploy_with(Collection {
-        tee,
-        key_source: Some(crate::KeySource {
-            mpc_contract_id: acc("v1.signer"),
-            domain_id: 2,
-        }),
-        ..collection("Lantern", "LNT", "")
-    })
+pub(crate) fn mpc_source() -> crate::KeySource {
+    crate::KeySource {
+        mpc_contract_id: "v1.signer".parse().unwrap(),
+        domain_id: 2,
+    }
 }
 
 const APP_KEY: &str = "bls12381g1:6qN4d5pLRWcd9RsE3YdQ1ShEJJcTyCa7hxVdT8RT6nUK";
 
 #[test]
-fn a_collection_publishes_where_its_keys_come_from() {
-    let c = with_key_source(None);
-    assert_eq!(
-        c.get_collection().key_source,
-        Some(crate::KeySource {
-            mpc_contract_id: acc("v1.signer"),
-            domain_id: 2
-        })
-    );
+fn a_collection_publishes_where_its_keys_come_from_and_starts_at_epoch_1() {
+    let c = deploy();
+    let view = c.get_collection();
+    assert_eq!(view.key_source, mpc_source());
+    assert_eq!(view.key_epoch, 1);
 }
 
 #[test]
-fn the_keeper_can_request_the_context_key() {
-    let mut c = with_key_source(None);
+fn the_keeper_can_request_the_current_or_an_earlier_context_key() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.rotate_context_key();
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    let _ = c.request_context_key(APP_KEY.to_string());
+    let _ = c.request_context_key(APP_KEY.to_string(), None);
+    let _ = c.request_context_key(APP_KEY.to_string(), Some(1));
+    let _ = c.request_context_key(APP_KEY.to_string(), Some(2));
+}
+
+#[test]
+#[should_panic(expected = "key_epoch must be 1 to 1")]
+fn nobody_can_request_a_future_epoch() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_context_key(APP_KEY.to_string(), Some(2));
 }
 
 #[test]
 #[should_panic(expected = "Only the keeper can call this method")]
 fn nobody_else_can_request_the_context_key() {
-    let mut c = with_key_source(None);
+    let mut c = deploy();
     ctx("alice.near", NearToken::from_yoctonear(0));
-    let _ = c.request_context_key(APP_KEY.to_string());
+    let _ = c.request_context_key(APP_KEY.to_string(), None);
 }
 
 #[test]
 #[should_panic(expected = "only accepts keeper calls signed by an attested key")]
 fn a_tee_collection_releases_its_key_only_to_an_attested_keeper() {
-    let mut c = with_key_source(phala());
+    let mut c = deploy_with(Collection {
+        tee: phala(),
+        ..collection("Lantern", "LNT", "")
+    });
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    let _ = c.request_context_key(APP_KEY.to_string());
+    let _ = c.request_context_key(APP_KEY.to_string(), None);
 }
 
 #[test]
-#[should_panic(expected = "This collection has no key source")]
-fn a_collection_without_a_key_source_has_no_key_to_request() {
+fn changing_keeper_moves_to_a_new_key_epoch() {
     let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.set_keeper(acc("keeper.near"));
+    assert_eq!(c.get_collection().key_epoch, 1, "same keeper, same key");
+    c.set_keeper(acc("other-keeper.near"));
+    assert_eq!(c.get_collection().key_epoch, 2);
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper can call this method")]
+fn a_replaced_keeper_can_no_longer_request_keys() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.set_keeper(acc("other-keeper.near"));
     ctx("keeper.near", NearToken::from_yoctonear(0));
-    let _ = c.request_context_key(APP_KEY.to_string());
+    let _ = c.request_context_key(APP_KEY.to_string(), Some(1));
+}
+
+#[test]
+#[should_panic(expected = "Only the admin can call this method")]
+fn only_the_admin_rotates_the_key() {
+    let mut c = deploy();
+    ctx("alice.near", YOCTO);
+    c.rotate_context_key();
+}
+
+#[test]
+fn contexts_record_the_epoch_they_were_saved_under() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
+    assert_eq!(c.get_kat("1".to_string()).unwrap().key_epoch, 1);
+    ctx("admin.near", YOCTO);
+    c.rotate_context_key();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(8), "ref-2".to_string(), 2.into(), 2);
+    assert_eq!(c.get_kat("1".to_string()).unwrap().key_epoch, 2);
+}
+
+#[test]
+#[should_panic(expected = "Contexts are saved under key epoch 2")]
+fn a_context_under_an_old_key_is_refused() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("admin.near", YOCTO);
+    c.rotate_context_key();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(7), "ref-1".to_string(), 1.into(), 1);
 }

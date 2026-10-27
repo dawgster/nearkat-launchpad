@@ -89,6 +89,7 @@ async fn setup_with(tee: Value) -> TestResult<Env> {
                     "symbol": "KAT",
                     "base_uri": "https://art.example/",
                     "tee": tee,
+                    "key_source": { "mpc_contract_id": "mpc.test.near", "domain_id": 2 },
                 },
             }),
         )?
@@ -166,7 +167,7 @@ async fn personality_and_balance_follow_the_kat_on_transfer() -> TestResult {
         &env.keeper,
         "set_context",
         json!({
-            "token_id": id, "context_hash": hash_b64(7), "context_ref": "ref-1", "version": "1",
+            "token_id": id, "context_hash": hash_b64(7), "context_ref": "ref-1", "version": "1", "key_epoch": 1,
         }),
         NearToken::from_yoctonear(0),
     )
@@ -302,7 +303,7 @@ async fn contract_stays_solvent_through_context_approval_and_transfer() -> TestR
         &env.keeper,
         "set_context",
         json!({
-            "token_id": id, "context_hash": hash_b64(7), "context_ref": "x".repeat(256), "version": "1",
+            "token_id": id, "context_hash": hash_b64(7), "context_ref": "x".repeat(256), "version": "1", "key_epoch": 1,
         }),
         NearToken::from_yoctonear(0),
     )

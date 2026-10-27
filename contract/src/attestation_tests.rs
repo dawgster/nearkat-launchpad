@@ -185,7 +185,7 @@ fn tee_collection() -> Contract {
             media_extension: String::new(),
             terms: crate::Terms::default(),
             sealed_prompt: None,
-            key_source: None,
+            key_source: crate::tests::mpc_source(),
         },
         None,
     );
@@ -207,6 +207,7 @@ fn set_context(c: &mut Contract) {
         vec![7u8; 32].into(),
         "ref".to_string(),
         1.into(),
+        1,
     );
 }
 
@@ -268,7 +269,7 @@ fn registration_needs_a_tee_requirement() {
             media_extension: String::new(),
             terms: crate::Terms::default(),
             sealed_prompt: None,
-            key_source: None,
+            key_source: crate::tests::mpc_source(),
         },
         None,
     );

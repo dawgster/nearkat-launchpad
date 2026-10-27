@@ -83,7 +83,9 @@ pub struct Contract {
     /// The published code this runs, when known.
     code_hash: Option<CryptoHash>,
     /// Where context keys come from. Fixed at deployment.
-    key_source: Option<KeySource>,
+    key_source: KeySource,
+    /// Contexts are saved under this epoch's key. Starts at 1.
+    key_epoch: u32,
 }
 
 #[near]
@@ -200,6 +202,7 @@ impl Contract {
             factory_id,
             code_hash: code_hash.map(Into::into),
             key_source,
+            key_epoch: 1,
         }
     }
 
@@ -289,6 +292,7 @@ impl Contract {
             sealed_prompt: self.sealed_prompt.clone(),
             sealed_key_attested: self.sealed_key_attested,
             key_source: self.key_source.clone(),
+            key_epoch: self.key_epoch,
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),

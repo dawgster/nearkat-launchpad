@@ -114,6 +114,15 @@ async fn setup() -> TestResult<Env> {
         NearToken::from_yoctonear(1),
     )
     .await??;
+    call(
+        &env,
+        &env.launchpad.id,
+        &env.admin,
+        "set_key_source",
+        json!({ "key_source": { "mpc_contract_id": "mpc.test.near", "domain_id": 2 } }),
+        NearToken::from_yoctonear(1),
+    )
+    .await??;
     Ok(env)
 }
 
