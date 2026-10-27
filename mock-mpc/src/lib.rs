@@ -107,6 +107,22 @@ impl MockMpc {
         )
     }
 
+    /// A small part of the real contract's `state` view: its one CKD domain,
+    /// in the same JSON shape, so tools that look domains up work here too.
+    pub fn state(&self) -> near_sdk::serde_json::Value {
+        near_sdk::serde_json::json!({
+            "Running": {
+                "domains": {
+                    "domains": [{
+                        "id": self.domain_id,
+                        "protocol": "ConfidentialKeyDerivation",
+                        "purpose": "CKD",
+                    }],
+                },
+            },
+        })
+    }
+
     /// The derived key for the caller and path, ElGamal-encrypted to the
     /// app public key: `(Y, C) = (y·G1, msk·H(pk ‖ app_id) + y·A)`.
     #[payable]
@@ -183,6 +199,51 @@ mod tests {
             bls12_381::pairing(&G1Affine::from(derived), &G2Affine::generator()),
             bls12_381::pairing(&G1Affine::from(hashed), &pk)
         );
+    }
+}
+
+#[cfg(test)]
+mod upstream {
+    use super::*;
+    use bls12_381::{G1Affine, G2Affine};
+
+    /// Values frozen in NEAR's MPC repository (see the keeper's
+    /// `test/fixtures/near-mpc-upstream.json`), so this mock is checked
+    /// against the network's own code, not just against the keeper.
+    fn fixture() -> near_sdk::serde_json::Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../keeper/test/fixtures/near-mpc-upstream.json"
+        );
+        near_sdk::serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn derives_the_same_app_ids_as_the_network() {
+        for case in fixture()["app_ids"].as_array().unwrap() {
+            let id = derive_app_id(
+                case["account"].as_str().unwrap(),
+                case["path"].as_str().unwrap(),
+            );
+            let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(hex, case["app_id"].as_str().unwrap());
+        }
+    }
+
+    #[test]
+    fn hashes_to_the_same_point_as_the_network() {
+        let pk = G2Affine::from(bls12_381::G2Projective::generator()).to_compressed();
+        let message = [pk.as_slice(), &[0u8; 32]].concat();
+        let hashed = <G1Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(
+            &message,
+            NEAR_CKD_DOMAIN,
+        );
+        let hex: String = G1Affine::from(hashed)
+            .to_compressed()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(hex, fixture()["hash_to_curve"]["point"].as_str().unwrap());
     }
 }
 

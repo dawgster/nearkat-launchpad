@@ -10,6 +10,7 @@ import { NearChain, transactionArgsFrom } from "../src/chain.ts";
 import { MpcKeyring, newAppKey } from "../src/ckd.ts";
 import { FastfsStore } from "../src/fastfs.ts";
 import { KatService } from "../src/kats.ts";
+import { liveCheck } from "../src/livecheck.ts";
 import { Meter } from "../src/meter.ts";
 import { FileStore, MirroredStore } from "../src/store.ts";
 import { FakeInference } from "./fakes.ts";
@@ -138,6 +139,22 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
     afterAll(async () => {
       await sandbox?.stop();
     });
+
+    test("the live check passes against the sandbox, as a rehearsal for testnet", async () => {
+      const chain = new NearChain(keeperA.near, contractId, {
+        signerId: keeperA.id,
+        finality: "optimistic",
+      });
+      const results = await liveCheck({
+        view: (id, method, args) => keeperA.near.view(id, method, args),
+        mpcContractId: keySource.mpc_contract_id,
+        collection: { id: contractId, keeperId: keeperA.id, chain },
+        fastfs: { gatewayUrl: null, transactionArgs: transactionArgsFrom(sandbox.rpcUrl) },
+        waitMs: 15_000,
+      });
+      expect(results.filter((r) => r.ok === false)).toEqual([]);
+      expect(results.filter((r) => r.ok === true)).toHaveLength(6);
+    }, 120_000);
 
     test("a new keeper takes over: it reads the old memories, and the old keeper is locked out", async () => {
       // Keeper A wakes a token; its context goes on NEAR with FastFS, under epoch 1.

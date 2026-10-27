@@ -1,0 +1,90 @@
+{
+  "source": "github.com/near/mpc at dc62e306c4cc12020f77ce2f835e1bd6e0960e89: crates/near-mpc-crypto-types/src/snapshots (derive_app_id__has_not_changed) and crates/contract/src/primitives/snapshots (hash_app_id_with_pk__should_produce_stable_output)",
+  "app_ids": [
+    {
+      "account": "dwefqwg",
+      "path": "frwewegwegweg",
+      "app_id": "b8177b00468f97c337b3f921fbef7aaa959e9a49005aaa59768b795152f4c989"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "fwei2.3f230",
+      "app_id": "16ac7db8b7c3ad2c5e8fe7d1a9e91ca6634cf9baf84952f85795f515e29cd275"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "f23fjwef8232",
+      "app_id": "f1d47585609f34fd18fc109340e78c0822c9a010fae30b7e1ca83df48c994986"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "fwefwo23fewfw",
+      "app_id": "55591d35775cabb829df65ae7dbd415554a7690657962952555fabf9eb8462e1"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "frwewegwegweg",
+      "app_id": "2116717ccc7b1fd0053d96c975d6d2d39321012ff2cf66a328be6707f5d0f48c"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "fwei2.3f230",
+      "app_id": "6042862796895d3b0e5678f5bc2da01b245fb8bf7e3515d261a7e93a963e25e3"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "f23fjwef8232",
+      "app_id": "344162da86554a281123d58406ce4ba28518113fe1d66405924c9e9b1545e012"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "fwefwo23fewfw",
+      "app_id": "90aae886b2533bd33464d922d3ccd1ed1a4d05786b39598ba79a04d0186bd2a4"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "frwewegwegweg",
+      "app_id": "c26434220286c5878fac6d374492b0be520d80f08bdb2504126360e09ba082dc"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "fwei2.3f230",
+      "app_id": "5ef85af87983f28e2b0bc1f2a5ce4d17c8814f86959bb4e1f2d288eafe9c337a"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "f23fjwef8232",
+      "app_id": "b6c7c1cde6185ddb26eb497a2742eac4a05107ce687deaf44ef409c8ba483312"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "fwefwo23fewfw",
+      "app_id": "086cb2e83885d66cd034010d7944e8b29e616be0f378eefa902672898df7b90c"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "frwewegwegweg",
+      "app_id": "fe4c1e1948e2716f208ed94d63fa528181d8224234d0f5a22850b58580f84940"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "fwei2.3f230",
+      "app_id": "55bd75937a299f9adebd9e12c095fd3479085b097c1456b393cc35a2909b1498"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "f23fjwef8232",
+      "app_id": "82b56d55c9876ed6bf79af7a4a7bd21187aa16731d4c033bdb81921d698c6a5d"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "fwefwo23fewfw",
+      "app_id": "411fbc46a494fe9a2f8c9cc9c82baee1a634df9578af381901561541ad6f32f3"
+    }
+  ],
+  "hash_to_curve": {
+    "pk": "G2 generator, compressed",
+    "app_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "point": "91a9e23bb0a79b6c542b80e8ee10c102a4903ffb8e8bd5592bc4aba557742dd352417b686c0d067714818275c22c886a"
+  }
+}

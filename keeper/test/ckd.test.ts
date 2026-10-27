@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
 import { describe, expect, test } from "vitest";
 import {
   appId,
   CONTEXT_KEY_PATH,
   contextRoot,
   fetchContextRoot,
+  hashAppId,
   MpcKeyring,
   newAppKey,
   openResponse,
@@ -67,6 +69,28 @@ describe("CKD", () => {
       fetchContextRoot(vector.caller as string, { mpc_contract_id: "mpc", domain_id: 2 }, chain, 1),
     ).rejects.toThrow(/not a valid key/);
     expect(CONTEXT_KEY_PATH).toBe(vector.path);
+  });
+});
+
+/** Values frozen in NEAR's MPC repository, so this client is checked against the network's own code. */
+const upstream = JSON.parse(
+  readFileSync(join(process.cwd(), "test/fixtures/near-mpc-upstream.json"), "utf8"),
+) as {
+  app_ids: Array<{ account: string; path: string; app_id: string }>;
+  hash_to_curve: { app_id: string; point: string };
+};
+
+describe("agrees with NEAR's MPC code", () => {
+  test.each(upstream.app_ids)("app id of $account for $path", ({ account, path, app_id }) => {
+    expect(Buffer.from(appId(account, path)).toString("hex")).toBe(app_id);
+  });
+
+  test("hashes a public key and app id to the same G1 point", () => {
+    const point = hashAppId(
+      bls.G2.Point.BASE.toBytes(true),
+      Buffer.from(upstream.hash_to_curve.app_id, "hex"),
+    );
+    expect(Buffer.from(point.toBytes(true)).toString("hex")).toBe(upstream.hash_to_curve.point);
   });
 });
 

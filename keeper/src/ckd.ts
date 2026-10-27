@@ -45,6 +45,13 @@ export function appId(callerAccountId: string, path: string): Uint8Array {
   );
 }
 
+/** `H(pk ‖ app_id)`: the point the MPC network signs for an app, hashed to G1 as the network does. */
+export function hashAppId(mpcPublicKey: Uint8Array, app: Uint8Array) {
+  return bls.G1.hashToCurve(new Uint8Array([...mpcPublicKey, ...app]), {
+    DST: NEAR_CKD_DOMAIN,
+  }) as unknown as InstanceType<typeof G1>;
+}
+
 /** A throwaway key pair for one request. The secret never leaves the keeper. */
 export function newAppKey(): { secret: bigint; publicKey: string } {
   const secret = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
@@ -68,9 +75,7 @@ export function openResponse(
   const derived = c.subtract(y.multiply(secret));
   const pkBytes = decode("bls12381g2:", mpcPublicKey);
   const pk = G2.fromBytes(pkBytes);
-  const hashed = bls.G1.hashToCurve(new Uint8Array([...pkBytes, ...app]), {
-    DST: NEAR_CKD_DOMAIN,
-  }) as unknown as InstanceType<typeof G1>;
+  const hashed = hashAppId(pkBytes, app);
   const valid =
     !derived.is0() && bls.fields.Fp12.eql(bls.pairing(derived, G2.BASE), bls.pairing(hashed, pk));
   if (!valid) {
@@ -79,9 +84,14 @@ export function openResponse(
   return derived.toBytes(true);
 }
 
-/** The 32-byte root every token key of a collection is derived from. */
+/**
+ * The 32-byte root every token key of a collection is derived from. Uses the
+ * HKDF salt of NEAR's own CKD example, with an `info` naming this purpose.
+ */
 export function contextRoot(derivedKey: Uint8Array): Buffer {
-  return Buffer.from(hkdfSync("sha256", derivedKey, "nearkat-ckd-v1", "nearkat/contexts", 32));
+  return Buffer.from(
+    hkdfSync("sha256", derivedKey, "near-mpc-ckd-hkdf-v1", "nearkat/contexts/v1", 32),
+  );
 }
 
 /** Fetches, decrypts and checks a collection's context root for one key epoch. */
