@@ -9,12 +9,12 @@ It serves many collections: its home one (`CONTRACT_ID`), any listed in
 keeper's account. Each collection's public prompt and starter context are
 read from its contract (`get_collection`), so the same keeper serves a
 meerkat, a tutor or a game master. Each has its own meter and journal, and
-kat keys derived per contract.
+its own context keys from NEAR's MPC network.
 
 Two modes:
 
-- **local** (default): the root secret comes from `KEEPER_ROOT_SECRET` and
-  the operator can read contexts.
+- **local** (default): the root secret comes from `KEEPER_ROOT_SECRET`. The
+  operator can read contexts, because the keeper decrypts them in memory.
 - **phala**: set `KEEPER_MODE=phala` inside a Phala Cloud (dstack) app. The
   root secret comes from dstack's key service, which hands it only to
   instances of that app; `KEEPER_ROOT_SECRET` must be unset. `/attestation`
@@ -34,16 +34,24 @@ marked confidential, never to the update that rewrites a token's character.
 Token art is served at `GET /art/<contract>/<id>.svg`, drawn by the shared
 `../art` module from the token's on-chain growth.
 
-**Context keys.** A collection with a `key_source` gets its keys from NEAR's
-MPC network (confidential key derivation). Before serving it, the keeper
+**Context keys.** Every collection's keys come from NEAR's MPC network
+(confidential key derivation); the root secret only gives the keeper its NEAR
+key, session key and sealing key. Before serving a collection, the keeper
 makes a throwaway BLS12-381 key and calls the collection's
 `request_context_key`; the network derives a key for that collection's
-account and returns it encrypted to the throwaway key. The keeper checks the
-result is the network's BLS signature on the collection's app id, and
-derives every token's key from it. So the keys don't depend on any keeper's
-own secret: a replacement keeper the collection names gets the same keys,
-and for a TEE collection only an attested keeper key can ask. Collections
-without a key source use keys derived from the keeper's root secret.
+account and key epoch, and returns it encrypted to the throwaway key. The
+keeper checks the result is the network's BLS signature on the collection's
+app id, and derives every token's key from it (`src/ckd.ts`, checked against
+values frozen in NEAR's MPC repository). So the keys don't depend on any
+keeper's own secret: a replacement keeper the collection names gets the same
+keys, and for a TEE collection only an attested keeper key can ask.
+
+**Key epochs.** Changing keeper, revoking an attested key or
+`rotate_context_key` moves the collection to a new key epoch. The keeper
+saves under the current epoch, fetches older epochs' keys to read what was
+saved before, and if the epoch moves during a save, saves again under the new
+key. A replaced keeper can't get any key, so it can't read what is saved
+after it left.
 
 **Storage.** By default (`STORAGE=fastfs`) each encrypted context is stored
 on NEAR as a FastFS file: a `__fastdata_fastfs` call from the keeper account
@@ -87,12 +95,23 @@ first run downloads a NEAR sandbox binary.
 
 ## Operating notes
 
-- Run one keeper per contract. Sign-in nonces, sessions and unsettled charges
-  are held by the process, and two keepers would overcommit balances.
+- Run one keeper process per keeper account. Sign-in nonces, sessions and
+  unsettled charges are held by the process, and two would overcommit
+  balances. The contract's version and debit sequence checks stop them
+  corrupting state, but users would see refused saves.
 - Unsettled charges are journaled to `METER_JOURNAL` and settled on SIGTERM.
   Keep that file across restarts.
-- There is no rate limiting. Put the keeper behind a proxy that provides it
-  before exposing it publicly.
+- Chat is limited per account (20 messages at once, then one every 3 s) and
+  sign-in per client (30, then one every 2 s). Behind a reverse proxy, set
+  `TRUST_PROXY=true` so clients are told apart by `X-Forwarded-For`.
+- A reply that quotes a collection's secret instructions (any six words in a
+  row) is replaced before the owner or the conversation sees it, and logged.
+  Paraphrase still gets through.
+- `npm run live-check` checks the live pieces: the MPC contract's CKD
+  domain and key, a collection's key source, a real key request, and a
+  FastFS round trip. Set `NEAR_NETWORK`, and for the collection steps
+  `COLLECTION_ID`, `KEEPER_ACCOUNT_ID` and `KEEPER_ROOT_SECRET`. The sandbox
+  tests rehearse it.
 - Inference charges accrue on each contract for the keeper. The keeper
   withdraws them to its account once they reach `WITHDRAW_MIN_YOCTO`
   (1 NEAR by default), after settling charges.
@@ -114,9 +133,11 @@ first run downloads a NEAR sandbox binary.
 | `GET /art/:contract/:id.svg` | none, any origin | A token's picture, as it has grown |
 | `GET /kats/:id/context` | owner | The whole context: token id, version, salt, character (`personality`), memory summary |
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
-| `GET /c/:contract/kats/:id/context`, `POST /c/:contract/kats/:id/chat` | owner | The same, for a collection other than the home one |
+| `GET /kats/:id/export` | owner | The context with its on-chain record (hash, ref, version, key epoch), as a file to keep |
+| `GET /c/:contract/kats/:id/...` | owner | The same routes, for a collection other than the home one |
 
 Errors are JSON `{ error, message }`: 400 `invalid_input`, 401
 `unauthorized`, 404 `not_served` (a collection this keeper doesn't serve), 413 `too_large`, 402 `insufficient_balance` (with `balance` and `required`),
-403 `not_owner`, 404 `not_found`, 409 `waking_up`, 500 `corrupted`, 503
-`inference_unavailable`.
+403 `not_owner`, 404 `not_found`, 409 `waking_up`, 429 `rate_limited` (with
+`retry_after_ms`), 500 `corrupted`, 503 `inference_unavailable`. A chat reply
+that was held back carries `withheld: true`.

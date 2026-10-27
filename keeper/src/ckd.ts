@@ -121,8 +121,11 @@ export interface Keyring {
   currentEpoch(): Promise<number>;
   /** The AES-256-GCM key of one token's context under an epoch. */
   katKey(tokenId: string, epoch: number): Promise<Buffer>;
-  /** Forgets the current epoch, once the collection has moved on. */
-  refresh(): void;
+  /**
+   * The collection has moved on: to `epoch` when the contract said which,
+   * otherwise the current epoch is read again.
+   */
+  refresh(epoch?: number): void;
 }
 
 /**
@@ -156,8 +159,9 @@ export class MpcKeyring implements Keyring {
     return this.#epoch;
   }
 
-  refresh(): void {
-    this.#epoch = null;
+  refresh(epoch?: number): void {
+    // The contract's own answer beats a view, which may trail it by a block or two.
+    this.#epoch = epoch === undefined ? null : Promise.resolve(epoch);
   }
 
   async katKey(tokenId: string, epoch: number): Promise<Buffer> {

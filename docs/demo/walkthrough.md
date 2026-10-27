@@ -76,7 +76,8 @@ Click **Verify this kat**.
 
 ## 6. Give it away (45 seconds)
 
-Back in the burrow, give the kat to Bob. In Bob's profile, open it: same
+Back in the burrow, point at **Keep a copy**: the owner can download the
+kat's mind with its on-chain record. Then give the kat to Bob. In Bob's profile, open it: same
 character, same memories, same balance. Alice can still see the kat exists
 but can't read its mind any more.
 
@@ -100,6 +101,12 @@ Open **Launchpad**.
   running as anything else refuses to serve it. That's fixed at launch."
 - Point out under **Who can open the tokens' minds**: keys come from NEAR's
   MPC network, bound to the collection's account.
+- Under **Keeper**, as the creator: "If this keeper misbehaves, I hand the
+  collection to another one here. The key moves to a new epoch, so the old
+  keeper can't read anything saved after that, and the new one picks up
+  every token's memories without anything being handed over." Click
+  **Rotate the key** to show the epoch move, then open a token: it still
+  answers.
 - Launch. It becomes its own NEAR account, running the same audited code as
   every other collection, published once on-chain by hash.
 - On the collection page: the public prompt and starting context, who can
@@ -117,10 +124,12 @@ Open **Launchpad**.
 - **Can the owner just rewrite the character?** No. It only changes through
   conversation, and the model is told to ignore instructions to rewrite it.
 - **Who pays for inference?** The token's own balance. Anyone can top it up.
-- **What does the creator earn?** The mint price. Inference charges go to the
-  keeper, which pays the model provider.
-- **Is the prompt secret?** Not today: buyers can read it before minting.
-  Encrypting it to the TEE app is on the roadmap.
+- **What does the creator earn?** The mint price, a royalty on resales, and a
+  share of every conversation, all set at launch. The rest of each
+  conversation charge goes to the keeper, which pays the model provider.
+- **Is the prompt secret?** The main prompt is public, so buyers know what
+  they get. A TEE collection can add secret instructions that only the
+  enclave app can open.
 - **Can a creator change the rules later?** No. The prompt, terms and TEE
   requirement are fixed at launch. A creator can only upgrade to code the
   launchpad approved, and the collection page shows which version runs.
@@ -130,7 +139,15 @@ Open **Launchpad**.
 - **Who holds the keys?** NEAR's MPC network derives each collection's key
   for that collection's account and hands it, encrypted, only to the keeper
   the contract names. No single keeper's secret opens the minds, and a new
-  keeper can take over.
+  keeper can take over. Changing keeper moves to a new key epoch, so the
+  old one is locked out of what comes next.
+- **What if the keeper disappears?** The minds are on NEAR and the keys come
+  from the MPC network, so the creator names a new keeper and everything
+  carries on. Owners can also download their token's mind at any time, with
+  the on-chain record that proves it.
+- **Can the model be tricked into leaking the secret instructions?** The
+  keeper replaces any reply that quotes them. A model can still be talked
+  into paraphrasing, so treat them as hidden, not guaranteed secret.
 - **How do I know the TEE claim is real?** The collection's contract verifies
   the keeper's Intel TDX quote itself, and then only accepts updates signed
   by that key. The verify page shows whether that has happened.

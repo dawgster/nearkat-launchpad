@@ -27,14 +27,21 @@ conversation charge, optional `chat_price` and `save_price`),
 can read; `sealed_key_attested` says when the key it is sealed to has been
 attested. `new` also takes an optional `code_hash` (the launchpad passes it).
 
-`collection.key_source` (`{ mpc_contract_id, domain_id }`, optional, fixed)
+`collection.key_source` (`{ mpc_contract_id, domain_id }`, required, fixed)
 names NEAR's MPC network as the source of the collection's context keys.
-`request_context_key({ app_public_key })` (keeper only, and for a TEE
-collection only with an attested key) forwards a confidential key derivation
-request to `request_app_private_key` on that contract, for the path
-`nearkat/contexts/v1`. The network derives the key for this account and
-returns it encrypted to the keeper's throwaway BLS12-381 key, so only the
-keeper that asked can read it. The keeper derives every token's key from it.
+`request_context_key({ app_public_key, key_epoch? })` (keeper only, and for
+a TEE collection only with an attested key) forwards a confidential key
+derivation request to `request_app_private_key` on that contract, for the
+path `nearkat/contexts/v1/<epoch>`. The network derives the key for this
+account and returns it encrypted to the keeper's throwaway BLS12-381 key, so
+only the keeper that asked can read it.
+
+Keys have epochs (`get_collection().key_epoch`, from 1). `set_keeper` with a
+new account, `revoke_keeper_key` and `rotate_context_key` (admin, 1 yocto)
+move to the next. `set_context` takes the `key_epoch` the context was
+encrypted under, accepts only the current one, and records it on the token
+(`get_kat().key_epoch`). The keeper may request any epoch up to the current
+one, to read older contexts.
 
 The contract also accepts `__fastdata_fastfs` calls and ignores them: the
 keeper stores each encrypted context as a FastFS file addressed to the

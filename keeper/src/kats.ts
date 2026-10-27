@@ -415,7 +415,7 @@ export class KatService {
         );
       } catch (error) {
         if (error instanceof KeyEpochChanged && attempt < SAVE_ATTEMPTS) {
-          this.#o.keyring.refresh();
+          this.#o.keyring.refresh(error.current);
           continue;
         }
         throw error;

@@ -123,7 +123,7 @@ against published source.
 | Path | What it is |
 |---|---|
 | `/launch` | Create a collection: name, symbol, address, prompt (with Character, Tutor and Game master templates), starter, price, supply, and who may open minds. Live preview of what token #1 is told. Lists launched collections. |
-| `/c/:contract` | A collection: its public prompt and starter, who can open minds, whether this app's keeper serves it, mint, and your tokens. |
+| `/c/:contract` | A collection: its public prompt and starter, who can open minds, its keeper and key epoch, whether this app's keeper serves it, mint, and your tokens. Its creator can hand it to another keeper or rotate its key there. |
 | `/c/:contract/kat/:id` | Talk to a token of a launched collection, as on a kat's page. |
 | `/c/:contract/kat/:id/verify` | Verify it, including whether its contract has attested the keeper. |
 
@@ -208,39 +208,54 @@ requirement, terms.
 
 ## Context keys from NEAR's MPC network
 
-Without this, every token key derives from the keeper's root secret: whoever
-holds that secret holds the keys, and a collection can't change keeper
-without someone handing the secret across. With a `key_source`, keys come
-from NEAR's MPC network through confidential key derivation (CKD):
+Every collection's context keys come from NEAR's MPC network through
+confidential key derivation (CKD). There is no other path: the keeper's own
+root secret only gives it a NEAR key, a session key and a sealing key. So
+whoever runs a keeper never holds a secret that opens contexts on its own,
+and a collection can change keeper without anything being handed across.
 
 1. The launchpad's admin sets `key_source` (`{ mpc_contract_id, domain_id }`)
-   with `set_key_source`, and the launchpad writes it into every launch's
-   init arguments, so creators can't point it elsewhere. It is fixed for the
-   collection's life.
+   with `set_key_source`; launching is closed until it is set. The launchpad
+   writes it into every launch's init arguments, so creators can't point it
+   elsewhere. It is fixed for the collection's life.
 2. To serve a collection, the keeper makes a throwaway BLS12-381 key pair
-   and calls the collection's `request_context_key(app_public_key)`. Only the
-   keeper account may call it, and for a TEE collection only with an
-   attested key, so the attestation is registered first.
+   and calls the collection's `request_context_key(app_public_key,
+   key_epoch)`. Only the keeper account may call it, and for a TEE collection
+   only with an attested key, so the attestation is registered first.
 3. The collection calls `request_app_private_key` on the MPC contract with
-   the path `nearkat/contexts/v1`. The network derives
+   the path `nearkat/contexts/v1/<epoch>`. The network derives
    `K = msk · H(pk ‖ app_id)`, where `app_id` hashes the caller (the
    collection's account) and the path, and returns it ElGamal-encrypted to
    the throwaway key.
 4. The keeper decrypts it and checks the pairing
    `e(K, G2) = e(H(pk ‖ app_id), pk)`: it is the network's BLS signature on
-   this collection's app id. It then derives a 32-byte root with HKDF and
-   every token key from that root.
+   this collection's app id. It then derives a 32-byte root with HKDF (the
+   salt of NEAR's CKD example) and every token key from that root.
 
-Consequences: no keeper's own secret opens the contexts. Any keeper the
-contract names gets the same key, so changing keeper needs no hand-over, and
-an admin who wants to cut a keeper off changes `keeper_id` (and for a TEE
-collection the new keeper must be attested in the same app). A keeper that
-once held the key still knows it; changing keeper does not re-encrypt old
-contexts.
+### Key epochs
 
-`mock-mpc/` is a test-only contract with the network's real maths, for the
-sandbox and browser tests. The keeper's TypeScript client is checked against
-a response produced by its Rust code.
+The collection keeps a `key_epoch`, starting at 1. `set_keeper` with a new
+account, `revoke_keeper_key` on an attested key, and the admin's
+`rotate_context_key` each move it on. `set_context` takes the epoch the
+context was encrypted under, refuses any but the current one, and records it
+on the token (`get_kat().key_epoch`). The current keeper may request any
+epoch up to the current one, so it can read contexts saved before a
+rotation; each token moves to the new key on its next save.
+
+What this buys: a keeper that is replaced, or whose attested key is revoked,
+can't get any key from then on, so it can't read anything saved after it
+left. What it doesn't: that keeper still knows the keys of the epochs it
+served, and old contexts stay on-chain, so it can still read those
+versions. Rotation protects the future, not the past.
+
+### Checked against NEAR's code
+
+The keeper's app-id derivation and hash-to-curve are tested against values
+frozen in NEAR's MPC repository (`keeper/test/fixtures/near-mpc-upstream.json`,
+with the commit they came from), and so is `mock-mpc/`, the test-only contract
+that does the network's maths for sandbox and browser tests. The keeper's
+decryption is checked against a response from that mock. `npm run
+live-check` in the keeper runs the same steps against testnet or mainnet.
 
 ## Storage on NEAR: FastFS
 
@@ -263,10 +278,14 @@ transaction. `STORAGE=file` keeps contexts only on the keeper's disk.
 
 - **On real infrastructure.** The Phala flow (dstack key derivation, PCCS
   collateral, on-chain registration), CKD and FastFS are tested against
-  stand-ins and real recorded data here (a sandbox node, a mock MPC contract
-  with the real maths), not yet on a live Phala CVM, the live MPC network or
-  FastNear's indexer. Check the MPC contract's CKD domain id and gas needs on
-  testnet before launch.
+  stand-ins and data from the real systems (a sandbox node, a mock MPC
+  contract checked against NEAR's own test values, recorded TDX quotes), not
+  yet on a live Phala CVM, the live MPC network or FastNear's indexer. Run
+  `npm run live-check` in `keeper/` on testnet before launch.
+- **Leaks through the model.** Secret instructions can still be paraphrased
+  out of the model; the keeper only stops verbatim quotes.
+- **One process per keeper.** A keeper account's state (sessions, unsettled
+  charges) lives in one process; it doesn't scale out yet.
 - **Archival reads.** Reading a context back without a gateway needs an
   archival RPC node; FastNear runs public ones, but they are rate limited.
 - **Migrations.** The upgrade path is in place; the first version that changes

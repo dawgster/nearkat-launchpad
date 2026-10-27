@@ -693,6 +693,24 @@ describe("a collection with a sealed prompt", () => {
   });
 });
 
+describe("key epochs", () => {
+  test("saves again under the new key when the collection rotated mid-save, without re-reading it", async () => {
+    const { chain, kats, inference } = await setup();
+    // The keeper still believes epoch 1; views would keep saying so.
+    chain.rotate();
+    let views = 0;
+    chain.getKeyEpoch = async () => {
+      views += 1;
+      return 1;
+    };
+    inference.evolveTo = { character: "You are rotated.", memory: "" };
+    await growUp(kats, "alice.near");
+    expect(chain.kats.get("1")).toMatchObject({ key_epoch: 2, context_version: "2" });
+    expect(views).toBe(0);
+    expect((await kats.getContext("alice.near", "1")).personality).toBe("You are rotated.");
+  });
+});
+
 describe("exportMind", () => {
   test("gives the owner the mind with the on-chain record that proves it", async () => {
     const { kats, chain } = await setup();
