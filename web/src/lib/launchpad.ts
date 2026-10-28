@@ -25,6 +25,8 @@ export interface CollectionView {
   key_source?: KeySource | null;
   /** The key epoch new contexts are saved under. It moves on when the keeper changes. */
   key_epoch?: number;
+  /** The MPC network's Ed25519 domain token wallets are signed in; null without wallets. */
+  wallet_domain_id?: number | null;
 }
 
 /** NEAR's MPC network, which derives a collection's context key for its account alone. */

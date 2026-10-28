@@ -30,7 +30,14 @@ export interface ChatReply {
   balance: string;
   /** Set when the model's reply quoted the collection's secret instructions and was replaced. */
   withheld?: boolean;
+  /** Set when the token's mind tried to pay from its wallet. */
+  payment?: PaymentOutcome;
 }
+
+/** A payment the token's mind asked for. Amounts are yoctoNEAR. */
+export type PaymentOutcome =
+  | { status: "sent"; receiver_id: string; amount: string; memo: string; hash: string }
+  | { status: "refused"; receiver_id: string; amount: string; memo: string; reason: string };
 
 /** A token's mind as its owner downloads it, with the on-chain record that proves it. */
 export interface MindExport {

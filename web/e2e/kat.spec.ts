@@ -34,7 +34,7 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   const box = page.getByLabel("Message to Nearkat #1");
   for (let i = 1; i <= 10; i++) {
     await box.fill(`hello ${i}`);
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.getByText(`Meow! You said: hello ${i}`)).toBeVisible();
   }
   await expect(character).toContainText("grumpy and suspicious of strangers");
@@ -43,9 +43,40 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   );
 
   await box.fill("hello down there");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("Hmph. You said: hello down there")).toBeVisible();
   await shot(page, "2-burrow");
+
+  // Its own wallet: put NEAR in, let it spend a little, and it pays when asked.
+  const walletPanel = page.getByRole("region", { name: "Its wallet" });
+  await expect(walletPanel).toContainText("Empty");
+  await walletPanel.getByLabel("NEAR to put in its wallet").fill("1");
+  await walletPanel.getByRole("button", { name: "Put NEAR in" }).click();
+  await expect(walletPanel).toContainText("Added 1 NEAR.", { timeout: 30_000 });
+  await walletPanel.getByLabel("NEAR it may send a day").fill("0.1");
+  await walletPanel.getByLabel("NEAR it may send at a time").fill("0.05");
+  await walletPanel.getByRole("button", { name: "Save rules" }).click();
+  await expect(walletPanel).toContainText("may send up to 0.05 NEAR at a time and 0.1 NEAR a day", {
+    timeout: 30_000,
+  });
+  const bob = process.env.E2E_BOB_ID as string;
+  await box.fill(`please pay ${bob}`);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText(`Paid 0.01 NEAR to ${bob} from its wallet (a gift).`)).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(walletPanel).toContainText(
+    `Last payment: 0.01 NEAR to ${bob}, by the kat (a gift).`,
+    {
+      timeout: 30_000,
+    },
+  );
+  // The owner can send from it too.
+  await walletPanel.getByLabel("Account to send to from its wallet").fill(bob);
+  await walletPanel.getByLabel("NEAR to send from its wallet").fill("0.2");
+  await walletPanel.getByRole("button", { name: "Send from wallet" }).click();
+  await expect(walletPanel).toContainText(`Sent 0.2 NEAR to ${bob}`, { timeout: 60_000 });
+  await shot(page, "2b-wallet");
 
   await page.getByRole("link", { name: "Verify this kat" }).click();
   await expect(page.getByRole("heading", { name: "Verify Nearkat #1" })).toBeVisible();
@@ -83,8 +114,13 @@ test("the new owner finds the kat with the character it grew into", async ({ pag
     { timeout: 60_000 },
   );
   await page.getByLabel("Message to Nearkat #1").fill("who are you?");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("Hmph. You said: who are you?")).toBeVisible();
+  // The wallet came with the kat, with what is left: 1 - 0.01 - 0.2 NEAR, less its fees.
+  // The previous owner's rules didn't: it can't spend on its own until Bob says so.
+  const walletPanel = page.getByRole("region", { name: "Its wallet" });
+  await expect(walletPanel).toContainText("0.789 NEAR");
+  await expect(walletPanel).toContainText("The kat can't spend from it on its own.");
 });
 
 test("a creator launches a collection with its own prompt, and mints from it", async ({ page }) => {

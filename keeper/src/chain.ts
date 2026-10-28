@@ -208,11 +208,13 @@ export class NearChain implements Chain {
 
   async getWallet(tokenId: string): Promise<WalletView | null> {
     return (
+      // The latest block: rules an owner just set apply at once. The
+      // contract checks them again when it signs, so this can't overspend.
       (await this.#near.view<WalletView | null>(
         this.#contractId,
         "get_wallet",
         { token_id: tokenId },
-        { finality: this.#finality },
+        { finality: "optimistic" },
       )) ?? null
     );
   }

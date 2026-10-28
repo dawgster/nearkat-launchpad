@@ -6,7 +6,9 @@ import { Chat } from "../src/components/Chat.tsx";
 import { FundPanel } from "../src/components/FundPanel.tsx";
 import { GiveAwayPanel } from "../src/components/GiveAwayPanel.tsx";
 import { MintPanel } from "../src/components/MintPanel.tsx";
+import { WalletPanel } from "../src/components/WalletPanel.tsx";
 import { type ChatReply, KeeperError } from "../src/lib/keeper.ts";
+import type { WalletView } from "../src/lib/wallet.ts";
 import { WalletError } from "../src/wallet/errors.ts";
 
 const NEAR = 10n ** 24n;
@@ -315,5 +317,138 @@ describe("GiveAwayPanel", () => {
       "disabled",
       true,
     );
+  });
+});
+
+describe("WalletPanel", () => {
+  const view: WalletView = {
+    path: "nearkat/wallet/1",
+    mpc_contract_id: "v1.signer",
+    domain_id: 1,
+    daily_allowance: "0",
+    max_payment: "0",
+    spent_today: "0",
+    payments: 0,
+    last_payment: null,
+  };
+  const wallet = (overrides: Partial<WalletView> = {}, balance: bigint | null = null) => ({
+    view: { ...view, ...overrides },
+    address: "ab".repeat(32),
+    publicKey: "ed25519:x",
+    balance,
+  });
+
+  test("shows an empty wallet whose token can't spend on its own", () => {
+    render(
+      <WalletPanel noun="kat" wallet={wallet()} fund={vi.fn()} setRules={vi.fn()} send={vi.fn()} />,
+    );
+    expect(screen.getByText("Empty")).toBeTruthy();
+    expect(screen.getByTestId("wallet-rules").textContent).toBe(
+      "The kat can't spend from it on its own.",
+    );
+  });
+
+  test("lets the owner set what the token may spend, in NEAR", async () => {
+    const setRules = vi.fn(async () => {});
+    render(
+      <WalletPanel
+        noun="kat"
+        wallet={wallet()}
+        fund={vi.fn()}
+        setRules={setRules}
+        send={vi.fn()}
+      />,
+    );
+    const daily = screen.getByLabelText("NEAR it may send a day");
+    const max = screen.getByLabelText("NEAR it may send at a time");
+    await userEvent.clear(daily);
+    await userEvent.type(daily, "0.1");
+    await userEvent.clear(max);
+    await userEvent.type(max, "0.05");
+    await userEvent.click(screen.getByRole("button", { name: "Save rules" }));
+    expect(setRules).toHaveBeenCalledWith(10n ** 23n, 5n * 10n ** 22n);
+    expect(await screen.findByText("The kat may now send up to 0.05 NEAR at a time.")).toBeTruthy();
+  });
+
+  test("refuses a largest payment over the daily limit", async () => {
+    const setRules = vi.fn(async () => {});
+    render(
+      <WalletPanel
+        noun="kat"
+        wallet={wallet()}
+        fund={vi.fn()}
+        setRules={setRules}
+        send={vi.fn()}
+      />,
+    );
+    await userEvent.clear(screen.getByLabelText("NEAR it may send a day"));
+    await userEvent.type(screen.getByLabelText("NEAR it may send a day"), "0.01");
+    await userEvent.clear(screen.getByLabelText("NEAR it may send at a time"));
+    await userEvent.type(screen.getByLabelText("NEAR it may send at a time"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Save rules" }));
+    expect(setRules).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+
+  test("sends from the wallet and shows the last payment", async () => {
+    const send = vi.fn(async () => "Hash1111111111111111");
+    render(
+      <WalletPanel
+        noun="kat"
+        wallet={wallet(
+          {
+            daily_allowance: "100000000000000000000000",
+            max_payment: "50000000000000000000000",
+            last_payment: {
+              receiver_id: "bob.near",
+              amount: "10000000000000000000000",
+              by_mind: true,
+              memo: "a gift",
+              at: "1",
+            },
+          },
+          10n ** 24n,
+        )}
+        fund={vi.fn()}
+        setRules={vi.fn()}
+        send={send}
+      />,
+    );
+    expect(screen.getByText(/Last payment: 0.01 NEAR to/).textContent).toContain(
+      "by the kat (a gift)",
+    );
+    await userEvent.type(screen.getByLabelText("Account to send to from its wallet"), "carol.near");
+    await userEvent.type(screen.getByLabelText("NEAR to send from its wallet"), "0.2");
+    await userEvent.click(screen.getByRole("button", { name: "Send from wallet" }));
+    expect(send).toHaveBeenCalledWith("carol.near", 2n * 10n ** 23n);
+    expect(await screen.findByText(/Sent 0.2 NEAR to carol.near/)).toBeTruthy();
+  });
+});
+
+describe("Chat payments", () => {
+  test("says what became of a payment the kat asked for", async () => {
+    const send = vi.fn(async () => ({
+      ...reply("Here you go!"),
+      payment: {
+        status: "sent" as const,
+        receiver_id: "bob.near",
+        amount: "10000000000000000000000",
+        memo: "a gift",
+        hash: "h",
+      },
+    }));
+    render(
+      <Chat
+        katName="Nearkat #1"
+        chatPrice={CHAT}
+        send={send}
+        onReply={vi.fn()}
+        onOutOfBalance={vi.fn()}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText("Message to Nearkat #1"), "pay bob{Enter}");
+    expect(
+      await screen.findByText("Paid 0.01 NEAR to bob.near from its wallet (a gift)."),
+    ).toBeTruthy();
   });
 });

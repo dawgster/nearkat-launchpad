@@ -58,9 +58,13 @@ function startFakeModel() {
         const last = messages.at(-1)?.content ?? "";
         // Two kinds of request reach the model: a chat turn, and the update that
         // carries a conversation into the kat's character and memory.
+        // Asked to pay someone, and allowed to, the kat pays a little.
+        const payee = /please pay (\S+)/i.exec(last)?.[1];
         const content = system.includes("CHARACTER:")
           ? "CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\nThe owner kept saying hello."
-          : `${system.includes("grumpy") ? "Hmph." : "Meow!"} You said: ${last}`;
+          : payee && system.includes("PAY <amount> NEAR")
+            ? `Fine, a small gift.\nPAY 0.01 NEAR TO ${payee} FOR a gift`
+            : `${system.includes("grumpy") ? "Hmph." : "Meow!"} You said: ${last}`;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
@@ -176,7 +180,13 @@ export default async function globalSetup() {
       keeper_id: names.keeper,
       treasury_id: root,
       mint_price: (10n ** 24n).toString(),
-      collection: { name: "Nearkat", symbol: "KAT", base_uri: "", key_source: keySource },
+      collection: {
+        name: "Nearkat",
+        symbol: "KAT",
+        base_uri: "",
+        key_source: keySource,
+        wallet_domain_id: 1,
+      },
     })
     .send();
 
@@ -208,7 +218,7 @@ export default async function globalSetup() {
     .functionCall(
       names.launchpad,
       "set_key_source",
-      { key_source: keySource },
+      { key_source: { ...keySource, wallet_domain_id: 1 } },
       { attachedDeposit: "1 yocto" },
     )
     .send();

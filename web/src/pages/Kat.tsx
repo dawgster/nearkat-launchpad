@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { CharacterPanel } from "../components/CharacterPanel.tsx";
 import { Chat } from "../components/Chat.tsx";
@@ -7,11 +7,13 @@ import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { Growth } from "../components/Growth.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
+import { WalletPanel } from "../components/WalletPanel.tsx";
 import { formatNear, shorten } from "../lib/format.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
 import { useAsync } from "../lib/useAsync.ts";
+import { type TokenWallet, TokenWallets } from "../lib/wallet.ts";
 import { proofId, useScope } from "../scope.tsx";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
@@ -38,9 +40,15 @@ function Den({
   /** Told the context version each time the mind is read, so the kat can be drawn grown. */
   onVersion: (version: number) => void;
 }) {
-  const { config, keeper, session } = useServices();
+  const { config, keeper, session, reader } = useServices();
+  const wallet = useWallet();
   const scope = useScope();
   const { prices } = scope;
+  const wallets = useMemo(
+    () => new TokenWallets(reader, scope.contractId),
+    [reader, scope.contractId],
+  );
+
   const { contract, signer } = scope;
   const navigate = useNavigate();
   const name = `${scope.name} #${tokenId}`;
@@ -69,6 +77,11 @@ function Den({
       : null;
   const [waits, setWaits] = useState(0);
   const version = context.status === "ready" ? context.data.version : null;
+  // Read once the mind is: by then the token is final on-chain, so its wallet is too.
+  const [tokenWallet, reloadWallet] = useAsync(
+    version === null ? null : `wallet/${scope.contractId}/${tokenId}`,
+    () => wallets.get(tokenId),
+  );
   useEffect(() => {
     if (version !== null) {
       onVersion(version);
@@ -139,6 +152,9 @@ function Den({
           rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
           // A long conversation may have just been folded into memory.
           void reloadContext();
+          if (reply.payment) {
+            void reloadWallet();
+          }
         }}
         onOutOfBalance={() => setOutOfBalance(true)}
         starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
@@ -158,6 +174,49 @@ function Den({
             about ten exchanges.
           </p>
         </section>
+        {tokenWallet.status === "loading" && (
+          <p className="text-sm text-mist" role="status">
+            Reading its wallet…
+          </p>
+        )}
+        {tokenWallet.status === "error" && (
+          <p className="text-sm text-mist" role="status">
+            Its wallet can't be read right now. {describeProblem(tokenWallet.error)}
+          </p>
+        )}
+        {tokenWallet.status === "ready" && tokenWallet.data && wallet.near && (
+          <WalletPanel
+            noun={scope.noun}
+            wallet={tokenWallet.data}
+            fund={async (amount) => {
+              await (wallet.near as NonNullable<typeof wallet.near>).send(
+                (tokenWallet.data as TokenWallet).address,
+                `${amount} yocto`,
+              );
+              await reloadWallet();
+            }}
+            setRules={async (daily, max) => {
+              await wallets.setRules(
+                wallet.near as NonNullable<typeof wallet.near>,
+                tokenId,
+                daily,
+                max,
+              );
+              await reloadWallet();
+            }}
+            send={async (receiverId, amount) => {
+              const hash = await wallets.send(
+                wallet.near as NonNullable<typeof wallet.near>,
+                tokenId,
+                tokenWallet.data as TokenWallet,
+                receiverId,
+                amount,
+              );
+              await reloadWallet();
+              return hash;
+            }}
+          />
+        )}
         <ExportPanel
           noun={scope.noun}
           download={async () => {

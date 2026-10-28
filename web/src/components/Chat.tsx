@@ -1,12 +1,13 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { formatNear } from "../lib/format.ts";
-import { type ChatReply, KeeperError } from "../lib/keeper.ts";
+import { type ChatReply, KeeperError, type PaymentOutcome } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 
 interface Line {
   from: "you" | "kat";
   text: string;
   withheld?: boolean;
+  payment?: PaymentOutcome;
 }
 
 export interface ChatProps {
@@ -58,7 +59,12 @@ export function Chat({
       const reply = await send(message);
       setLines((current) => [
         ...current,
-        { from: "kat", text: reply.reply, withheld: reply.withheld === true },
+        {
+          from: "kat",
+          text: reply.reply,
+          withheld: reply.withheld === true,
+          payment: reply.payment,
+        },
       ]);
       onReply(reply);
     } catch (error) {
@@ -121,6 +127,16 @@ export function Chat({
             >
               {line.text}
             </p>
+            {line.payment && (
+              <p
+                className={`mt-1 text-sm ${line.payment.status === "sent" ? "text-glow" : "text-mist"}`}
+                role="status"
+              >
+                {line.payment.status === "sent"
+                  ? `Paid ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id} from its wallet${line.payment.memo ? ` (${line.payment.memo})` : ""}.`
+                  : `Tried to pay ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id}: ${line.payment.reason}.`}
+              </p>
+            )}
             {line.withheld && (
               <p className="mt-1 text-xs text-mist">
                 The keeper held back a reply that quoted this collection's secret instructions.
