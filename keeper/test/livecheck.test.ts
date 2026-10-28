@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ckdDomains, ed25519Domains, liveCheck } from "../src/livecheck.ts";
+import { ckdDomains, liveCheck } from "../src/livecheck.ts";
 import { FakeChain } from "./fakes.ts";
 
 /** Shaped like the MPC contract's `state` view: domains are nested deep inside it. */
@@ -31,7 +31,6 @@ function setup() {
 describe("ckdDomains", () => {
   test("finds CKD domains wherever they sit in the state", () => {
     expect(ckdDomains(STATE)).toEqual([2]);
-    expect(ed25519Domains(STATE)).toEqual([1]);
     expect(ckdDomains({ nothing: [] })).toEqual([]);
   });
 });
@@ -52,7 +51,6 @@ describe("liveCheck", () => {
     expect(results.map((r) => [r.name, r.ok])).toEqual([
       ["MPC contract has a CKD domain", true],
       ["MPC public key is a BLS12-381 G2 point", true],
-      ["MPC contract has an Ed25519 signing domain, for token wallets", true],
       ["Collection takes its keys from this MPC domain", true],
       ["Context key from the MPC network, twice, matches", true],
       ["FastFS upload", true],
@@ -79,7 +77,7 @@ describe("liveCheck", () => {
       collection: { id: "lantern.testnet", keeperId: "keeper.testnet", chain },
       waitMs: 0,
     });
-    expect(results[3]).toMatchObject({ ok: false, detail: expect.stringMatching(/evil/) });
+    expect(results[2]).toMatchObject({ ok: false, detail: expect.stringMatching(/evil/) });
     expect(results.find((r) => r.name.startsWith("Context key"))).toBeUndefined();
   });
 });

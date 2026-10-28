@@ -1,12 +1,11 @@
 /**
  * A token's own wallet, from the mind's side.
  *
- * Each token of a collection with wallets has a NEAR account whose key NEAR's
- * MPC network derives for the collection contract; only the contract can have
- * it sign, and it does so within the rules the token's owner set (see
- * `contract/src/wallet.rs`). Here the keeper tells the mind about its wallet
- * and, when the mind decides to pay someone, asks the contract for the signed
- * transfer and sends it.
+ * Each token of a collection with wallets can have its own account,
+ * `<token_id>.<collection>`, which only the collection contract can send
+ * from, within the rules the token's owner set (see `contract/src/wallet.rs`).
+ * Here the keeper tells the mind about its wallet and, when the mind decides
+ * to pay someone, asks the contract to send it.
  *
  * The mind asks to pay with one line at the end of its reply:
  * `PAY <amount> NEAR TO <account> FOR <reason>`. The line is taken out of the
@@ -25,9 +24,10 @@ export interface WalletPayment {
 
 /** What the contract's `get_wallet` returns. Amounts are yoctoNEAR strings. */
 export interface WalletView {
-  path: string;
-  mpc_contract_id: string;
-  domain_id: number;
+  /** The wallet's account: `<token_id>.<collection>`. */
+  account_id: string;
+  /** Whether the account exists yet. */
+  open: boolean;
   daily_allowance: string;
   max_payment: string;
   spent_today: string;
@@ -37,34 +37,27 @@ export interface WalletView {
 
 export interface WalletChain {
   getWallet(tokenId: string): Promise<WalletView | null>;
-  /** The wallet's key, `ed25519:<base58>`, as the MPC network derives it for the collection. */
-  walletKey(view: WalletView): Promise<string>;
-  /** yoctoNEAR, or null when the account doesn't exist yet (nobody has funded it). */
+  /** yoctoNEAR, or null when the account doesn't exist. */
   accountBalance(accountId: string): Promise<bigint | null>;
-  /** The wallet key's next nonce and a recent block hash, for a transaction from it. */
-  walletTx(accountId: string, publicKey: string): Promise<{ nonce: string; block_hash: string }>;
-  /** The contract's `wallet_send`, as the keeper. Null when the network didn't sign. */
+  /**
+   * The contract's `wallet_send`, as the keeper. Resolves to whether the
+   * transfer went through, and the transaction's hash. Throws `PaymentRefused`
+   * when the contract refused it (such as the owner's limits); any other
+   * error leaves the outcome unknown.
+   */
   walletSend(
     tokenId: string,
     receiverId: string,
     amount: bigint,
     memo: string,
-    tx: { public_key: string; nonce: string; block_hash: string },
-  ): Promise<{ signed_transaction: string; hash: string } | null>;
-  /**
-   * Sends a signed transaction and waits until it is final. Throws
-   * `TransactionRejected` when the network refused it; any other error
-   * leaves the outcome unknown.
-   */
-  broadcast(signedTransactionBase64: string): Promise<void>;
+  ): Promise<{ sent: boolean; hash: string }>;
 }
 
 /** A wallet as the mind is told about it. */
 export interface WalletInfo {
-  /** The wallet's account: the hex of its key. */
+  /** The wallet's account. */
   address: string;
-  publicKey: string;
-  /** yoctoNEAR; null until someone funds it. */
+  /** yoctoNEAR; null while it isn't open. */
   balance: bigint | null;
   view: WalletView;
 }
@@ -72,11 +65,11 @@ export interface WalletInfo {
 export type PaymentOutcome =
   | { status: "sent"; receiver_id: string; amount: string; memo: string; hash: string }
   | { status: "refused"; receiver_id: string; amount: string; memo: string; reason: string }
-  /** Signed, but whether it was sent isn't known: it may still go through. */
-  | { status: "pending"; receiver_id: string; amount: string; memo: string; hash: string };
+  /** Asked for, but whether it went through isn't known. */
+  | { status: "pending"; receiver_id: string; amount: string; memo: string };
 
-/** The network refused a signed transaction outright: it will never go through. */
-export class TransactionRejected extends Error {}
+/** The contract refused a payment: nothing was sent. */
+export class PaymentRefused extends Error {}
 
 export interface PaymentRequest {
   /** yoctoNEAR */
@@ -113,14 +106,6 @@ export function formatNear(yocto: bigint): string {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-/** The implicit account an Ed25519 key controls: the key's 32 bytes in hex. */
-export function implicitAccount(publicKey: string, decode: (b58: string) => Uint8Array): string {
-  if (!publicKey.startsWith("ed25519:")) {
-    throw new Error("A wallet key must be ed25519");
-  }
-  return Buffer.from(decode(publicKey.slice("ed25519:".length))).toString("hex");
-}
-
 /** Takes the mind's payment line, if any, out of its reply. */
 export function takePayment(reply: string): { reply: string; request: PaymentRequest | null } {
   // Only the reply's last line can ask to pay; a line elsewhere, or one that
@@ -145,10 +130,13 @@ export function takePayment(reply: string): { reply: string; request: PaymentReq
 
 /** What the mind is told about its wallet, in the system prompt. */
 export function walletInstructions(wallet: WalletInfo): string {
-  const balance =
-    wallet.balance === null
-      ? "empty: nobody has sent it anything yet"
-      : `${formatNear(wallet.balance)} NEAR`;
+  if (!wallet.view.open) {
+    return (
+      `You can have your own NEAR wallet, ${wallet.address}, but nobody has opened it yet; your ` +
+      "owner can, from your page. Until then you can't pay anyone."
+    );
+  }
+  const balance = `${formatNear(wallet.balance ?? 0n)} NEAR`;
   const allowance = BigInt(wallet.view.daily_allowance);
   const left = allowance - BigInt(wallet.view.spent_today);
   const lines = [
@@ -175,13 +163,9 @@ export function walletInstructions(wallet: WalletInfo): string {
 /** The wallets of one collection's tokens. */
 export class TokenWallets {
   readonly #chain: WalletChain;
-  readonly #decode: (b58: string) => Uint8Array;
-  /** A wallet's key never changes, so it is looked up once per token. */
-  readonly #keys = new Map<string, Promise<string>>();
 
-  constructor(chain: WalletChain, decodeBase58: (b58: string) => Uint8Array) {
+  constructor(chain: WalletChain) {
     this.#chain = chain;
-    this.#decode = decodeBase58;
   }
 
   async info(tokenId: string): Promise<WalletInfo | null> {
@@ -189,12 +173,11 @@ export class TokenWallets {
     if (!view) {
       return null;
     }
-    const publicKey = await this.#key(tokenId, view);
-    const address = implicitAccount(publicKey, this.#decode);
-    return { address, publicKey, balance: await this.#chain.accountBalance(address), view };
+    const balance = view.open ? await this.#chain.accountBalance(view.account_id) : null;
+    return { address: view.account_id, balance, view };
   }
 
-  /** Has the contract sign the payment, if the owner's rules allow it, and sends it. */
+  /** Has the contract send the payment, if the owner's rules allow it. */
   async pay(tokenId: string, wallet: WalletInfo, request: PaymentRequest): Promise<PaymentOutcome> {
     const base = {
       receiver_id: request.receiverId,
@@ -203,6 +186,9 @@ export class TokenWallets {
     };
     const refused = (reason: string): PaymentOutcome => ({ status: "refused", ...base, reason });
     // Checked here too, so an obvious refusal doesn't cost a transaction.
+    if (!wallet.view.open) {
+      return refused("The wallet isn't open yet");
+    }
     if (request.amount <= 0n) {
       return refused("The amount must be more than zero");
     }
@@ -216,43 +202,22 @@ export class TokenWallets {
       return refused("The wallet doesn't hold that much");
     }
     try {
-      const tx = await this.#chain.walletTx(wallet.address, wallet.publicKey);
-      const signed = await this.#chain.walletSend(
+      const { sent, hash } = await this.#chain.walletSend(
         tokenId,
         request.receiverId,
         request.amount,
         request.memo,
-        {
-          public_key: wallet.publicKey,
-          ...tx,
-        },
       );
-      if (!signed) {
-        return refused("The MPC network didn't sign the payment");
-      }
-      try {
-        await this.#chain.broadcast(signed.signed_transaction);
-      } catch (error) {
-        if (error instanceof TransactionRejected) {
-          return refused(error.message);
-        }
-        // Signed and maybe sent: it may still go through, so it must not be
-        // reported as failed, or the mind might pay again.
-        return { status: "pending", ...base, hash: signed.hash };
-      }
-      return { status: "sent", ...base, hash: signed.hash };
+      return sent
+        ? { status: "sent", ...base, hash }
+        : refused("The transfer didn't go through; nothing was taken from the allowance");
     } catch (error) {
-      return refused(error instanceof Error ? error.message : String(error));
+      if (error instanceof PaymentRefused) {
+        return refused(error.message);
+      }
+      // The call may still have gone through: not reported as failed, so the
+      // mind doesn't pay twice.
+      return { status: "pending", ...base };
     }
-  }
-
-  #key(tokenId: string, view: WalletView): Promise<string> {
-    let key = this.#keys.get(tokenId);
-    if (!key) {
-      key = this.#chain.walletKey(view);
-      this.#keys.set(tokenId, key);
-      key.catch(() => this.#keys.delete(tokenId));
-    }
-    return key;
   }
 }

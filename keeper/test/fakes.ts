@@ -13,7 +13,7 @@ import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
-import { TransactionRejected, type WalletView } from "../src/wallet.ts";
+import { PaymentRefused, type WalletView } from "../src/wallet.ts";
 
 export const NEAR = 10n ** 24n;
 
@@ -68,28 +68,25 @@ export class FakeChain implements Chain {
   readonly uploads = new Map<string, Uint8Array>();
   /** Token 1's wallet as the contract shows it; null without wallets. */
   wallet: WalletView | null = null;
-  walletKeyText = `ed25519:${base58.encode(new Uint8Array(32).fill(9))}`;
-  /** yoctoNEAR in the wallet's account; null until someone funds it. */
+  /** yoctoNEAR in the wallet's account; null while it isn't open. */
   walletBalance: bigint | null = null;
-  /** Payments the wallet's transactions made, once broadcast. */
+  /** Payments the wallet made. */
   readonly walletSends: Array<{ receiverId: string; amount: bigint; memo: string }> = [];
-  #signed = new Map<string, { receiverId: string; amount: bigint; memo: string }>();
-  /** "rejected": the network refuses the next transaction; "unknown": sending it times out. */
-  broadcastFailure: "rejected" | "unknown" | null = null;
+  /** "failed": the next transfer doesn't go through; "unknown": the call times out. */
+  walletSendFailure: "failed" | "unknown" | null = null;
 
   /** Gives token 1 a wallet whose owner lets the mind send `max` at a time and `daily` a day. */
-  allowWallet(daily: bigint, max: bigint, balance: bigint | null = 10n ** 24n): void {
+  allowWallet(daily: bigint, max: bigint, balance: bigint | null = 10n ** 24n, open = true): void {
     this.wallet = {
-      path: "nearkat/wallet/1",
-      mpc_contract_id: "v1.signer",
-      domain_id: 1,
+      account_id: "1.nearkat.testnet",
+      open,
       daily_allowance: daily.toString(),
       max_payment: max.toString(),
       spent_today: "0",
       payments: 0,
       last_payment: null,
     };
-    this.walletBalance = balance;
+    this.walletBalance = open ? balance : null;
   }
 
   mint(tokenId: string, owner: string, balance: bigint): void {
@@ -245,16 +242,8 @@ export class FakeChain implements Chain {
     return tokenId === "1" ? this.wallet : null;
   }
 
-  async walletKey(_view: WalletView): Promise<string> {
-    return this.walletKeyText;
-  }
-
   async accountBalance(_accountId: string): Promise<bigint | null> {
     return this.walletBalance;
-  }
-
-  async walletTx(): Promise<{ nonce: string; block_hash: string }> {
-    return { nonce: "1", block_hash: "11111111111111111111111111111111" };
   }
 
   async walletSend(
@@ -262,42 +251,43 @@ export class FakeChain implements Chain {
     receiverId: string,
     amount: bigint,
     memo: string,
-  ): Promise<{ signed_transaction: string; hash: string } | null> {
+  ): Promise<{ sent: boolean; hash: string }> {
     // The contract's rules, as it applies them.
     const wallet = this.wallet;
-    if (!wallet || BigInt(wallet.daily_allowance) === 0n) {
-      throw new Error("The owner hasn't let this token's mind spend");
+    if (!wallet?.open) {
+      throw new PaymentRefused("This token's wallet isn't open");
+    }
+    if (BigInt(wallet.daily_allowance) === 0n) {
+      throw new PaymentRefused("The owner hasn't let this token's mind spend");
     }
     if (amount > BigInt(wallet.max_payment)) {
-      throw new Error("That's more than the owner lets the mind send at once");
+      throw new PaymentRefused("That's more than the owner lets the mind send at once");
     }
     const spent = BigInt(wallet.spent_today) + amount;
     if (spent > BigInt(wallet.daily_allowance)) {
-      throw new Error("That's more than the owner lets the mind send today");
+      throw new PaymentRefused("That's more than the owner lets the mind send today");
     }
-    wallet.spent_today = spent.toString();
-    wallet.payments += 1;
+    if (this.walletSendFailure === "unknown") {
+      throw new Error("RPC timed out");
+    }
     const hash = base58.encode(
       createHash("sha256").update(`${receiverId}${amount}${wallet.payments}`).digest(),
     );
-    const signed = Buffer.from(hash).toString("base64");
-    this.#signed.set(signed, { receiverId, amount, memo });
-    return { signed_transaction: signed, hash };
-  }
-
-  async broadcast(signed: string): Promise<void> {
-    if (this.broadcastFailure === "rejected") {
-      throw new TransactionRejected("Invalid transaction nonce");
+    if (this.walletSendFailure === "failed") {
+      return { sent: false, hash };
     }
-    if (this.broadcastFailure === "unknown") {
-      throw new Error("RPC timed out");
-    }
-    const send = this.#signed.get(signed);
-    if (!send) {
-      throw new Error("Not a transaction the contract signed");
-    }
-    this.walletBalance = (this.walletBalance ?? 0n) - send.amount;
-    this.walletSends.push(send);
+    wallet.spent_today = spent.toString();
+    wallet.payments += 1;
+    wallet.last_payment = {
+      receiver_id: receiverId,
+      amount: amount.toString(),
+      by_mind: true,
+      memo,
+      at: "0",
+    };
+    this.walletBalance = (this.walletBalance ?? 0n) - amount;
+    this.walletSends.push({ receiverId, amount, memo });
+    return { sent: true, hash };
   }
 
   #kat(tokenId: string): KatView {

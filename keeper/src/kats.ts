@@ -532,22 +532,22 @@ export class KatService {
   }
 }
 
-/**
- * The collection's fixed prompt, then who this token has become. The prompt
- * frames the model; without a frame, hosted models answer as themselves.
- */
 function describePayment(payment: PaymentOutcome): string {
   const what = `${formatNear(BigInt(payment.amount))} NEAR to ${payment.receiver_id}`;
   switch (payment.status) {
     case "sent":
       return `You sent ${what} from your wallet.`;
     case "pending":
-      return `Your payment of ${what} was signed and may still go through; don't pay it again.`;
+      return `Your payment of ${what} was asked for and may still go through; don't pay it again.`;
     default:
       return `Your payment of ${what} did not go through: ${payment.reason}.`;
   }
 }
 
+/**
+ * The collection's fixed prompt, then who this token has become. The prompt
+ * frames the model; without a frame, hosted models answer as themselves.
+ */
 function systemMessage(
   collection: Persona,
   doc: ContextDoc,

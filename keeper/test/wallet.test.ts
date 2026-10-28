@@ -1,11 +1,9 @@
-import { base58 } from "@scure/base";
 import { describe, expect, test } from "vitest";
 import { KatService } from "../src/kats.ts";
 import { Meter } from "../src/meter.ts";
 import { MemoryStore } from "../src/store.ts";
 import {
   formatNear,
-  implicitAccount,
   parseNear,
   TokenWallets,
   takePayment,
@@ -28,7 +26,7 @@ async function setup() {
     inference,
     meter,
     prices: { chat: CHAT, save: SAVE },
-    wallets: new TokenWallets(chain, (b58) => base58.decode(b58)),
+    wallets: new TokenWallets(chain),
     retryDelayMs: 0,
     log: () => undefined,
   });
@@ -62,11 +60,6 @@ describe("payment lines", () => {
     expect(parseNear("0.000000000000000000000001")).toBe(1n);
     expect(formatNear(1_250_000_000_000_000_000_000_000n)).toBe("1.25");
   });
-
-  test("name the implicit account of the wallet's key", () => {
-    const key = `ed25519:${base58.encode(new Uint8Array(32).fill(1))}`;
-    expect(implicitAccount(key, base58.decode)).toBe("01".repeat(32));
-  });
 });
 
 describe("payment lines, strictly", () => {
@@ -95,7 +88,7 @@ describe("a token's mind and its wallet", () => {
     chain.allowWallet(100n * MILLI, 40n * MILLI);
     await kats.chat("alice.near", "1", "do you have money?");
     const system = inference.calls[0]?.[0]?.content ?? "";
-    expect(system).toContain(`You have your own NEAR wallet, ${"09".repeat(32)}`);
+    expect(system).toContain("You have your own NEAR wallet, 1.nearkat.testnet");
     expect(system).toContain("Its balance is 1 NEAR");
     expect(system).toContain("at most 0.04 NEAR at a time and 0.1 NEAR a day");
     expect(system).toContain("PAY <amount> NEAR TO <account>");
@@ -150,7 +143,7 @@ describe("a token's mind and its wallet", () => {
   test("says a payment may still go through when sending it timed out, so the mind won't pay twice", async () => {
     const { chain, inference, kats } = await setup();
     chain.allowWallet(100n * MILLI, 40n * MILLI);
-    chain.broadcastFailure = "unknown";
+    chain.walletSendFailure = "unknown";
     inference.nextReply = "Sure.\nPAY 0.01 NEAR TO bob.near FOR coffee";
     const reply = await kats.chat("alice.near", "1", "buy bob a coffee");
     expect(reply.payment).toMatchObject({ status: "pending", receiver_id: "bob.near" });
@@ -160,13 +153,46 @@ describe("a token's mind and its wallet", () => {
     );
   });
 
-  test("says a payment the network refused didn't go through", async () => {
+  test("says a payment the contract refused didn't go through, with its reason", async () => {
+    const { chain } = await setup();
+    chain.allowWallet(100n * MILLI, 40n * MILLI);
+    const wallet = await chain.getWallet("1");
+    if (!chain.wallet || !wallet) {
+      throw new Error("no wallet");
+    }
+    // The contract's own count is ahead of what the keeper last read.
+    chain.wallet = { ...wallet, spent_today: (90n * MILLI).toString() };
+    const wallets = new TokenWallets(chain);
+    const outcome = await wallets.pay(
+      "1",
+      { address: wallet.account_id, balance: NEAR, view: wallet },
+      { amount: 20n * MILLI, receiverId: "bob.near", memo: "coffee" },
+    );
+    expect(outcome).toMatchObject({
+      status: "refused",
+      reason: "That's more than the owner lets the mind send today",
+    });
+    expect(chain.walletSends).toEqual([]);
+  });
+
+  test("says a transfer that didn't go through was refused, and nothing was spent", async () => {
     const { chain, inference, kats } = await setup();
     chain.allowWallet(100n * MILLI, 40n * MILLI);
-    chain.broadcastFailure = "rejected";
+    chain.walletSendFailure = "failed";
+    inference.nextReply = "Sure.\nPAY 0.01 NEAR TO nobody.near FOR coffee";
+    const reply = await kats.chat("alice.near", "1", "buy nobody a coffee");
+    expect(reply.payment).toMatchObject({ status: "refused" });
+    expect(chain.wallet?.spent_today).toBe("0");
+  });
+
+  test("can't pay from a wallet nobody has opened, and is told how it gets one", async () => {
+    const { chain, inference, kats } = await setup();
+    chain.allowWallet(100n * MILLI, 40n * MILLI, null, false);
     inference.nextReply = "Sure.\nPAY 0.01 NEAR TO bob.near FOR coffee";
     const reply = await kats.chat("alice.near", "1", "buy bob a coffee");
-    expect(reply.payment).toMatchObject({ status: "refused", reason: "Invalid transaction nonce" });
+    expect(inference.calls[0]?.[0]?.content).toContain("nobody has opened it yet");
+    expect(reply.payment).toMatchObject({ status: "refused", reason: "The wallet isn't open yet" });
+    expect(chain.walletSends).toEqual([]);
   });
 
   test("never keeps a payment instruction in what the token remembers", async () => {
@@ -184,9 +210,9 @@ describe("a token's mind and its wallet", () => {
     expect(chain.walletSends).toEqual([]);
   });
 
-  test("can't pay from a wallet nobody has funded", async () => {
+  test("can't pay more than its wallet holds", async () => {
     const { chain, inference, kats } = await setup();
-    chain.allowWallet(100n * MILLI, 40n * MILLI, null);
+    chain.allowWallet(100n * MILLI, 40n * MILLI, 5n * MILLI);
     inference.nextReply = "Sure.\nPAY 0.01 NEAR TO bob.near FOR coffee";
     const reply = await kats.chat("alice.near", "1", "buy bob a coffee");
     expect(reply.payment).toMatchObject({
@@ -205,15 +231,13 @@ describe("a token's mind and its wallet", () => {
 });
 
 describe("walletInstructions", () => {
-  test("says when the wallet is still empty", () => {
+  test("gives the wallet's account and balance once it's open", () => {
     const text = walletInstructions({
-      address: "ab",
-      publicKey: "ed25519:x",
-      balance: null,
+      address: "7.nearkat.testnet",
+      balance: 2n * NEAR,
       view: {
-        path: "p",
-        mpc_contract_id: "m",
-        domain_id: 1,
+        account_id: "7.nearkat.testnet",
+        open: true,
         daily_allowance: "0",
         max_payment: "0",
         spent_today: "0",
@@ -221,6 +245,8 @@ describe("walletInstructions", () => {
         last_payment: null,
       },
     });
-    expect(text).toContain("empty: nobody has sent it anything yet");
+    expect(text).toContain(
+      "You have your own NEAR wallet, 7.nearkat.testnet. Its balance is 2 NEAR.",
+    );
   });
 });

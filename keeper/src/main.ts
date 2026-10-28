@@ -1,6 +1,5 @@
 import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
-import { base58 } from "@scure/base";
 import { Near, verifyNep413Signature } from "near-kit";
 import { katSvg, sigilSvg } from "../../art/svg.ts";
 import { stageOf } from "../../art/traits.ts";
@@ -91,10 +90,7 @@ const collections = new Collections({
       chain,
       store: storeFor(contractId, chain),
       keyring,
-      wallets:
-        info.wallet_domain_id != null
-          ? new TokenWallets(chain, (b58) => base58.decode(b58))
-          : undefined,
+      wallets: info.wallet_code_hash != null ? new TokenWallets(chain) : undefined,
       inference,
       meter,
       prices,

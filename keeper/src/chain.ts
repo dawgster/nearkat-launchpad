@@ -2,7 +2,7 @@ import { FunctionCallError, type Near } from "near-kit";
 import type { KeySource } from "./ckd.ts";
 import type { CollectionInfo } from "./collection.ts";
 import type { KatView } from "./types.ts";
-import { TransactionRejected, type WalletChain, type WalletView } from "./wallet.ts";
+import { PaymentRefused, type WalletChain, type WalletView } from "./wallet.ts";
 
 /** How the contract answered a `debit_batch` call. */
 export type DebitResult =
@@ -202,7 +202,7 @@ export class NearChain implements Chain {
       sealed_prompt: view.sealed_prompt ?? null,
       key_source: view.key_source,
       key_epoch: view.key_epoch,
-      wallet_domain_id: view.wallet_domain_id ?? null,
+      wallet_code_hash: view.wallet_code_hash ?? null,
     };
   }
 
@@ -219,18 +219,6 @@ export class NearChain implements Chain {
     );
   }
 
-  async walletKey(view: WalletView): Promise<string> {
-    const key = await this.#near.view<string>(view.mpc_contract_id, "derived_public_key", {
-      path: view.path,
-      predecessor: this.#contractId,
-      domain_id: view.domain_id,
-    });
-    if (typeof key !== "string" || !key.startsWith("ed25519:")) {
-      throw new Error(`${view.mpc_contract_id} gave no Ed25519 key for ${view.path}`);
-    }
-    return key;
-  }
-
   async accountBalance(accountId: string): Promise<bigint | null> {
     try {
       return BigInt(
@@ -244,62 +232,31 @@ export class NearChain implements Chain {
     }
   }
 
-  async walletTx(
-    accountId: string,
-    publicKey: string,
-  ): Promise<{ nonce: string; block_hash: string }> {
-    const [key, block] = await Promise.all([
-      this.#near.rpc.getAccessKey(accountId, publicKey, { finality: "optimistic" }),
-      this.#near.rpc.getBlock({ finality: "final" }),
-    ]);
-    return { nonce: (BigInt(key.nonce) + 1n).toString(), block_hash: block.header.hash };
-  }
-
   async walletSend(
     tokenId: string,
     receiverId: string,
     amount: bigint,
     memo: string,
-    tx: { public_key: string; nonce: string; block_hash: string },
-  ): Promise<{ signed_transaction: string; hash: string } | null> {
-    let outcome: { status?: { SuccessValue?: string } };
+  ): Promise<{ sent: boolean; hash: string }> {
+    let outcome: { status?: { SuccessValue?: string }; transaction: { hash: string } };
     try {
       outcome = (await this.#near.call(
         this.#contractId,
         "wallet_send",
-        { token_id: tokenId, receiver_id: receiverId, amount: amount.toString(), memo, tx },
-        { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
-      )) as unknown as { status?: { SuccessValue?: string } };
+        { token_id: tokenId, receiver_id: receiverId, amount: amount.toString(), memo },
+        { gas: "60 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
+      )) as unknown as typeof outcome;
     } catch (error) {
-      // The contract's refusal, such as the owner's limits, says why.
-      const panic = error instanceof FunctionCallError ? error.panic : undefined;
-      throw new Error(panic ?? String(error));
+      // The contract's refusal, such as the owner's limits, says why; any
+      // other failure leaves the outcome unknown.
+      if (error instanceof FunctionCallError) {
+        throw new PaymentRefused(error.panic ?? error.message);
+      }
+      throw error;
     }
     const value = outcome.status?.SuccessValue;
-    if (!value) {
-      return null;
-    }
-    return JSON.parse(Buffer.from(value, "base64").toString("utf8")) as {
-      signed_transaction: string;
-      hash: string;
-    } | null;
-  }
-
-  async broadcast(signedTransactionBase64: string): Promise<void> {
-    try {
-      await this.#near.rpc.sendTransaction(Buffer.from(signedTransactionBase64, "base64"), "FINAL");
-    } catch (error) {
-      // near-kit's errors for a transaction the network refused outright.
-      const rejected = [
-        "InvalidTransactionError",
-        "InvalidNonceError",
-        "InsufficientBalanceError",
-        "SignatureError",
-        "AccessKeyDoesNotExistError",
-        "AccountDoesNotExistError",
-      ].includes((error as Error)?.name);
-      throw rejected ? new TransactionRejected(String((error as Error).message)) : error;
-    }
+    const sent = value ? JSON.parse(Buffer.from(value, "base64").toString("utf8")) === true : false;
+    return { sent, hash: outcome.transaction.hash };
   }
 
   async getKeyEpoch(): Promise<number> {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +19,9 @@ import { TokenWallets } from "../src/wallet.ts";
 import { FakeInference } from "./fakes.ts";
 
 const WASM = fileURLToPath(new URL("../../contract/target/near/nearkat_nft.wasm", import.meta.url));
+const WALLET_WASM = fileURLToPath(
+  new URL("../../token-wallet/target/near/nearkat_token_wallet.wasm", import.meta.url),
+);
 const MPC_WASM = fileURLToPath(
   new URL("../../mock-mpc/target/near/nearkat_mock_mpc.wasm", import.meta.url),
 );
@@ -37,7 +41,7 @@ async function eventually<T>(check: () => Promise<T | null | undefined | false>)
 // The real collection contract and a mock MPC contract doing the network's
 // real CKD maths, in a local sandbox. Contexts are stored with FastFS and
 // read back from the node's own transaction history.
-describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
+describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM) || !existsSync(WALLET_WASM))(
   "context keys from the MPC network, contexts on FastFS, keeper hand-over",
   () => {
     let sandbox: Sandbox;
@@ -74,7 +78,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
         inference,
         meter: new Meter(chain, { log: () => {} }),
         prices: { chat: 1n, save: 1n },
-        wallets: new TokenWallets(chain, (b58) => base58.decode(b58)),
+        wallets: new TokenWallets(chain),
         retryDelayMs: 200,
         log: () => {},
       });
@@ -115,6 +119,14 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
         .send();
       keySource = { mpc_contract_id: mpc.id, domain_id: 2 };
 
+      // The code every token's wallet account runs, published once by its hash.
+      const walletCode = await readFile(WALLET_WASM);
+      await mpc.near
+        .transaction(mpc.id)
+        .publishContract(walletCode, { identifiedBy: "hash" })
+        .send();
+      const walletCodeHash = base58.encode(createHash("sha256").update(walletCode).digest());
+
       keeperA = await account("keeper-a");
       keeperB = await account("keeper-b");
       alice = await account("alice");
@@ -135,7 +147,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
             symbol: "LNT",
             base_uri: "https://art.example/",
             key_source: keySource,
-            wallet_domain_id: 1,
+            wallet_code_hash: walletCodeHash,
           },
         })
         .send();
@@ -159,7 +171,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
         waitMs: 15_000,
       });
       expect(results.filter((r) => r.ok === false)).toEqual([]);
-      expect(results.filter((r) => r.ok === true)).toHaveLength(7);
+      expect(results.filter((r) => r.ok === true)).toHaveLength(6);
     }, 120_000);
 
     test("a new keeper takes over: it reads the old memories, and the old keeper is locked out", async () => {
@@ -214,13 +226,25 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
       const b = await keeper(keeperB);
       const wallets = new TokenWallets(
         new NearChain(keeperB.near, contractId, { signerId: keeperB.id, finality: "optimistic" }),
-        (b58) => base58.decode(b58),
       );
-      const wallet = await wallets.info("1");
-      expect(wallet?.balance).toBeNull();
+      expect((await wallets.info("1"))?.view.open).toBe(false);
 
-      // Alice funds her token's wallet and lets its mind send 0.1 NEAR a day.
-      await alice.near.send(wallet?.address as string, "1 NEAR");
+      // Alice opens her token's wallet, funds it and lets its mind send 0.1 NEAR a day.
+      await alice.near.call(
+        contractId,
+        "open_wallet",
+        { token_id: "1" },
+        {
+          attachedDeposit: "0.05 NEAR",
+          gas: "100 Tgas",
+        },
+      );
+      const wallet = await eventually(async () => {
+        const info = await wallets.info("1");
+        return info?.view.open && info;
+      });
+      expect(wallet.address).toBe(`1.${contractId}`);
+      await alice.near.send(wallet.address, "1 NEAR");
       await alice.near.call(
         contractId,
         "set_wallet_policy",
