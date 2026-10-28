@@ -8,6 +8,14 @@ import { leaksSecret } from "./leak.ts";
 import type { Meter } from "./meter.ts";
 import type { ContextStore } from "./store.ts";
 import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
+import {
+  formatNear,
+  type PaymentOutcome,
+  type TokenWallets,
+  takePayment,
+  type WalletInfo,
+  walletInstructions,
+} from "./wallet.ts";
 
 export const MAX_TEXT_CHARS = 4000;
 const CONSOLIDATE_AFTER_MESSAGES = 20;
@@ -69,6 +77,8 @@ export interface KatServiceOptions {
   store: ContextStore;
   /** The collection's context keys, from NEAR's MPC network. */
   keyring: Keyring;
+  /** The tokens' own wallets, when the collection has them. */
+  wallets?: TokenWallets;
   inference: Inference;
   meter: Meter;
   prices: Prices;
@@ -97,6 +107,8 @@ export interface ChatReply {
   balance: string;
   /** Set when the model's reply quoted the secret instructions and was replaced. */
   withheld?: true;
+  /** Set when the token's mind asked to pay from its wallet: what happened. */
+  payment?: PaymentOutcome;
 }
 
 /** Said in place of a reply that quoted the collection's secret instructions. */
@@ -183,11 +195,18 @@ export class KatService {
       const doc = await this.#load(tokenId, owned);
       const session = this.#session(tokenId, accountId);
       const user: ChatMessage = { role: "user", content: message };
+      // A wallet that can't be read now just isn't mentioned this time.
+      const wallet = this.#o.wallets
+        ? await this.#o.wallets.info(tokenId).catch((error) => {
+            this.#log(`Wallet of ${tokenId} unreadable: ${String(error)}`);
+            return null;
+          })
+        : null;
 
       let result: ChatResult;
       try {
         result = await this.#o.inference.chat([
-          systemMessage(await this.#collection(), doc),
+          systemMessage(await this.#collection(), doc, wallet),
           ...session.messages,
           user,
         ]);
@@ -220,10 +239,31 @@ export class KatService {
       if (withheld) {
         this.#log(`Withheld a reply from ${tokenId} that quoted its secret instructions`);
       }
-      const reply = withheld ? WITHHELD_REPLY : result.reply;
-      session.messages.push(user, { role: "assistant", content: reply });
+      const asked = withheld ? { reply: WITHHELD_REPLY, request: null } : takePayment(result.reply);
+      const reply = asked.reply;
+      let payment: PaymentOutcome | undefined;
+      if (asked.request) {
+        payment =
+          wallet && this.#o.wallets
+            ? await this.#o.wallets.pay(tokenId, wallet, asked.request)
+            : {
+                status: "refused",
+                receiver_id: asked.request.receiverId,
+                amount: asked.request.amount.toString(),
+                memo: asked.request.memo,
+                reason: "This token has no wallet",
+              };
+        this.#log(`${tokenId} asked to pay: ${JSON.stringify(payment)}`);
+      }
+      // The mind is told what became of its payment, so it never believes one that failed.
+      const note = payment ? `\n[${describePayment(payment)}]` : "";
+      session.messages.push(user, { role: "assistant", content: reply + note });
       session.lastActive = this.#now();
       this.#o.meter.charge(tokenId, this.#o.prices.chat);
+      if (payment?.status === "sent") {
+        // A payment costs the keeper a signing transaction, charged like a save.
+        this.#o.meter.charge(tokenId, this.#o.prices.save);
+      }
 
       if (session.messages.length >= CONSOLIDATE_AFTER_MESSAGES) {
         await this.#consolidate(tokenId, owned.kat, doc, session);
@@ -236,6 +276,7 @@ export class KatService {
         verification: result.verification,
         balance: this.#available(tokenId, owned.kat).toString(),
         ...(withheld ? { withheld: true as const } : {}),
+        ...(payment ? { payment } : {}),
       };
     });
   }
@@ -489,7 +530,18 @@ export class KatService {
  * The collection's fixed prompt, then who this token has become. The prompt
  * frames the model; without a frame, hosted models answer as themselves.
  */
-function systemMessage(collection: Persona, doc: ContextDoc): ChatMessage {
+function describePayment(payment: PaymentOutcome): string {
+  const what = `${formatNear(BigInt(payment.amount))} NEAR to ${payment.receiver_id}`;
+  return payment.status === "sent"
+    ? `You sent ${what} from your wallet.`
+    : `Your payment of ${what} did not go through: ${payment.reason}.`;
+}
+
+function systemMessage(
+  collection: Persona,
+  doc: ContextDoc,
+  wallet: WalletInfo | null = null,
+): ChatMessage {
   const memory = doc.memory_summary
     ? `\n\nWhat you remember from earlier:\n${doc.memory_summary}`
     : "";
@@ -498,7 +550,8 @@ function systemMessage(collection: Persona, doc: ContextDoc): ChatMessage {
     content:
       `${promptFor(collection, doc.token_id)}\n\n` +
       secretInstructions(collection, doc.token_id) +
-      `This is who you are now:\n\n${doc.personality}${memory}`,
+      `This is who you are now:\n\n${doc.personality}${memory}` +
+      (wallet ? `\n\n${walletInstructions(wallet)}` : ""),
   };
 }
 

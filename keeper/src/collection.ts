@@ -26,6 +26,8 @@ export interface CollectionInfo extends Persona {
   key_source: KeySource;
   /** The key epoch new contexts are saved under. */
   key_epoch: number;
+  /** The MPC network's Ed25519 domain token wallets are signed in; null without wallets. */
+  wallet_domain_id?: number | null;
 }
 
 /** Amounts are yoctoNEAR strings. */

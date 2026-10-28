@@ -33,16 +33,25 @@ export type CheckResult = { name: string; ok: boolean | null; detail: string };
 
 /** Every CKD domain id in the MPC contract's `state`, wherever it sits in that structure. */
 export function ckdDomains(state: unknown): number[] {
+  return domainsWhere(state, (domain) => domain.purpose === "CKD");
+}
+
+/** Every Ed25519 signing domain (FROST) in the MPC contract's `state`: what token wallets use. */
+export function ed25519Domains(state: unknown): number[] {
+  return domainsWhere(state, (domain) => domain.purpose === "Sign" && domain.protocol === "Frost");
+}
+
+function domainsWhere(
+  state: unknown,
+  matches: (domain: Record<string, unknown>) => boolean,
+): number[] {
   const found = new Set<number>();
   const visit = (value: unknown) => {
     if (Array.isArray(value)) {
       value.forEach(visit);
     } else if (value && typeof value === "object") {
       const record = value as Record<string, unknown>;
-      if (
-        record.purpose === "CKD" &&
-        (typeof record.id === "number" || typeof record.id === "string")
-      ) {
+      if (matches(record) && (typeof record.id === "number" || typeof record.id === "string")) {
         found.add(Number(record.id));
       }
       Object.values(record).forEach(visit);
@@ -108,6 +117,14 @@ export async function liveCheck(deps: LiveCheckDeps): Promise<CheckResult[]> {
     }
     bls.G2.Point.fromBytes(base58.decode(key.slice("bls12381g2:".length))).assertValidity();
     return key;
+  });
+
+  await step("MPC contract has an Ed25519 signing domain, for token wallets", async () => {
+    const domains = ed25519Domains(await deps.view(deps.mpcContractId, "state", {}));
+    if (domains.length === 0) {
+      throw new Error(`${deps.mpcContractId} lists no Ed25519 (FROST) signing domain`);
+    }
+    return `Ed25519 domains ${domains.join(", ")}`;
   });
 
   const collection = deps.collection;

@@ -2,6 +2,7 @@ import { FunctionCallError, type Near } from "near-kit";
 import type { KeySource } from "./ckd.ts";
 import type { CollectionInfo } from "./collection.ts";
 import type { KatView } from "./types.ts";
+import type { WalletChain, WalletView } from "./wallet.ts";
 
 /** How the contract answered a `debit_batch` call. */
 export type DebitResult =
@@ -73,7 +74,7 @@ export interface FastfsUploader {
 }
 
 /** Everything the keeper needs from one collection contract. */
-export type Chain = TokenChain & CollectionChain & KeyChain & FastfsUploader;
+export type Chain = TokenChain & CollectionChain & KeyChain & FastfsUploader & WalletChain;
 
 /** The collection moved to another key epoch while a context was being saved. */
 export class KeyEpochChanged extends Error {
@@ -201,7 +202,89 @@ export class NearChain implements Chain {
       sealed_prompt: view.sealed_prompt ?? null,
       key_source: view.key_source,
       key_epoch: view.key_epoch,
+      wallet_domain_id: view.wallet_domain_id ?? null,
     };
+  }
+
+  async getWallet(tokenId: string): Promise<WalletView | null> {
+    return (
+      (await this.#near.view<WalletView | null>(
+        this.#contractId,
+        "get_wallet",
+        { token_id: tokenId },
+        { finality: this.#finality },
+      )) ?? null
+    );
+  }
+
+  async walletKey(view: WalletView): Promise<string> {
+    const key = await this.#near.view<string>(view.mpc_contract_id, "derived_public_key", {
+      path: view.path,
+      predecessor: this.#contractId,
+      domain_id: view.domain_id,
+    });
+    if (typeof key !== "string" || !key.startsWith("ed25519:")) {
+      throw new Error(`${view.mpc_contract_id} gave no Ed25519 key for ${view.path}`);
+    }
+    return key;
+  }
+
+  async accountBalance(accountId: string): Promise<bigint | null> {
+    try {
+      return BigInt(
+        (await this.#near.rpc.getAccount(accountId, { finality: "optimistic" })).amount,
+      );
+    } catch (error) {
+      if (/does not exist|UNKNOWN_ACCOUNT|AccountDoesNotExist/i.test(String(error))) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async walletTx(
+    accountId: string,
+    publicKey: string,
+  ): Promise<{ nonce: string; block_hash: string }> {
+    const [key, block] = await Promise.all([
+      this.#near.rpc.getAccessKey(accountId, publicKey, { finality: "optimistic" }),
+      this.#near.rpc.getBlock({ finality: "final" }),
+    ]);
+    return { nonce: (BigInt(key.nonce) + 1n).toString(), block_hash: block.header.hash };
+  }
+
+  async walletSend(
+    tokenId: string,
+    receiverId: string,
+    amount: bigint,
+    memo: string,
+    tx: { public_key: string; nonce: string; block_hash: string },
+  ): Promise<{ signed_transaction: string; hash: string } | null> {
+    let outcome: { status?: { SuccessValue?: string } };
+    try {
+      outcome = (await this.#near.call(
+        this.#contractId,
+        "wallet_send",
+        { token_id: tokenId, receiver_id: receiverId, amount: amount.toString(), memo, tx },
+        { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
+      )) as unknown as { status?: { SuccessValue?: string } };
+    } catch (error) {
+      // The contract's refusal, such as the owner's limits, says why.
+      const panic = error instanceof FunctionCallError ? error.panic : undefined;
+      throw new Error(panic ?? String(error));
+    }
+    const value = outcome.status?.SuccessValue;
+    if (!value) {
+      return null;
+    }
+    return JSON.parse(Buffer.from(value, "base64").toString("utf8")) as {
+      signed_transaction: string;
+      hash: string;
+    } | null;
+  }
+
+  async broadcast(signedTransactionBase64: string): Promise<void> {
+    await this.#near.rpc.sendTransaction(Buffer.from(signedTransactionBase64, "base64"), "FINAL");
   }
 
   async getKeyEpoch(): Promise<number> {

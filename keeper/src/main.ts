@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
+import { base58 } from "@scure/base";
 import { Near, verifyNep413Signature } from "near-kit";
 import { katSvg, sigilSvg } from "../../art/svg.ts";
 import { stageOf } from "../../art/traits.ts";
@@ -15,6 +16,7 @@ import { keysFromRootSecret, localRootSecret } from "./keys.ts";
 import { FileJournal, Meter } from "./meter.ts";
 import { type ContextStore, FileStore, MirroredStore } from "./store.ts";
 import { DstackAgent, keyProof, phalaCollateral, phalaRootSecret, reportDataFor } from "./tee.ts";
+import { TokenWallets } from "./wallet.ts";
 
 const WAKE_EVERY_MS = 5_000;
 const CONSOLIDATE_EVERY_MS = 60_000;
@@ -89,6 +91,10 @@ const collections = new Collections({
       chain,
       store: storeFor(contractId, chain),
       keyring,
+      wallets:
+        info.wallet_domain_id != null
+          ? new TokenWallets(chain, (b58) => base58.decode(b58))
+          : undefined,
       inference,
       meter,
       prices,

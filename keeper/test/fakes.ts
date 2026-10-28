@@ -13,6 +13,7 @@ import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
+import type { WalletView } from "../src/wallet.ts";
 
 export const NEAR = 10n ** 24n;
 
@@ -65,6 +66,29 @@ export class FakeChain implements Chain {
   ckdRequests = 0;
   /** FastFS uploads, by transaction hash. */
   readonly uploads = new Map<string, Uint8Array>();
+  /** Token 1's wallet as the contract shows it; null without wallets. */
+  wallet: WalletView | null = null;
+  walletKeyText = `ed25519:${base58.encode(new Uint8Array(32).fill(9))}`;
+  /** yoctoNEAR in the wallet's account; null until someone funds it. */
+  walletBalance: bigint | null = null;
+  /** Payments the wallet's transactions made, once broadcast. */
+  readonly walletSends: Array<{ receiverId: string; amount: bigint; memo: string }> = [];
+  #signed = new Map<string, { receiverId: string; amount: bigint; memo: string }>();
+
+  /** Gives token 1 a wallet whose owner lets the mind send `max` at a time and `daily` a day. */
+  allowWallet(daily: bigint, max: bigint, balance: bigint | null = 10n ** 24n): void {
+    this.wallet = {
+      path: "nearkat/wallet/1",
+      mpc_contract_id: "v1.signer",
+      domain_id: 1,
+      daily_allowance: daily.toString(),
+      max_payment: max.toString(),
+      spent_today: "0",
+      payments: 0,
+      last_payment: null,
+    };
+    this.walletBalance = balance;
+  }
 
   mint(tokenId: string, owner: string, balance: bigint): void {
     this.kats.set(tokenId, {
@@ -213,6 +237,59 @@ export class FakeChain implements Chain {
     const txHash = base58.encode(digest);
     this.uploads.set(txHash, Uint8Array.from(args));
     return txHash;
+  }
+
+  async getWallet(tokenId: string): Promise<WalletView | null> {
+    return tokenId === "1" ? this.wallet : null;
+  }
+
+  async walletKey(_view: WalletView): Promise<string> {
+    return this.walletKeyText;
+  }
+
+  async accountBalance(_accountId: string): Promise<bigint | null> {
+    return this.walletBalance;
+  }
+
+  async walletTx(): Promise<{ nonce: string; block_hash: string }> {
+    return { nonce: "1", block_hash: "11111111111111111111111111111111" };
+  }
+
+  async walletSend(
+    _tokenId: string,
+    receiverId: string,
+    amount: bigint,
+    memo: string,
+  ): Promise<{ signed_transaction: string; hash: string } | null> {
+    // The contract's rules, as it applies them.
+    const wallet = this.wallet;
+    if (!wallet || BigInt(wallet.daily_allowance) === 0n) {
+      throw new Error("The owner hasn't let this token's mind spend");
+    }
+    if (amount > BigInt(wallet.max_payment)) {
+      throw new Error("That's more than the owner lets the mind send at once");
+    }
+    const spent = BigInt(wallet.spent_today) + amount;
+    if (spent > BigInt(wallet.daily_allowance)) {
+      throw new Error("That's more than the owner lets the mind send today");
+    }
+    wallet.spent_today = spent.toString();
+    wallet.payments += 1;
+    const hash = base58.encode(
+      createHash("sha256").update(`${receiverId}${amount}${wallet.payments}`).digest(),
+    );
+    const signed = Buffer.from(hash).toString("base64");
+    this.#signed.set(signed, { receiverId, amount, memo });
+    return { signed_transaction: signed, hash };
+  }
+
+  async broadcast(signed: string): Promise<void> {
+    const send = this.#signed.get(signed);
+    if (!send) {
+      throw new Error("Not a transaction the contract signed");
+    }
+    this.walletBalance = (this.walletBalance ?? 0n) - send.amount;
+    this.walletSends.push(send);
   }
 
   #kat(tokenId: string): KatView {

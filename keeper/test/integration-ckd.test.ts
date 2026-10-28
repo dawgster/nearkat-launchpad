@@ -3,6 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { base58 } from "@scure/base";
 import { generateKey, Near, type PrivateKey } from "near-kit";
 import { Sandbox } from "near-kit/sandbox";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -13,6 +14,7 @@ import { KatService } from "../src/kats.ts";
 import { liveCheck } from "../src/livecheck.ts";
 import { Meter } from "../src/meter.ts";
 import { FileStore, MirroredStore } from "../src/store.ts";
+import { TokenWallets } from "../src/wallet.ts";
 import { FakeInference } from "./fakes.ts";
 
 const WASM = fileURLToPath(new URL("../../contract/target/near/nearkat_nft.wasm", import.meta.url));
@@ -42,6 +44,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
     let contractId: string;
     let keySource: { mpc_contract_id: string; domain_id: number };
     let admin: Near;
+    let creatorId: string;
     let alice: { id: string; near: Near };
     let keeperA: { id: string; near: Near };
     let keeperB: { id: string; near: Near };
@@ -71,6 +74,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
         inference,
         meter: new Meter(chain, { log: () => {} }),
         prices: { chat: 1n, save: 1n },
+        wallets: new TokenWallets(chain, (b58) => base58.decode(b58)),
         retryDelayMs: 200,
         log: () => {},
       });
@@ -131,9 +135,11 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
             symbol: "LNT",
             base_uri: "https://art.example/",
             key_source: keySource,
+            wallet_domain_id: 1,
           },
         })
         .send();
+      creatorId = creator.id;
     }, 180_000);
 
     afterAll(async () => {
@@ -153,7 +159,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
         waitMs: 15_000,
       });
       expect(results.filter((r) => r.ok === false)).toEqual([]);
-      expect(results.filter((r) => r.ok === true)).toHaveLength(6);
+      expect(results.filter((r) => r.ok === true)).toHaveLength(7);
     }, 120_000);
 
     test("a new keeper takes over: it reads the old memories, and the old keeper is locked out", async () => {
@@ -201,6 +207,47 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM))(
       await expect(a.chain.requestContextKey(newAppKey().publicKey, 1)).rejects.toThrow(
         /Only the keeper/,
       );
+    }, 240_000);
+
+    test("a token's mind pays from its own wallet, within its owner's allowance", async () => {
+      // Runs after the hand-over: keeper B serves the collection now.
+      const b = await keeper(keeperB);
+      const wallets = new TokenWallets(
+        new NearChain(keeperB.near, contractId, { signerId: keeperB.id, finality: "optimistic" }),
+        (b58) => base58.decode(b58),
+      );
+      const wallet = await wallets.info("1");
+      expect(wallet?.balance).toBeNull();
+
+      // Alice funds her token's wallet and lets its mind send 0.1 NEAR a day.
+      await alice.near.send(wallet?.address as string, "1 NEAR");
+      await alice.near.call(
+        contractId,
+        "set_wallet_policy",
+        {
+          token_id: "1",
+          daily_allowance: (10n ** 23n).toString(),
+          max_payment: (6n * 10n ** 22n).toString(),
+        },
+        { attachedDeposit: "0.01 NEAR" },
+      );
+
+      const balanceOf = async (id: string) =>
+        BigInt((await keeperB.near.rpc.getAccount(id, { finality: "optimistic" })).amount);
+      const before = await balanceOf(creatorId);
+      b.inference.nextReply = `A gift for my maker!\nPAY 0.05 NEAR TO ${creatorId} FOR a thank-you`;
+      const reply = await eventually(() =>
+        b.kats.chat(alice.id, "1", "send the creator a thank-you"),
+      );
+      expect(reply.reply).toBe("A gift for my maker!");
+      expect(reply.payment).toMatchObject({ status: "sent", receiver_id: creatorId });
+      expect((await balanceOf(creatorId)) - before).toBe(5n * 10n ** 22n);
+
+      // A second one would go over the day's allowance: refused, and nothing moves.
+      b.inference.nextReply = `Another!\nPAY 0.06 NEAR TO ${creatorId} FOR more thanks`;
+      const again = await b.kats.chat(alice.id, "1", "and again");
+      expect(again.payment).toMatchObject({ status: "refused" });
+      expect((await balanceOf(creatorId)) - before).toBe(5n * 10n ** 22n);
     }, 240_000);
   },
 );
