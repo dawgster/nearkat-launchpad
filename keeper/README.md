@@ -47,11 +47,11 @@ keeper's own secret: a replacement keeper the collection names gets the same
 keys, and for a TEE collection only an attested keeper key can ask.
 
 **Wallets.** In a collection with wallets, each token has its own NEAR
-account, signed by the MPC network through the contract within its owner's
-rules (`src/wallet.ts`). The mind is told its address, balance and allowance,
+account, `<token_id>.<collection>`, that only the contract can send from,
+within its owner's rules (`src/wallet.ts`). The mind is told its address, balance and allowance,
 and pays by ending a reply with `PAY <amount> NEAR TO <account> FOR
-<reason>`. The keeper takes that line out, checks the limits, has the
-contract build and the network sign the transfer, sends it, and reports what
+<reason>`. The keeper takes that line out, checks the limits, asks the
+contract to send it (`wallet_send`), and reports what
 happened to the owner (`payment` in the chat reply) and to the mind. A sent
 payment is charged like a save.
 

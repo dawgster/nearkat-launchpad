@@ -272,11 +272,13 @@ live-check` in the keeper runs the same steps against testnet or mainnet.
 
 ## A wallet for every token
 
-Each token of a collection with wallets has its own NEAR account: the
-implicit account (the key's hex) of the Ed25519 key NEAR's MPC network
-derives for the collection contract and the path `nearkat/wallet/<token>`.
-Only the contract can ask the network to sign with that key, so the
-contract's rules are the wallet's rules:
+Each token of a collection with wallets can have its own NEAR account,
+`<token_id>.<collection>`. Anyone can open it with the collection's
+`open_wallet`, which creates the sub-account running the `token-wallet/`
+code (published once as a global contract, referenced by hash). The account
+has no access keys and no state; its one method, `transfer`, refuses every
+caller but the collection it lives under. So the contract's rules are the
+wallet's rules:
 
 - The token's **owner** can send anything from it (`wallet_send`, 1 yocto).
 - The token's **mind**, through the keeper, can send only within what the
@@ -284,52 +286,39 @@ contract's rules are the wallet's rules:
   and `daily_allowance` per UTC day. The rules record which owner set them;
   under any other owner the mind's allowance is zero, so a buyer never
   inherits the seller's settings.
-- Anyone can put NEAR in: the first transfer creates the account.
+- Anyone can put NEAR in once it's open.
 
-The contract never signs a hash someone hands it. It builds the transfer
-itself (a NEAR transaction with one Transfer action, signed by the wallet
-account, with the nonce and a recent block hash the caller supplies), asks
-the network's `sign` for the SHA-256 of it, and returns the signed
-transaction for the caller to send. Wrong nonces or block hashes only make
-that transaction invalid. If the network doesn't sign, the callback returns
-null and gives the mind's allowance back. The address follows the token id,
-so the wallet goes with the token when it is sold or given.
-
-A signed NEAR transaction stays valid for a day of blocks and can't be
-revoked. So while a transfer the owner signed from the wallet could still be
-sent, the token can't change hands (`nft_transfer`, `nft_transfer_call` and
-marketplace payouts refuse, and `get_wallet` says until which block): a
-seller can't sign transfers, sell the token, and empty the wallet the buyer
-paid for. The mind's payments don't hold up a sale; a keeper withholding one
-could at most spend that day's allowance late. Changing the rules needs a
+Nothing is signed ahead of time: each send is a contract call that checks
+the rules and calls the wallet's `transfer` there and then. So there is
+nothing a seller could hold back to empty the wallet after a sale, and the
+token can change hands at any moment; the wallet goes with it because its
+address follows the token id. If a transfer fails (say, to an account that
+doesn't exist), the callback records nothing and gives the mind's allowance
+back, but only to the same owner, rules and day. Changing the rules needs a
 deposit, so a limited access key can't, and keeps what was spent today. The
-wallet's record is paid for once, at its largest size, by the owner's first
-rules or send.
+wallet's record is paid for once, at its largest size, when it's opened.
 
 In conversation, the keeper tells the mind its wallet's address, balance and
-allowance. To pay, the mind ends a reply with one line: `PAY <amount> NEAR
-TO <account> FOR <reason>`. Only the reply's last line counts, in exactly that
-form; anything else that looks like a payment is dropped unpaid, and never
-kept in the token's character or memory, so nobody can plant one for a
-later owner's allowance. The keeper takes the line out of the reply,
-checks the limits, has the contract sign, sends the transaction, and reports
+allowance, or that it isn't open yet. To pay, the mind ends a reply with one
+line: `PAY <amount> NEAR TO <account> FOR <reason>`. Only the reply's last
+line counts, in exactly that form; anything else that looks like a payment
+is dropped unpaid, and never kept in the token's character or memory, so
+nobody can plant one for a later owner's allowance. The keeper takes the
+line out of the reply, checks the limits, calls `wallet_send`, and reports
 the outcome to the owner (under the reply) and to the mind (in the
-conversation), so it never believes a payment that failed. A payment whose
-sending timed out is reported as possibly still going through, not as
-failed, so the mind doesn't pay twice. A sent payment is
-charged like a save. The transfer's own fee comes out of the wallet.
+conversation), so it never believes a payment that failed. A call that timed
+out is reported as possibly still going through, not as failed, so the mind
+doesn't pay twice. A sent payment is charged like a save.
 
-The launchpad's `set_key_source` takes the network's Ed25519 domain as
-`wallet_domain_id` and gives it to every launch; a collection from before
-wallets can turn them on once with `enable_wallets`. The mock MPC contract
-signs as the network does (domain key plus a tweak of the caller and path),
-tested against values frozen in NEAR's MPC repository, and a sandbox test
-sends real NEAR from a token's wallet both as owner and as mind.
+The launchpad's `set_wallet_code_hash` gives every launch the wallet code; a
+collection from before wallets can turn them on once with `enable_wallets`.
+Sandbox tests open a wallet, pay from it as owner and as mind, refuse
+everyone else, and sell the token straight after.
 
-Limits: payments are NEAR transfers on NEAR. Other chains are the same
-pattern with the network's secp256k1 domain and an EVM transaction built by
-the contract, not built yet. Only the owner talks to the mind, so only the
-owner can talk it into paying, and only within limits the owner set.
+Limits: payments are NEAR transfers on NEAR. Paying on other chains would
+use the MPC network's signing domains, not built yet. Only the owner talks
+to the mind, so only the owner can talk it into paying, and only within
+limits the owner set.
 
 ## Storage on NEAR: FastFS
 
@@ -358,9 +347,6 @@ transaction. `STORAGE=file` keeps contexts only on the keeper's disk.
   `npm run live-check` in `keeper/` on testnet before launch.
 - **Leaks through the model.** Secret instructions can still be paraphrased
   out of the model; the keeper only stops verbatim quotes.
-- **Wallets on the live network.** Token wallets are tested against the mock
-  MPC contract; `npm run live-check` finds the live Ed25519 domain, but no
-  payment has been signed by the live network yet.
 - **One process per keeper.** A keeper account's state (sessions, unsettled
   charges) lives in one process; it doesn't scale out yet.
 - **Archival reads.** Reading a context back without a gateway needs an

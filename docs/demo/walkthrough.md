@@ -65,14 +65,14 @@ Switch to the kat you raised beforehand.
 
 On the same page, under **Its wallet**:
 
-- "This kat has its own NEAR account. Its key is held by NEAR's MPC network
-  and signs only through the contract, under my rules."
-- Put 1 NEAR in. Set what it may spend on its own: 0.1 a day, 0.05 at a time.
+- "This kat can have its own NEAR account, `1.<collection>`. Nobody holds a
+  key to it: only the collection's contract can send from it, under my rules."
+- Open its wallet with 0.1 NEAR, then put 1 NEAR in. Set what it may spend on its own: 0.1 a day, 0.05 at a time.
 - In the chat: "please send 0.01 NEAR to <a friend> as a gift". The kat
   decides; the payment shows under its reply, and the wallet's last payment
   updates. Ask it for 1 NEAR: it's refused, and the kat is told so.
-- "If I give the kat away, the wallet and what's in it go with it. My rules
-  don't: the new owner decides what it may spend."
+- "If I sell or give the kat away, the wallet and what's in it go with it,
+  right away. My rules don't: the new owner decides what it may spend."
 
 ## 5. Verify (1 minute)
 
@@ -154,11 +154,10 @@ Open **Launchpad**.
   the contract names. No single keeper's secret opens the minds, and a new
   keeper can take over. Changing keeper moves to a new key epoch, so the
   old one is locked out of what comes next.
-- **Can the kat drain its wallet?** No. The contract signs for the kat only
-  within the owner's limits, per payment and per day, and builds the
-  transaction itself, so it knows exactly what it is signing.
-- **Who holds the wallet's key?** Nobody: NEAR's MPC network signs with it,
-  and only when the collection's contract asks.
+- **Can the kat drain its wallet?** No. The contract sends for the kat only
+  within the owner's limits, per payment and per day.
+- **Who holds the wallet's key?** Nobody. The wallet account has no keys;
+  it only obeys the collection's contract, which checks who is asking.
 - **What if the keeper disappears?** The minds are on NEAR and the keys come
   from the MPC network, so the creator names a new keeper and everything
   carries on. Owners can also download their token's mind at any time, with

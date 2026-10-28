@@ -43,21 +43,21 @@ encrypted under, accepts only the current one, and records it on the token
 (`get_kat().key_epoch`). The keeper may request any epoch up to the current
 one, to read older contexts.
 
-**Wallets.** With `collection.wallet_domain_id` (the MPC network's Ed25519
-domain), every token has its own NEAR account: the implicit account of the
-key the network derives for this contract and `nearkat/wallet/<token>`.
-`get_wallet({ token_id })` gives the path, domain and rules;
-`set_wallet_policy({ token_id, daily_allowance, max_payment })` (token
-owner, attach about 0.01 NEAR for storage) sets what the token's mind may
-send; `wallet_send({ token_id, receiver_id, amount, memo?, tx: { public_key,
-nonce, block_hash } })` builds the transfer, has the network sign it and
-returns `{ signed_transaction, hash }` (or null if unsigned) for the caller
-to send. The owner may send anything (1 yocto); the keeper, for the mind,
-only within the rules, which a new owner doesn't inherit.
-`enable_wallets({ domain_id })` (admin, once) turns wallets on for a
-collection from before them. Each payment logs a `wallet_payment` event.
-While a transfer the owner signed could still be sent (a day of blocks), the
-token can't change hands; `get_wallet().owner_signed_until` says until when.
+**Wallets.** With `collection.wallet_code_hash` (the published
+`token-wallet/` code), every token can have its own NEAR account,
+`<token_id>.<collection>`. `open_wallet({ token_id })` (anyone, attach at
+least 0.02 NEAR; what's left after the record's storage goes in) creates it
+with that code; the account has no keys, and only this contract can call its
+`transfer`. `get_wallet({ token_id })` gives `account_id`, `open` and the
+rules; `set_wallet_policy({ token_id, daily_allowance, max_payment })`
+(token owner, 1 yocto) sets what the token's mind may send;
+`wallet_send({ token_id, receiver_id, amount, memo? })` sends and resolves
+to whether the transfer went through. The owner may send anything (1 yocto);
+the keeper, for the mind, only within the rules, which a new owner doesn't
+inherit. Nothing is ever signed in advance, so the token can be sold at any
+moment and the wallet goes with it. `enable_wallets({ code_hash })` (admin,
+once) turns wallets on for a collection from before them. Each payment logs
+a `wallet_payment` event.
 
 The contract also accepts `__fastdata_fastfs` calls and ignores them: the
 keeper stores each encrypted context as a FastFS file addressed to the

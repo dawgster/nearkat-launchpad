@@ -154,12 +154,12 @@ export function Collection() {
                 Keys come from the keeper's own secret.
               </p>
             )}
-            {c.wallet_domain_id != null && (
+            {c.wallet_code_hash != null && (
               <p className="mt-2 text-sm leading-relaxed text-mist">
-                <span className="font-bold text-cream">Every token has its own wallet</span>: a NEAR
-                account whose key the same network holds and signs with only through this contract.
-                Its owner can always send from it; the token itself only within what its owner
-                allows. It goes with the token when it changes hands.
+                <span className="font-bold text-cream">Every token can have its own wallet</span>: a
+                NEAR account with no keys, which only this contract can send from. Its owner can
+                always send from it; the token itself only within what its owner allows. It goes
+                with the token the moment it changes hands.
               </p>
             )}
             {c.sealed_prompt && (
