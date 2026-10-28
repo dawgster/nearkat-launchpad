@@ -184,9 +184,10 @@ pub struct Collection {
     pub sealed_prompt: Option<SealedPrompt>,
     /// NEAR's MPC network, which derives the collection's context keys.
     pub key_source: KeySource,
-    /// The same network's Ed25519 signing domain, for token wallets. None: no wallets.
+    /// The published token wallet code (`token-wallet/`), by hash, which gives
+    /// every token its own wallet account. None: no wallets.
     #[serde(default)]
-    pub wallet_domain_id: Option<u64>,
+    pub wallet_code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
 }
 
 #[near(serializers = [json])]
@@ -208,8 +209,8 @@ pub struct CollectionView {
     /// The current key epoch. It moves on whenever the keeper changes, so a
     /// keeper that is replaced can't read what is saved after it left.
     pub key_epoch: u32,
-    /// The MPC network's Ed25519 domain token wallets are signed in, if they have wallets.
-    pub wallet_domain_id: Option<u64>,
+    /// The token wallet code its tokens' wallets run, if they have wallets.
+    pub wallet_code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
     /// Tokens minted so far.
     pub minted: U64,
     /// The launchpad this collection came from, which approves its upgrades.

@@ -4,9 +4,8 @@ A stand-in for NEAR's MPC signer contract (`v1.signer` on mainnet), so the
 sandbox tests and the browser story can exercise confidential key derivation
 (CKD) without the real MPC network.
 
-It answers `request_app_private_key`, `sign` (Ed25519),
-`derived_public_key`, `public_key` and a small part of `state` (one CKD and
-one Ed25519 domain, in the real contract's shape) with the same
+It answers `request_app_private_key`, `public_key` and a small part of
+`state` (its one CKD domain, in the real contract's shape) with the same
 derivation and encryption the real network uses: the app id is
 `sha3_256("near-mpc v0.1.0 app_id derivation:" + caller + "," + path)`, the
 derived key is `msk · H(pk ‖ app_id)` hashed to G1 with

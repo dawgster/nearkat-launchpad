@@ -93,9 +93,9 @@ pub struct Contract {
     /// `Kat` so token records from before epochs still read; a token missing
     /// here was saved under epoch 0, the key from before epochs.
     kat_epochs: LookupMap<TokenId, u32>,
-    /// The MPC network's Ed25519 signing domain for token wallets. None: no wallets.
-    wallet_domain_id: Option<u64>,
-    /// Each token's wallet rules, once its owner has set them.
+    /// The published code token wallets run. None: no wallets.
+    wallet_code_hash: Option<CryptoHash>,
+    /// Each token's wallet record, from when its wallet is opened.
     wallets: LookupMap<TokenId, wallet::Wallet>,
 }
 
@@ -122,7 +122,7 @@ impl Contract {
             terms,
             sealed_prompt,
             key_source,
-            wallet_domain_id,
+            wallet_code_hash,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -216,7 +216,7 @@ impl Contract {
             key_source,
             key_epoch: 1,
             kat_epochs: LookupMap::new(StorageKey::KatEpochs),
-            wallet_domain_id,
+            wallet_code_hash: wallet_code_hash.map(Into::into),
             wallets: LookupMap::new(StorageKey::Wallets),
         }
     }
@@ -309,7 +309,7 @@ impl Contract {
             sealed_key_attested: self.sealed_key_attested,
             key_source: self.key_source.clone(),
             key_epoch: self.key_epoch,
-            wallet_domain_id: self.wallet_domain_id,
+            wallet_code_hash: self.wallet_code_hash.map(Into::into),
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),

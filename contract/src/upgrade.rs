@@ -249,7 +249,7 @@ impl ContractV2 {
             key_source: self.key_source,
             key_epoch: self.key_epoch,
             kat_epochs: self.kat_epochs,
-            wallet_domain_id: None,
+            wallet_code_hash: None,
             wallets: LookupMap::new(crate::StorageKey::Wallets),
         }
     }
