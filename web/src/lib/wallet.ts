@@ -28,6 +28,8 @@ export interface WalletView {
   spent_today: string;
   payments: number;
   last_payment: WalletPayment | null;
+  /** While set: transfers the owner signed could still be sent until this block, and the token can't change hands. */
+  owner_signed_until?: string | null;
 }
 
 export interface TokenWallet {
@@ -39,7 +41,7 @@ export interface TokenWallet {
   balance: bigint | null;
 }
 
-/** What setting a wallet's rules costs at most, for the storage they take; the rest is refunded. */
+/** What setting a wallet's rules, or the owner's first send, costs at most for the record's storage; the rest is refunded. */
 export const WALLET_RULES_DEPOSIT = 10n ** 22n;
 
 const yocto = (amount: bigint) => `${amount} yocto` as const;
@@ -135,7 +137,8 @@ export class TokenWallets {
           block_hash: block.header.hash,
         },
       },
-      { gas: "300 Tgas", attachedDeposit: yocto(1n), waitUntil: "FINAL" },
+      // The first send pays for the wallet's record; whatever isn't needed comes back.
+      { gas: "300 Tgas", attachedDeposit: yocto(WALLET_RULES_DEPOSIT), waitUntil: "FINAL" },
     );
     const signed = returnValue<{ signed_transaction: string; hash: string } | null>(outcome);
     if (!signed) {

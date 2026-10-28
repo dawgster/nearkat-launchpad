@@ -295,12 +295,28 @@ that transaction invalid. If the network doesn't sign, the callback returns
 null and gives the mind's allowance back. The address follows the token id,
 so the wallet goes with the token when it is sold or given.
 
+A signed NEAR transaction stays valid for a day of blocks and can't be
+revoked. So while a transfer the owner signed from the wallet could still be
+sent, the token can't change hands (`nft_transfer`, `nft_transfer_call` and
+marketplace payouts refuse, and `get_wallet` says until which block): a
+seller can't sign transfers, sell the token, and empty the wallet the buyer
+paid for. The mind's payments don't hold up a sale; a keeper withholding one
+could at most spend that day's allowance late. Changing the rules needs a
+deposit, so a limited access key can't, and keeps what was spent today. The
+wallet's record is paid for once, at its largest size, by the owner's first
+rules or send.
+
 In conversation, the keeper tells the mind its wallet's address, balance and
 allowance. To pay, the mind ends a reply with one line: `PAY <amount> NEAR
-TO <account> FOR <reason>`. The keeper takes the line out of the reply,
+TO <account> FOR <reason>`. Only the reply's last line counts, in exactly that
+form; anything else that looks like a payment is dropped unpaid, and never
+kept in the token's character or memory, so nobody can plant one for a
+later owner's allowance. The keeper takes the line out of the reply,
 checks the limits, has the contract sign, sends the transaction, and reports
 the outcome to the owner (under the reply) and to the mind (in the
-conversation), so it never believes a payment that failed. A sent payment is
+conversation), so it never believes a payment that failed. A payment whose
+sending timed out is reported as possibly still going through, not as
+failed, so the mind doesn't pay twice. A sent payment is
 charged like a save. The transfer's own fee comes out of the wallet.
 
 The launchpad's `set_key_source` takes the network's Ed25519 domain as

@@ -11,6 +11,7 @@ import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
 import {
   formatNear,
   type PaymentOutcome,
+  stripPaymentLines,
   type TokenWallets,
   takePayment,
   type WalletInfo,
@@ -382,8 +383,13 @@ export class KatService {
         },
       ]);
       const update = parseUpdate(summary.reply);
-      const character = (update.character ?? doc.personality).slice(0, MAX_CHARACTER_CHARS);
-      const memory = update.memory.slice(0, MAX_SUMMARY_CHARS);
+      // A payment instruction never makes it into what the token keeps, so
+      // nobody can plant one for a later owner's allowance.
+      const character = stripPaymentLines(update.character ?? doc.personality).slice(
+        0,
+        MAX_CHARACTER_CHARS,
+      );
+      const memory = stripPaymentLines(update.memory).slice(0, MAX_SUMMARY_CHARS);
       await this.#save(newContext(tokenId, doc.version + 1, character, memory));
     } catch (error) {
       this.#log(`Memory save skipped for kat ${tokenId}: ${String(error)}`);
@@ -532,9 +538,14 @@ export class KatService {
  */
 function describePayment(payment: PaymentOutcome): string {
   const what = `${formatNear(BigInt(payment.amount))} NEAR to ${payment.receiver_id}`;
-  return payment.status === "sent"
-    ? `You sent ${what} from your wallet.`
-    : `Your payment of ${what} did not go through: ${payment.reason}.`;
+  switch (payment.status) {
+    case "sent":
+      return `You sent ${what} from your wallet.`;
+    case "pending":
+      return `Your payment of ${what} was signed and may still go through; don't pay it again.`;
+    default:
+      return `Your payment of ${what} did not go through: ${payment.reason}.`;
+  }
 }
 
 function systemMessage(

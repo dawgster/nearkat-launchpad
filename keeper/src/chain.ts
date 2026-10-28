@@ -2,7 +2,7 @@ import { FunctionCallError, type Near } from "near-kit";
 import type { KeySource } from "./ckd.ts";
 import type { CollectionInfo } from "./collection.ts";
 import type { KatView } from "./types.ts";
-import type { WalletChain, WalletView } from "./wallet.ts";
+import { TransactionRejected, type WalletChain, type WalletView } from "./wallet.ts";
 
 /** How the contract answered a `debit_batch` call. */
 export type DebitResult =
@@ -286,7 +286,20 @@ export class NearChain implements Chain {
   }
 
   async broadcast(signedTransactionBase64: string): Promise<void> {
-    await this.#near.rpc.sendTransaction(Buffer.from(signedTransactionBase64, "base64"), "FINAL");
+    try {
+      await this.#near.rpc.sendTransaction(Buffer.from(signedTransactionBase64, "base64"), "FINAL");
+    } catch (error) {
+      // near-kit's errors for a transaction the network refused outright.
+      const rejected = [
+        "InvalidTransactionError",
+        "InvalidNonceError",
+        "InsufficientBalanceError",
+        "SignatureError",
+        "AccessKeyDoesNotExistError",
+        "AccountDoesNotExistError",
+      ].includes((error as Error)?.name);
+      throw rejected ? new TransactionRejected(String((error as Error).message)) : error;
+    }
   }
 
   async getKeyEpoch(): Promise<number> {

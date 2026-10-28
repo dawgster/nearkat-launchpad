@@ -37,7 +37,8 @@ export interface ChatReply {
 /** A payment the token's mind asked for. Amounts are yoctoNEAR. */
 export type PaymentOutcome =
   | { status: "sent"; receiver_id: string; amount: string; memo: string; hash: string }
-  | { status: "refused"; receiver_id: string; amount: string; memo: string; reason: string };
+  | { status: "refused"; receiver_id: string; amount: string; memo: string; reason: string }
+  | { status: "pending"; receiver_id: string; amount: string; memo: string; hash: string };
 
 /** A token's mind as its owner downloads it, with the on-chain record that proves it. */
 export interface MindExport {

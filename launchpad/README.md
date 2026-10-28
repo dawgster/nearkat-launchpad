@@ -69,7 +69,8 @@ The wasm is written to `target/near/nearkat_launchpad.wasm`.
 }
 ```
 
-`key_source` comes from the launchpad, not the creator. `max_supply`, `tee`, `keeper_id`, `base_uri`, `media_extension`, `terms` and
+`migrate()` (the launchpad's own account) converts the state from before
+wallets after new code is deployed. `key_source` comes from the launchpad, not the creator. `max_supply`, `tee`, `keeper_id`, `base_uri`, `media_extension`, `terms` and
 `sealed_prompt` are optional; see `../contract/README.md` for what they mean. A collection that requires a
 Phala app needs a keeper running as that app; name it in `keeper_id` if the
 launchpad's keeper isn't one.

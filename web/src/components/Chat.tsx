@@ -134,7 +134,9 @@ export function Chat({
               >
                 {line.payment.status === "sent"
                   ? `Paid ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id} from its wallet${line.payment.memo ? ` (${line.payment.memo})` : ""}.`
-                  : `Tried to pay ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id}: ${line.payment.reason}.`}
+                  : line.payment.status === "pending"
+                    ? `A payment of ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id} was signed and may still go through.`
+                    : `Tried to pay ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id}: ${line.payment.reason}.`}
               </p>
             )}
             {line.withheld && (

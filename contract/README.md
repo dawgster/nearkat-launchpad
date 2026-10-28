@@ -56,6 +56,8 @@ to send. The owner may send anything (1 yocto); the keeper, for the mind,
 only within the rules, which a new owner doesn't inherit.
 `enable_wallets({ domain_id })` (admin, once) turns wallets on for a
 collection from before them. Each payment logs a `wallet_payment` event.
+While a transfer the owner signed could still be sent (a day of blocks), the
+token can't change hands; `get_wallet().owner_signed_until` says until when.
 
 The contract also accepts `__fastdata_fastfs` calls and ignores them: the
 keeper stores each encrypted context as a FastFS file addressed to the

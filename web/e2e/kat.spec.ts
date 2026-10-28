@@ -71,11 +71,6 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
       timeout: 30_000,
     },
   );
-  // The owner can send from it too.
-  await walletPanel.getByLabel("Account to send to from its wallet").fill(bob);
-  await walletPanel.getByLabel("NEAR to send from its wallet").fill("0.2");
-  await walletPanel.getByRole("button", { name: "Send from wallet" }).click();
-  await expect(walletPanel).toContainText(`Sent 0.2 NEAR to ${bob}`, { timeout: 60_000 });
   await shot(page, "2b-wallet");
 
   await page.getByRole("link", { name: "Verify this kat" }).click();
@@ -116,11 +111,20 @@ test("the new owner finds the kat with the character it grew into", async ({ pag
   await page.getByLabel("Message to Nearkat #1").fill("who are you?");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("Hmph. You said: who are you?")).toBeVisible();
-  // The wallet came with the kat, with what is left: 1 - 0.01 - 0.2 NEAR, less its fees.
+  // The wallet came with the kat, with what is left: 1 - 0.01 NEAR, less the fee.
   // The previous owner's rules didn't: it can't spend on its own until Bob says so.
   const walletPanel = page.getByRole("region", { name: "Its wallet" });
-  await expect(walletPanel).toContainText("0.789 NEAR");
+  await expect(walletPanel).toContainText("0.989 NEAR");
   await expect(walletPanel).toContainText("The kat can't spend from it on its own.");
+  // Bob sends from it himself. Until that transfer has expired, the kat can't
+  // change hands, so nobody can sell a kat and then empty its wallet.
+  await walletPanel
+    .getByLabel("Account to send to from its wallet")
+    .fill(process.env.E2E_BOB_ID as string);
+  await walletPanel.getByLabel("NEAR to send from its wallet").fill("0.2");
+  await walletPanel.getByRole("button", { name: "Send from wallet" }).click();
+  await expect(walletPanel).toContainText("Sent 0.2 NEAR", { timeout: 60_000 });
+  await expect(walletPanel).toContainText("can't change hands until then");
 });
 
 test("a creator launches a collection with its own prompt, and mints from it", async ({ page }) => {

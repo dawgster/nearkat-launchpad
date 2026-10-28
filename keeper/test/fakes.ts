@@ -13,7 +13,7 @@ import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
-import type { WalletView } from "../src/wallet.ts";
+import { TransactionRejected, type WalletView } from "../src/wallet.ts";
 
 export const NEAR = 10n ** 24n;
 
@@ -74,6 +74,8 @@ export class FakeChain implements Chain {
   /** Payments the wallet's transactions made, once broadcast. */
   readonly walletSends: Array<{ receiverId: string; amount: bigint; memo: string }> = [];
   #signed = new Map<string, { receiverId: string; amount: bigint; memo: string }>();
+  /** "rejected": the network refuses the next transaction; "unknown": sending it times out. */
+  broadcastFailure: "rejected" | "unknown" | null = null;
 
   /** Gives token 1 a wallet whose owner lets the mind send `max` at a time and `daily` a day. */
   allowWallet(daily: bigint, max: bigint, balance: bigint | null = 10n ** 24n): void {
@@ -284,6 +286,12 @@ export class FakeChain implements Chain {
   }
 
   async broadcast(signed: string): Promise<void> {
+    if (this.broadcastFailure === "rejected") {
+      throw new TransactionRejected("Invalid transaction nonce");
+    }
+    if (this.broadcastFailure === "unknown") {
+      throw new Error("RPC timed out");
+    }
     const send = this.#signed.get(signed);
     if (!send) {
       throw new Error("Not a transaction the contract signed");

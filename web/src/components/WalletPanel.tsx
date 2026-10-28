@@ -71,6 +71,13 @@ export function WalletPanel({ noun, wallet, fund, setRules, send }: WalletPanelP
           ? `The ${noun} can't spend from it on its own.`
           : `The ${noun} may send up to ${formatNear(wallet.view.max_payment, 6)} NEAR at a time and ${formatNear(allowance, 6)} NEAR a day (${formatNear(wallet.view.spent_today, 6)} sent today).`}
       </p>
+      {wallet.view.owner_signed_until && (
+        <p className="mt-1 text-sm text-lamp" role="status">
+          You signed a transfer from it that could still be sent until block{" "}
+          {wallet.view.owner_signed_until}, so the {noun} can't change hands until then. That keeps
+          a seller from emptying a wallet they've sold.
+        </p>
+      )}
       {last && (
         <p className="mt-1 text-sm text-mist">
           Last payment: {formatNear(last.amount, 6)} NEAR to{" "}
