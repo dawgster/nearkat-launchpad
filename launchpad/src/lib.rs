@@ -455,3 +455,61 @@ fn with_key_source(
     }
     value
 }
+
+/// The key source before wallets: no `wallet_domain_id`.
+#[near(serializers = [borsh])]
+pub(crate) struct KeySourceV1 {
+    pub mpc_contract_id: AccountId,
+    pub domain_id: u64,
+}
+
+/// The launchpad's state before wallets (to 824f1dc).
+#[near(serializers = [borsh])]
+pub(crate) struct LaunchpadV1 {
+    pub admin_id: AccountId,
+    pub keeper_id: AccountId,
+    pub collection_code_hash: Option<CryptoHash>,
+    pub launch_fee: NearToken,
+    pub collection_funding: NearToken,
+    pub fees_accrued: NearToken,
+    pub collections: IterableMap<AccountId, CollectionEntry>,
+    pub reserved: LookupSet<String>,
+    pub approved: IterableSet<CryptoHash>,
+    pub key_source: Option<KeySourceV1>,
+}
+
+#[near]
+impl Launchpad {
+    /// Re-reads the state after new code is deployed, converting the layout
+    /// from before wallets when that is what is stored. Launches keep having
+    /// no wallets until the admin sets a `wallet_domain_id`.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        use near_sdk::borsh::BorshDeserialize;
+        let raw =
+            env::storage_read(b"STATE").unwrap_or_else(|| env::panic_str("No state to migrate"));
+        if let Ok(current) = Self::try_from_slice(&raw) {
+            return current;
+        }
+        let old = LaunchpadV1::try_from_slice(&raw).unwrap_or_else(|_| {
+            env::panic_str("Stored state is in a layout this version can't read")
+        });
+        Self {
+            admin_id: old.admin_id,
+            keeper_id: old.keeper_id,
+            collection_code_hash: old.collection_code_hash,
+            launch_fee: old.launch_fee,
+            collection_funding: old.collection_funding,
+            fees_accrued: old.fees_accrued,
+            collections: old.collections,
+            reserved: old.reserved,
+            approved: old.approved,
+            key_source: old.key_source.map(|source| KeySource {
+                mpc_contract_id: source.mpc_contract_id,
+                domain_id: source.domain_id,
+                wallet_domain_id: None,
+            }),
+        }
+    }
+}

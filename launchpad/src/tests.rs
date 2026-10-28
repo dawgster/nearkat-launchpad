@@ -322,3 +322,34 @@ fn the_admin_sets_the_key_source() {
     }));
     assert_eq!(l.get_config().key_source.unwrap().domain_id, 2);
 }
+
+#[test]
+fn migrating_from_before_wallets_keeps_everything_and_adds_no_wallets() {
+    let mut l = deploy();
+    ctx("creator.near", FEE.saturating_add(FUNDING));
+    let _ = l.launch(args("magister"));
+    l.collections.flush();
+    // Written as the version before wallets stored it.
+    let old = crate::LaunchpadV1 {
+        admin_id: l.admin_id.clone(),
+        keeper_id: l.keeper_id.clone(),
+        collection_code_hash: l.collection_code_hash,
+        launch_fee: l.launch_fee,
+        collection_funding: l.collection_funding,
+        fees_accrued: l.fees_accrued,
+        collections: l.collections,
+        reserved: l.reserved,
+        approved: l.approved,
+        key_source: Some(crate::KeySourceV1 {
+            mpc_contract_id: acc("v1.signer"),
+            domain_id: 2,
+        }),
+    };
+    near_sdk::env::state_write(&old);
+    let migrated = Launchpad::migrate();
+    let config = migrated.get_config();
+    assert_eq!(config.key_source.unwrap().wallet_domain_id, None);
+    assert!(migrated
+        .get_collection(acc("magister.launch.near"))
+        .is_some());
+}
