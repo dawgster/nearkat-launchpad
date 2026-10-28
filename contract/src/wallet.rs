@@ -14,13 +14,15 @@
 //! what it asks the network to sign, and returns it signed, ready for anyone
 //! to send. The wallet's address comes from the token id, so it goes with
 //! the token when it changes hands.
+//!
+//! A signed transaction stays valid for a day of blocks, and nothing can
+//! revoke it. So an owner can't sell the token while a transfer they signed
+//! from its wallet could still be sent: otherwise they could sign transfers,
+//! sell the token, and empty the wallet the buyer paid for.
 
 use near_contract_standards::non_fungible_token::TokenId;
 use near_sdk::json_types::{Base58CryptoHash, Base64VecU8, U64};
-use near_sdk::{
-    assert_one_yocto, env, near, require, AccountId, Gas, GasWeight, NearToken, Promise,
-    PromiseError,
-};
+use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, Promise, PromiseError};
 
 use crate::{Contract, ContractExt};
 
@@ -31,6 +33,9 @@ const GAS_FOR_SIGN: Gas = Gas::from_tgas(15);
 const GAS_FOR_SIGNED: Gas = Gas::from_tgas(15);
 const NANOS_PER_DAY: u64 = 86_400 * 1_000_000_000;
 const MAX_MEMO_CHARS: usize = 64;
+/// How many blocks a NEAR transaction stays valid after the block it names
+/// (the network's `transaction_validity_period`, the same on mainnet and testnet).
+pub const TX_VALIDITY_BLOCKS: u64 = 86_400;
 
 pub fn wallet_path(token_id: &str) -> String {
     format!("{WALLET_PATH}/{token_id}")
@@ -49,6 +54,11 @@ pub struct Wallet {
     spent_today: NearToken,
     payments: u32,
     last_payment: Option<Payment>,
+    /// Counts each change of rules, so a refund for a payment the network
+    /// didn't sign goes back only to the rules it was taken from.
+    policy: u32,
+    /// The last block a transfer the owner signed could still be sent in.
+    owner_signed_until: u64,
 }
 
 #[near(serializers = [borsh, json])]
@@ -78,6 +88,9 @@ pub struct WalletView {
     pub spent_today: NearToken,
     pub payments: u32,
     pub last_payment: Option<Payment>,
+    /// While set, transfers the owner signed from the wallet could still be
+    /// sent, up to this block, and the token can't change hands until then.
+    pub owner_signed_until: Option<U64>,
 }
 
 /// What a transfer from the wallet needs from the chain, which a contract
@@ -165,12 +178,17 @@ impl Contract {
             spent_today,
             payments: wallet.map_or(0, |w| w.payments),
             last_payment: wallet.and_then(|w| w.last_payment.clone()),
+            owner_signed_until: wallet
+                .map(|w| w.owner_signed_until)
+                .filter(|until| *until != 0 && *until >= env::block_height())
+                .map(U64),
         })
     }
 
-    /// Sets what the token's mind may send from its wallet. Token owner only.
-    /// The first call stores the rules; attach enough to pay for that storage
-    /// (0.01 NEAR covers it), and the rest is refunded.
+    /// Sets what the token's mind may send from its wallet. Token owner only,
+    /// with a deposit, so a limited access key can't change it. The first
+    /// time pays for the wallet's record (0.01 NEAR covers it; the rest is
+    /// refunded). Changing the rules keeps what was already spent today.
     #[payable]
     pub fn set_wallet_policy(
         &mut self,
@@ -182,6 +200,10 @@ impl Contract {
             self.wallet_domain_id.is_some(),
             "This collection has no wallets"
         );
+        require!(
+            !env::attached_deposit().is_zero(),
+            "Attach a deposit (at least 1 yoctoNEAR) to change a wallet's rules"
+        );
         let owner = self.owner_of(&token_id);
         require!(
             env::predecessor_account_id() == owner,
@@ -191,37 +213,16 @@ impl Contract {
             max_payment <= daily_allowance,
             "max_payment can't be more than daily_allowance"
         );
-        let before = env::storage_usage();
-        let previous = self.wallets.remove(&token_id);
-        let (payments, last_payment) = previous
-            .map(|w| (w.payments, w.last_payment))
-            .unwrap_or((0, None));
-        self.wallets.insert(
-            token_id,
-            Wallet {
-                owner_id: owner,
-                daily_allowance,
-                max_payment,
-                day: today(),
-                spent_today: NearToken::from_yoctonear(0),
-                payments,
-                last_payment,
-            },
-        );
-        self.wallets.flush();
-        let used = env::storage_usage().saturating_sub(before);
-        let cost = env::storage_byte_cost().saturating_mul(used as u128);
-        let deposit = env::attached_deposit();
-        require!(
-            deposit >= cost,
-            format!("Attach at least {cost} for the wallet's storage")
-        );
-        let refund = deposit.saturating_sub(cost);
-        if !refund.is_zero() {
-            Promise::new(env::predecessor_account_id())
-                .transfer(refund)
-                .detach();
+        let cost = self.ensure_wallet(&token_id, &owner);
+        let wallet = self.wallets.get_mut(&token_id).expect("just ensured");
+        if wallet.day != today() {
+            wallet.day = today();
+            wallet.spent_today = NearToken::from_yoctonear(0);
         }
+        wallet.daily_allowance = daily_allowance;
+        wallet.max_payment = max_payment;
+        wallet.policy += 1;
+        refund_beyond(cost);
     }
 
     /// Sends `amount` from the token's wallet to `receiver_id`: builds the
@@ -250,12 +251,22 @@ impl Contract {
         );
         let owner = self.owner_of(&token_id);
         let by_mind = env::predecessor_account_id() != owner;
-        if by_mind {
+        let policy = if by_mind {
             self.assert_keeper();
-            self.reserve_allowance(&token_id, &owner, amount);
+            self.reserve_allowance(&token_id, &owner, amount)
         } else {
-            assert_one_yocto();
-        }
+            // The first send pays for the wallet's record, like setting rules does.
+            require!(
+                !env::attached_deposit().is_zero(),
+                "Attach at least 1 yoctoNEAR"
+            );
+            let cost = self.ensure_wallet(&token_id, &owner);
+            refund_beyond(cost);
+            let wallet = self.wallets.get_mut(&token_id).expect("just ensured");
+            // The token can't change hands while this could still be sent.
+            wallet.owner_signed_until = env::block_height() + TX_VALIDITY_BLOCKS;
+            wallet.policy
+        };
 
         let public_key = ed25519_key(&tx.public_key);
         let signer_id = hex::encode(public_key);
@@ -289,6 +300,8 @@ impl Contract {
                     .with_static_gas(GAS_FOR_SIGNED)
                     .on_wallet_signed(
                         token_id,
+                        owner,
+                        policy,
                         Base64VecU8(transaction),
                         Payment {
                             receiver_id,
@@ -305,6 +318,8 @@ impl Contract {
     pub fn on_wallet_signed(
         &mut self,
         token_id: TokenId,
+        owner_id: AccountId,
+        policy: u32,
         transaction: Base64VecU8,
         payment: Payment,
         #[callback_result] signed: Result<near_sdk::serde_json::Value, PromiseError>,
@@ -323,7 +338,7 @@ impl Contract {
         let Some(signature) = signature else {
             // Not a panic: that would undo giving the allowance back too.
             if payment.by_mind {
-                self.release_allowance(&token_id, payment.amount, payment.at.0);
+                self.release_allowance(&token_id, &owner_id, policy, payment.amount, payment.at.0);
             }
             env::log_str("The MPC network didn't sign the transfer");
             return None;
@@ -360,12 +375,80 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Token not found"))
     }
 
-    /// Counts a payment by the mind against the owner's allowance, or refuses it.
-    fn reserve_allowance(&mut self, token_id: &TokenId, owner: &AccountId, amount: NearToken) {
+    /// Creates the token's wallet record if it has none, with no allowance,
+    /// and returns what its storage costs, to be paid from the deposit. The
+    /// record is measured with the largest last payment it can hold, so it
+    /// never needs more later.
+    fn ensure_wallet(&mut self, token_id: &TokenId, owner: &AccountId) -> NearToken {
+        if let Some(wallet) = self.wallets.get_mut(token_id) {
+            if &wallet.owner_id != owner {
+                // A new owner's record: none of the previous owner's rules.
+                wallet.owner_id = owner.clone();
+                wallet.daily_allowance = NearToken::from_yoctonear(0);
+                wallet.max_payment = NearToken::from_yoctonear(0);
+                wallet.spent_today = NearToken::from_yoctonear(0);
+                wallet.day = today();
+                wallet.policy += 1;
+            }
+            return NearToken::from_yoctonear(0);
+        }
+        let before = env::storage_usage();
+        let largest = Payment {
+            receiver_id: "a".repeat(64).parse().expect("valid account id"),
+            amount: NearToken::from_yoctonear(u128::MAX),
+            by_mind: true,
+            memo: "\u{10FFFF}".repeat(MAX_MEMO_CHARS),
+            at: U64(u64::MAX),
+        };
+        self.wallets.insert(
+            token_id.clone(),
+            Wallet {
+                owner_id: owner.clone(),
+                daily_allowance: NearToken::from_yoctonear(0),
+                max_payment: NearToken::from_yoctonear(0),
+                day: today(),
+                spent_today: NearToken::from_yoctonear(0),
+                payments: 0,
+                last_payment: Some(largest),
+                policy: 0,
+                owner_signed_until: 0,
+            },
+        );
+        self.wallets.flush();
+        let used = env::storage_usage().saturating_sub(before);
+        if let Some(wallet) = self.wallets.get_mut(token_id) {
+            wallet.last_payment = None;
+        }
+        env::storage_byte_cost().saturating_mul(used as u128)
+    }
+
+    /// Refuses a token transfer while a transfer its owner signed from the
+    /// token's wallet could still be sent.
+    pub(crate) fn assert_wallet_settled(&self, token_id: &TokenId) {
+        if let Some(wallet) = self.wallets.get(token_id) {
+            // 0: the owner has never signed a transfer from it.
+            require!(
+                wallet.owner_signed_until == 0 || env::block_height() > wallet.owner_signed_until,
+                format!(
+                    "Transfers its owner signed from this token's wallet could still be sent until block {}; it can change hands after that",
+                    wallet.owner_signed_until
+                )
+            );
+        }
+    }
+
+    /// Counts a payment by the mind against the owner's allowance, or refuses
+    /// it. Returns the rules' version it was counted against.
+    fn reserve_allowance(
+        &mut self,
+        token_id: &TokenId,
+        owner: &AccountId,
+        amount: NearToken,
+    ) -> u32 {
         let wallet = self
             .wallets
             .get_mut(token_id)
-            .filter(|w| &w.owner_id == owner)
+            .filter(|w| &w.owner_id == owner && !w.daily_allowance.is_zero())
             .unwrap_or_else(|| env::panic_str("The owner hasn't let this token's mind spend"));
         require!(
             amount <= wallet.max_payment,
@@ -381,14 +464,42 @@ impl Contract {
             "That's more than the owner lets the mind send today"
         );
         wallet.spent_today = spent;
+        wallet.policy
     }
 
-    /// Gives back what a payment that wasn't signed had reserved.
-    fn release_allowance(&mut self, token_id: &TokenId, amount: NearToken, at: u64) {
+    /// Gives back what a payment that wasn't signed had reserved, only to the
+    /// owner and rules it was taken from, and only on the same day.
+    fn release_allowance(
+        &mut self,
+        token_id: &TokenId,
+        owner: &AccountId,
+        policy: u32,
+        amount: NearToken,
+        at: u64,
+    ) {
         if let Some(wallet) = self.wallets.get_mut(token_id) {
-            if wallet.day == at / NANOS_PER_DAY {
+            if &wallet.owner_id == owner
+                && wallet.policy == policy
+                && wallet.day == at / NANOS_PER_DAY
+            {
                 wallet.spent_today = wallet.spent_today.saturating_sub(amount);
             }
         }
+    }
+}
+
+/// Keeps `cost` of the attached deposit and returns the rest.
+fn refund_beyond(cost: NearToken) {
+    let deposit = env::attached_deposit();
+    require!(
+        deposit >= cost,
+        format!("Attach at least {cost} for the wallet's storage")
+    );
+    let refund = deposit.saturating_sub(cost);
+    // The 1 yoctoNEAR that only proves a full-access key isn't worth sending back.
+    if refund > NearToken::from_yoctonear(1) {
+        Promise::new(env::predecessor_account_id())
+            .transfer(refund)
+            .detach();
     }
 }

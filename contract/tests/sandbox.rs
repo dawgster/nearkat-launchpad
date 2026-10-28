@@ -730,13 +730,21 @@ async fn a_tokens_wallet_sends_near_signed_by_the_mpc_network() -> TestResult {
         &wallet_key,
         env.treasury.id.as_str(),
         NearToken::from_millinear(500),
-        YOCTO,
+        // The first send pays for the wallet's record; the rest comes back.
+        NearToken::from_millinear(10),
     )
     .await??;
     assert_eq!(
         balance(&env, env.treasury.id.as_str()).await? - treasury_before,
         NearToken::from_millinear(500).as_yoctonear()
     );
+
+    // Until that transfer has expired, the token can't change hands, so its
+    // owner can't sell it and then send more they signed beforehand.
+    let held = transfer(&env, &env.alice, &env.bob, &id).await?;
+    assert!(held
+        .unwrap_err()
+        .contains("could still be sent until block"));
 
     // The mind can't, until the owner allows it; then only within the allowance.
     let refused = wallet_send(
@@ -793,8 +801,7 @@ async fn a_tokens_wallet_sends_near_signed_by_the_mpc_network() -> TestResult {
         .fetch_from(&env.network)
         .await?
         .data;
-    // Payments are recorded once the owner has set rules, so only the mind's here.
-    assert_eq!(wallet["payments"], 1);
+    assert_eq!(wallet["payments"], 2);
     assert_eq!(wallet["last_payment"]["by_mind"], true);
     assert_eq!(
         wallet["spent_today"],
