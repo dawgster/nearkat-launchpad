@@ -33,7 +33,6 @@ fn deploy() -> Launchpad {
     l.set_key_source(Some(crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
-        wallet_domain_id: Some(1),
     }));
     l
 }
@@ -279,15 +278,16 @@ fn launches_carry_the_launchpads_key_source_not_the_creators() {
     let source = crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
-        wallet_domain_id: Some(1),
     };
     let collection = args("magister").collection;
-    let value = crate::with_key_source(&collection, &source);
+    let value = crate::with_key_source(&collection, &source, Some([5u8; 32]));
     assert_eq!(value["key_source"]["mpc_contract_id"], "v1.signer");
     assert_eq!(value["key_source"]["domain_id"], 2);
-    // The wallet domain goes to its own field, which the collection reads.
-    assert_eq!(value["wallet_domain_id"], 1);
-    assert!(value["key_source"].get("wallet_domain_id").is_none());
+    // The wallet code goes to its own field, which the collection reads.
+    assert_eq!(
+        value["wallet_code_hash"],
+        near_sdk::serde_json::to_value(Base58CryptoHash::from([5u8; 32])).unwrap()
+    );
     // A creator who tries to name their own is ignored: the field isn't theirs to send.
     let sneaky: crate::CollectionArgs =
         near_sdk::serde_json::from_value(near_sdk::serde_json::json!({
@@ -296,7 +296,7 @@ fn launches_carry_the_launchpads_key_source_not_the_creators() {
         }))
         .unwrap();
     assert_eq!(
-        crate::with_key_source(&sneaky, &source)["key_source"]["mpc_contract_id"],
+        crate::with_key_source(&sneaky, &source, None)["key_source"]["mpc_contract_id"],
         "v1.signer"
     );
 }
@@ -318,7 +318,6 @@ fn the_admin_sets_the_key_source() {
     l.set_key_source(Some(crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
-        wallet_domain_id: None,
     }));
     assert_eq!(l.get_config().key_source.unwrap().domain_id, 2);
 }
@@ -340,7 +339,7 @@ fn migrating_from_before_wallets_keeps_everything_and_adds_no_wallets() {
         collections: l.collections,
         reserved: l.reserved,
         approved: l.approved,
-        key_source: Some(crate::KeySourceV1 {
+        key_source: Some(crate::KeySource {
             mpc_contract_id: acc("v1.signer"),
             domain_id: 2,
         }),
@@ -348,7 +347,8 @@ fn migrating_from_before_wallets_keeps_everything_and_adds_no_wallets() {
     near_sdk::env::state_write(&old);
     let migrated = Launchpad::migrate();
     let config = migrated.get_config();
-    assert_eq!(config.key_source.unwrap().wallet_domain_id, None);
+    assert_eq!(config.key_source.unwrap().domain_id, 2);
+    assert_eq!(config.wallet_code_hash, None);
     assert!(migrated
         .get_collection(acc("magister.launch.near"))
         .is_some());

@@ -72,10 +72,6 @@ pub struct KeySource {
     pub mpc_contract_id: AccountId,
     /// The CKD domain context keys come from.
     pub domain_id: u64,
-    /// The same network's Ed25519 signing domain, which gives every token of
-    /// a launch its own wallet. None: launches have no wallets.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wallet_domain_id: Option<u64>,
 }
 
 #[near(serializers = [json])]
@@ -123,6 +119,8 @@ pub struct LaunchpadConfig {
     pub collection_funding: NearToken,
     pub fees_accrued: NearToken,
     pub key_source: Option<KeySource>,
+    /// The token wallet code every launch's tokens get wallets with, if any.
+    pub wallet_code_hash: Option<Base58CryptoHash>,
 }
 
 #[derive(PanicOnDefault)]
@@ -141,6 +139,8 @@ pub struct Launchpad {
     /// launch version is always one.
     approved: IterableSet<CryptoHash>,
     key_source: Option<KeySource>,
+    /// The published token wallet code (`token-wallet/`) launches get. None: no wallets.
+    wallet_code_hash: Option<CryptoHash>,
 }
 
 #[near]
@@ -163,6 +163,7 @@ impl Launchpad {
             reserved: LookupSet::new(StorageKey::Reserved),
             approved: IterableSet::new(StorageKey::Approved),
             key_source: None,
+            wallet_code_hash: None,
         }
     }
 
@@ -214,7 +215,7 @@ impl Launchpad {
             "keeper_id": keeper_id,
             "treasury_id": creator_id,
             "mint_price": args.mint_price,
-            "collection": with_key_source(&args.collection, &key_source),
+            "collection": with_key_source(&args.collection, &key_source, self.wallet_code_hash),
             "code_hash": Base58CryptoHash::from(code_hash),
         });
         Promise::new(account_id.clone())
@@ -316,6 +317,7 @@ impl Launchpad {
             collection_funding: self.collection_funding,
             fees_accrued: self.fees_accrued,
             key_source: self.key_source.clone(),
+            wallet_code_hash: self.wallet_code_hash.map(Base58CryptoHash::from),
         }
     }
 
@@ -339,6 +341,14 @@ impl Launchpad {
     pub fn set_key_source(&mut self, key_source: Option<KeySource>) {
         self.assert_admin();
         self.key_source = key_source;
+    }
+
+    /// Gives collections launched from now on wallets for their tokens,
+    /// running the token wallet code published by this hash; None stops it.
+    #[payable]
+    pub fn set_wallet_code_hash(&mut self, code_hash: Option<Base58CryptoHash>) {
+        self.assert_admin();
+        self.wallet_code_hash = code_hash.map(Into::into);
     }
 
     #[payable]
@@ -438,29 +448,23 @@ impl Launchpad {
     }
 }
 
-/// The creator's choices, with the launchpad's key source added. A creator
-/// can't set it: `CollectionArgs` has no such field, and it is added here.
+/// The creator's choices, with the launchpad's key source and wallet code
+/// added. A creator can't set either: `CollectionArgs` has no such fields,
+/// and they are added here.
 fn with_key_source(
     collection: &CollectionArgs,
     key_source: &KeySource,
+    wallet_code_hash: Option<CryptoHash>,
 ) -> near_sdk::serde_json::Value {
     let mut value = near_sdk::serde_json::to_value(collection)
         .unwrap_or_else(|_| env::panic_str("Collection arguments can't be encoded"));
-    value["key_source"] = near_sdk::serde_json::json!({
-        "mpc_contract_id": key_source.mpc_contract_id,
-        "domain_id": key_source.domain_id,
-    });
-    if let Some(domain) = key_source.wallet_domain_id {
-        value["wallet_domain_id"] = domain.into();
+    value["key_source"] = near_sdk::serde_json::to_value(key_source)
+        .unwrap_or_else(|_| env::panic_str("Key source can't be encoded"));
+    if let Some(hash) = wallet_code_hash {
+        value["wallet_code_hash"] = near_sdk::serde_json::to_value(Base58CryptoHash::from(hash))
+            .unwrap_or_else(|_| env::panic_str("Code hash can't be encoded"));
     }
     value
-}
-
-/// The key source before wallets: no `wallet_domain_id`.
-#[near(serializers = [borsh])]
-pub(crate) struct KeySourceV1 {
-    pub mpc_contract_id: AccountId,
-    pub domain_id: u64,
 }
 
 /// The launchpad's state before wallets (to 824f1dc).
@@ -475,14 +479,14 @@ pub(crate) struct LaunchpadV1 {
     pub collections: IterableMap<AccountId, CollectionEntry>,
     pub reserved: LookupSet<String>,
     pub approved: IterableSet<CryptoHash>,
-    pub key_source: Option<KeySourceV1>,
+    pub key_source: Option<KeySource>,
 }
 
 #[near]
 impl Launchpad {
     /// Re-reads the state after new code is deployed, converting the layout
     /// from before wallets when that is what is stored. Launches keep having
-    /// no wallets until the admin sets a `wallet_domain_id`.
+    /// no wallets until the admin sets a `wallet_code_hash`.
     #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
@@ -505,11 +509,8 @@ impl Launchpad {
             collections: old.collections,
             reserved: old.reserved,
             approved: old.approved,
-            key_source: old.key_source.map(|source| KeySource {
-                mpc_contract_id: source.mpc_contract_id,
-                domain_id: source.domain_id,
-                wallet_domain_id: None,
-            }),
+            key_source: old.key_source,
+            wallet_code_hash: None,
         }
     }
 }
