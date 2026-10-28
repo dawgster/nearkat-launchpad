@@ -61,6 +61,19 @@ Switch to the kat you raised beforehand.
 - Its **Character** has drifted from the starter text, and its **Memory**
   holds what mattered. Ask it "What do you remember about me?"
 
+## 4b. Its own wallet (1 minute)
+
+On the same page, under **Its wallet**:
+
+- "This kat has its own NEAR account. Its key is held by NEAR's MPC network
+  and signs only through the contract, under my rules."
+- Put 1 NEAR in. Set what it may spend on its own: 0.1 a day, 0.05 at a time.
+- In the chat: "please send 0.01 NEAR to <a friend> as a gift". The kat
+  decides; the payment shows under its reply, and the wallet's last payment
+  updates. Ask it for 1 NEAR: it's refused, and the kat is told so.
+- "If I give the kat away, the wallet and what's in it go with it. My rules
+  don't: the new owner decides what it may spend."
+
 ## 5. Verify (1 minute)
 
 Click **Verify this kat**.
@@ -141,6 +154,11 @@ Open **Launchpad**.
   the contract names. No single keeper's secret opens the minds, and a new
   keeper can take over. Changing keeper moves to a new key epoch, so the
   old one is locked out of what comes next.
+- **Can the kat drain its wallet?** No. The contract signs for the kat only
+  within the owner's limits, per payment and per day, and builds the
+  transaction itself, so it knows exactly what it is signing.
+- **Who holds the wallet's key?** Nobody: NEAR's MPC network signs with it,
+  and only when the collection's contract asks.
 - **What if the keeper disappears?** The minds are on NEAR and the keys come
   from the MPC network, so the creator names a new keeper and everything
   carries on. Owners can also download their token's mind at any time, with

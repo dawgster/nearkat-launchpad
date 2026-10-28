@@ -46,6 +46,15 @@ values frozen in NEAR's MPC repository). So the keys don't depend on any
 keeper's own secret: a replacement keeper the collection names gets the same
 keys, and for a TEE collection only an attested keeper key can ask.
 
+**Wallets.** In a collection with wallets, each token has its own NEAR
+account, signed by the MPC network through the contract within its owner's
+rules (`src/wallet.ts`). The mind is told its address, balance and allowance,
+and pays by ending a reply with `PAY <amount> NEAR TO <account> FOR
+<reason>`. The keeper takes that line out, checks the limits, has the
+contract build and the network sign the transfer, sends it, and reports what
+happened to the owner (`payment` in the chat reply) and to the mind. A sent
+payment is charged like a save.
+
 **Key epochs.** Changing keeper, revoking an attested key or
 `rotate_context_key` moves the collection to a new key epoch. The keeper
 saves under the current epoch, fetches older epochs' keys to read what was

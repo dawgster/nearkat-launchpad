@@ -43,6 +43,20 @@ encrypted under, accepts only the current one, and records it on the token
 (`get_kat().key_epoch`). The keeper may request any epoch up to the current
 one, to read older contexts.
 
+**Wallets.** With `collection.wallet_domain_id` (the MPC network's Ed25519
+domain), every token has its own NEAR account: the implicit account of the
+key the network derives for this contract and `nearkat/wallet/<token>`.
+`get_wallet({ token_id })` gives the path, domain and rules;
+`set_wallet_policy({ token_id, daily_allowance, max_payment })` (token
+owner, attach about 0.01 NEAR for storage) sets what the token's mind may
+send; `wallet_send({ token_id, receiver_id, amount, memo?, tx: { public_key,
+nonce, block_hash } })` builds the transfer, has the network sign it and
+returns `{ signed_transaction, hash }` (or null if unsigned) for the caller
+to send. The owner may send anything (1 yocto); the keeper, for the mind,
+only within the rules, which a new owner doesn't inherit.
+`enable_wallets({ domain_id })` (admin, once) turns wallets on for a
+collection from before them. Each payment logs a `wallet_payment` event.
+
 The contract also accepts `__fastdata_fastfs` calls and ignores them: the
 keeper stores each encrypted context as a FastFS file addressed to the
 collection, and records `fastfs:<uploader>:<sha256>:<tx hash>` as its
