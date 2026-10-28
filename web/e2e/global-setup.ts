@@ -13,6 +13,9 @@ const WASM = resolve(process.env.CONTRACT_WASM ?? "../contract/target/near/neark
 const MOCK_MPC_WASM = resolve(
   process.env.MOCK_MPC_WASM ?? "../mock-mpc/target/near/nearkat_mock_mpc.wasm",
 );
+const TOKEN_WALLET_WASM = resolve(
+  process.env.TOKEN_WALLET_WASM ?? "../token-wallet/target/near/nearkat_token_wallet.wasm",
+);
 const LAUNCHPAD_WASM = resolve(
   process.env.LAUNCHPAD_WASM ?? "../launchpad/target/near/nearkat_launchpad.wasm",
 );
@@ -94,7 +97,7 @@ async function requireFree(url: string): Promise<void> {
 }
 
 export default async function globalSetup() {
-  for (const wasm of [WASM, LAUNCHPAD_WASM, MOCK_MPC_WASM]) {
+  for (const wasm of [WASM, LAUNCHPAD_WASM, MOCK_MPC_WASM, TOKEN_WALLET_WASM]) {
     if (!existsSync(wasm)) {
       throw new Error(`Build the contracts first: ${wasm} is missing`);
     }
@@ -168,6 +171,10 @@ export default async function globalSetup() {
       { gas: "300 Tgas" },
     )
     .send();
+  // Every token's wallet account runs this code, published once by hash.
+  const walletCode = readFileSync(TOKEN_WALLET_WASM);
+  await rootNear.transaction(root).publishContract(walletCode, { identifiedBy: "hash" }).send();
+  const walletCodeHash = base58.encode(createHash("sha256").update(walletCode).digest());
   await new Near({
     network: sandbox,
     privateKey: owner.secretKey as PrivateKey,
@@ -185,7 +192,7 @@ export default async function globalSetup() {
         symbol: "KAT",
         base_uri: "",
         key_source: keySource,
-        wallet_domain_id: 1,
+        wallet_code_hash: walletCodeHash,
       },
     })
     .send();
@@ -218,7 +225,13 @@ export default async function globalSetup() {
     .functionCall(
       names.launchpad,
       "set_key_source",
-      { key_source: { ...keySource, wallet_domain_id: 1 } },
+      { key_source: keySource },
+      { attachedDeposit: "1 yocto" },
+    )
+    .functionCall(
+      names.launchpad,
+      "set_wallet_code_hash",
+      { code_hash: walletCodeHash },
       { attachedDeposit: "1 yocto" },
     )
     .send();
@@ -245,6 +258,7 @@ export default async function globalSetup() {
   await waitFor(ALICE_URL);
   await waitFor(BOB_URL);
   process.env.E2E_BOB_ID = names.bob;
+  process.env.E2E_CONTRACT_ID = names.contract;
   process.env.E2E_LAUNCHPAD_ID = names.launchpad;
 
   return async () => {

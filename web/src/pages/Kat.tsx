@@ -188,6 +188,10 @@ function Den({
           <WalletPanel
             noun={scope.noun}
             wallet={tokenWallet.data}
+            open={async (amount) => {
+              await wallets.open(wallet.near as NonNullable<typeof wallet.near>, tokenId, amount);
+              await reloadWallet();
+            }}
             fund={async (amount) => {
               await (wallet.near as NonNullable<typeof wallet.near>).send(
                 (tokenWallet.data as TokenWallet).address,
@@ -208,7 +212,6 @@ function Den({
               const hash = await wallets.send(
                 wallet.near as NonNullable<typeof wallet.near>,
                 tokenId,
-                tokenWallet.data as TokenWallet,
                 receiverId,
                 amount,
               );

@@ -6,6 +6,8 @@ import type { TokenWallet } from "../lib/wallet.ts";
 export interface WalletPanelProps {
   noun: string;
   wallet: TokenWallet;
+  /** Creates the wallet's account, with `amount` going in (less its record's storage). */
+  open: (amount: bigint) => Promise<void>;
   /** Sends NEAR from the owner's own account into the token's wallet. */
   fund: (amount: bigint) => Promise<void>;
   setRules: (dailyAllowance: bigint, maxPayment: bigint) => Promise<void>;
@@ -32,8 +34,9 @@ function useAction() {
 }
 
 /** A token's own wallet: what is in it, what its mind may spend, and the owner's controls. */
-export function WalletPanel({ noun, wallet, fund, setRules, send }: WalletPanelProps) {
+export function WalletPanel({ noun, wallet, open, fund, setRules, send }: WalletPanelProps) {
   const { busy, outcome, run } = useAction();
+  const [openAmount, setOpenAmount] = useState("0.1");
   const [fundAmount, setFundAmount] = useState("1");
   const [daily, setDaily] = useState(formatNear(wallet.view.daily_allowance, 6));
   const [max, setMax] = useState(formatNear(wallet.view.max_payment, 6));
@@ -46,6 +49,57 @@ export function WalletPanel({ noun, wallet, fund, setRules, send }: WalletPanelP
     event.preventDefault();
     void run(name, action);
   };
+
+  const result = outcome && (
+    <p
+      role={outcome.ok ? "status" : "alert"}
+      className={`mt-2 text-sm ${outcome.ok ? "text-glow" : "text-alarm"}`}
+    >
+      {outcome.text}
+    </p>
+  );
+
+  if (!wallet.view.open) {
+    return (
+      <section aria-labelledby="wallet">
+        <h2 id="wallet" className="font-sans text-lg font-bold">
+          Its wallet
+        </h2>
+        <p className="mt-1 text-sm leading-relaxed text-mist">
+          This {noun} can have its own NEAR account,{" "}
+          <span className="font-mono text-cream">{wallet.address}</span>, that only the collection
+          can send from, under your rules. It isn't open yet. Opening it takes at least 0.02 NEAR;
+          the rest goes in.
+        </p>
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={submit("open", async () => {
+            const amount = parseNear(openAmount);
+            if (!amount) {
+              throw new Error("Enter an amount in NEAR, like 0.1.");
+            }
+            await open(amount);
+            return "Its wallet is open.";
+          })}
+        >
+          <label className="text-sm">
+            <span className="sr-only">NEAR to open its wallet with</span>
+            <input
+              className="field w-24 text-right"
+              inputMode="decimal"
+              value={openAmount}
+              onChange={(event) => setOpenAmount(event.target.value)}
+              aria-label="NEAR to open its wallet with"
+            />
+          </label>
+          <button type="submit" className="button" disabled={busy !== null}>
+            {busy === "open" ? "Opening…" : "Open its wallet"}
+          </button>
+        </form>
+        {result}
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="wallet">
@@ -63,21 +117,14 @@ export function WalletPanel({ noun, wallet, fund, setRules, send }: WalletPanelP
         <span className="font-mono text-cream" title={wallet.address}>
           {shorten(wallet.address, 6)}
         </span>
-        . Its key is held by NEAR's MPC network and signs only through the collection's contract,
-        under your rules. It goes with the {noun} if you give it away.
+        . No one holds a key to it: only the collection's contract can send from it, under your
+        rules. It goes with the {noun} the moment you sell or give it away.
       </p>
       <p className="mt-2 text-sm text-mist" data-testid="wallet-rules">
         {allowance === 0n
           ? `The ${noun} can't spend from it on its own.`
           : `The ${noun} may send up to ${formatNear(wallet.view.max_payment, 6)} NEAR at a time and ${formatNear(allowance, 6)} NEAR a day (${formatNear(wallet.view.spent_today, 6)} sent today).`}
       </p>
-      {wallet.view.owner_signed_until && (
-        <p className="mt-1 text-sm text-lamp" role="status">
-          You signed a transfer from it that could still be sent until block{" "}
-          {wallet.view.owner_signed_until}, so the {noun} can't change hands until then. That keeps
-          a seller from emptying a wallet they've sold.
-        </p>
-      )}
       {last && (
         <p className="mt-1 text-sm text-mist">
           Last payment: {formatNear(last.amount, 6)} NEAR to{" "}
@@ -192,18 +239,11 @@ export function WalletPanel({ noun, wallet, fund, setRules, send }: WalletPanelP
           />
         </label>
         <button type="submit" className="button button-quiet" disabled={busy !== null}>
-          {busy === "send" ? "Signing…" : "Send from wallet"}
+          {busy === "send" ? "Sending…" : "Send from wallet"}
         </button>
       </form>
 
-      {outcome && (
-        <p
-          role={outcome.ok ? "status" : "alert"}
-          className={`mt-2 text-sm ${outcome.ok ? "text-glow" : "text-alarm"}`}
-        >
-          {outcome.text}
-        </p>
-      )}
+      {result}
     </section>
   );
 }

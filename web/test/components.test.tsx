@@ -322,9 +322,8 @@ describe("GiveAwayPanel", () => {
 
 describe("WalletPanel", () => {
   const view: WalletView = {
-    path: "nearkat/wallet/1",
-    mpc_contract_id: "v1.signer",
-    domain_id: 1,
+    account_id: "1.nearkat.testnet",
+    open: true,
     daily_allowance: "0",
     max_payment: "0",
     spent_today: "0",
@@ -333,19 +332,46 @@ describe("WalletPanel", () => {
   };
   const wallet = (overrides: Partial<WalletView> = {}, balance: bigint | null = null) => ({
     view: { ...view, ...overrides },
-    address: "ab".repeat(32),
-    publicKey: "ed25519:x",
+    address: "1.nearkat.testnet",
     balance,
   });
 
   test("shows an empty wallet whose token can't spend on its own", () => {
     render(
-      <WalletPanel noun="kat" wallet={wallet()} fund={vi.fn()} setRules={vi.fn()} send={vi.fn()} />,
+      <WalletPanel
+        noun="kat"
+        wallet={wallet()}
+        open={vi.fn()}
+        fund={vi.fn()}
+        setRules={vi.fn()}
+        send={vi.fn()}
+      />,
     );
     expect(screen.getByText("Empty")).toBeTruthy();
     expect(screen.getByTestId("wallet-rules").textContent).toBe(
       "The kat can't spend from it on its own.",
     );
+  });
+
+  test("offers to open a wallet that isn't open yet, and nothing else", async () => {
+    const open = vi.fn(async () => {});
+    render(
+      <WalletPanel
+        noun="kat"
+        wallet={wallet({ open: false })}
+        open={open}
+        fund={vi.fn()}
+        setRules={vi.fn()}
+        send={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("1.nearkat.testnet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send from wallet" })).toBeNull();
+    await userEvent.clear(screen.getByLabelText("NEAR to open its wallet with"));
+    await userEvent.type(screen.getByLabelText("NEAR to open its wallet with"), "0.5");
+    await userEvent.click(screen.getByRole("button", { name: "Open its wallet" }));
+    expect(open).toHaveBeenCalledWith(5n * 10n ** 23n);
+    expect(await screen.findByText("Its wallet is open.")).toBeTruthy();
   });
 
   test("lets the owner set what the token may spend, in NEAR", async () => {
@@ -354,6 +380,7 @@ describe("WalletPanel", () => {
       <WalletPanel
         noun="kat"
         wallet={wallet()}
+        open={vi.fn()}
         fund={vi.fn()}
         setRules={setRules}
         send={vi.fn()}
@@ -376,6 +403,7 @@ describe("WalletPanel", () => {
       <WalletPanel
         noun="kat"
         wallet={wallet()}
+        open={vi.fn()}
         fund={vi.fn()}
         setRules={setRules}
         send={vi.fn()}
@@ -409,6 +437,7 @@ describe("WalletPanel", () => {
           },
           10n ** 24n,
         )}
+        open={vi.fn()}
         fund={vi.fn()}
         setRules={vi.fn()}
         send={send}
