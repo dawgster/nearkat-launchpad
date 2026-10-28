@@ -10,18 +10,20 @@
 //!   within an allowance the owner set: at most `max_payment` at a time and
 //!   `daily_allowance` per UTC day. A new owner starts with no allowance.
 //!
-//! The contract builds the transfer transaction itself, so it knows exactly
-//! what it asks the network to sign, and returns it signed, ready for anyone
-//! to send. The wallet's address comes from the token id, so it goes with
-//! the token when it changes hands.
+//! The contract builds each transfer itself, as a NEP-366 delegate action
+//! (a meta-transaction), so it knows exactly what it asks the network to
+//! sign. It returns it signed; anyone can relay it, paying the gas, so the
+//! wallet pays only what it sends. The wallet's address comes from the token
+//! id, so it goes with the token when it changes hands.
 //!
-//! A signed transaction stays valid for a day of blocks, and nothing can
-//! revoke it. So an owner can't sell the token while a transfer they signed
-//! from its wallet could still be sent: otherwise they could sign transfers,
-//! sell the token, and empty the wallet the buyer paid for.
+//! A delegate action carries the last block it may run in, which the network
+//! enforces, and the contract sets it about two minutes ahead. That is how
+//! long a sale waits after the owner signs a transfer: otherwise an owner
+//! could sign transfers, sell the token, and empty the wallet the buyer paid
+//! for. (A plain signed transaction would stay valid for a day.)
 
 use near_contract_standards::non_fungible_token::TokenId;
-use near_sdk::json_types::{Base58CryptoHash, Base64VecU8, U64};
+use near_sdk::json_types::{Base64VecU8, U64};
 use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, Promise, PromiseError};
 
 use crate::{Contract, ContractExt};
@@ -33,9 +35,12 @@ const GAS_FOR_SIGN: Gas = Gas::from_tgas(15);
 const GAS_FOR_SIGNED: Gas = Gas::from_tgas(15);
 const NANOS_PER_DAY: u64 = 86_400 * 1_000_000_000;
 const MAX_MEMO_CHARS: usize = 64;
-/// How many blocks a NEAR transaction stays valid after the block it names
-/// (the network's `transaction_validity_period`, the same on mainnet and testnet).
-pub const TX_VALIDITY_BLOCKS: u64 = 86_400;
+/// How many blocks a signed transfer may still run after it is signed: its
+/// delegate action's `max_block_height`. About two minutes; enough for the
+/// network to sign and a relayer to send it.
+pub const SIGNED_TRANSFER_BLOCKS: u64 = 120;
+/// NEP-461's prefix for delegate actions: 2^30 + 366.
+const DELEGATE_ACTION_PREFIX: u32 = (1 << 30) + 366;
 
 pub fn wallet_path(token_id: &str) -> String {
     format!("{WALLET_PATH}/{token_id}")
@@ -93,50 +98,56 @@ pub struct WalletView {
     pub owner_signed_until: Option<U64>,
 }
 
-/// What a transfer from the wallet needs from the chain, which a contract
-/// can't read: the wallet key's next nonce and a recent block hash. Wrong
-/// values only make the signed transaction invalid.
+/// What a transfer from the wallet needs that a contract can't read: the
+/// wallet key and its next nonce. Wrong values only make it invalid.
 #[near(serializers = [json])]
 pub struct WalletTx {
     /// The wallet's key, `ed25519:<base58>`, from `derived_public_key`.
     pub public_key: String,
     pub nonce: U64,
-    pub block_hash: Base58CryptoHash,
 }
 
 #[near(serializers = [json])]
 #[derive(Debug)]
 pub struct WalletSigned {
-    /// Borsh of the signed transaction, ready for `send_tx`.
-    pub signed_transaction: Base64VecU8,
-    /// The transaction hash, base58.
-    pub hash: String,
+    /// Borsh of the `SignedDelegateAction`. A relayer sends it as the one
+    /// `Delegate` action of a transaction to the wallet's account.
+    pub signed_delegate_action: Base64VecU8,
+    /// The last block it can run in.
+    pub max_block_height: U64,
 }
 
-/// Borsh of a NEAR transaction (V0) with one Transfer action.
-pub fn transfer_transaction(
-    signer_id: &str,
-    public_key: &[u8; 32],
-    nonce: u64,
+/// Borsh of a NEP-366 `DelegateAction`: one Transfer from `sender_id`.
+pub fn transfer_delegate_action(
+    sender_id: &str,
     receiver_id: &str,
-    block_hash: &[u8; 32],
     amount: u128,
+    nonce: u64,
+    max_block_height: u64,
+    public_key: &[u8; 32],
 ) -> Vec<u8> {
     let string = |out: &mut Vec<u8>, text: &str| {
         out.extend_from_slice(&(text.len() as u32).to_le_bytes());
         out.extend_from_slice(text.as_bytes());
     };
-    let mut tx = Vec::with_capacity(200);
-    string(&mut tx, signer_id);
-    tx.push(0); // KeyType::ED25519
-    tx.extend_from_slice(public_key);
-    tx.extend_from_slice(&nonce.to_le_bytes());
-    string(&mut tx, receiver_id);
-    tx.extend_from_slice(block_hash);
-    tx.extend_from_slice(&1u32.to_le_bytes()); // one action
-    tx.push(3); // Action::Transfer
-    tx.extend_from_slice(&amount.to_le_bytes());
-    tx
+    let mut action = Vec::with_capacity(200);
+    string(&mut action, sender_id);
+    string(&mut action, receiver_id);
+    action.extend_from_slice(&1u32.to_le_bytes()); // one action
+    action.push(3); // Action::Transfer
+    action.extend_from_slice(&amount.to_le_bytes());
+    action.extend_from_slice(&nonce.to_le_bytes());
+    action.extend_from_slice(&max_block_height.to_le_bytes());
+    action.push(0); // KeyType::ED25519
+    action.extend_from_slice(public_key);
+    action
+}
+
+/// What is signed for a delegate action: SHA-256 of NEP-461's prefix and it.
+pub fn delegate_action_hash(delegate_action: &[u8]) -> Vec<u8> {
+    let mut message = DELEGATE_ACTION_PREFIX.to_le_bytes().to_vec();
+    message.extend_from_slice(delegate_action);
+    env::sha256(&message)
 }
 
 fn ed25519_key(text: &str) -> [u8; 32] {
@@ -263,23 +274,22 @@ impl Contract {
             let cost = self.ensure_wallet(&token_id, &owner);
             refund_beyond(cost);
             let wallet = self.wallets.get_mut(&token_id).expect("just ensured");
-            // The token can't change hands while this could still be sent.
-            wallet.owner_signed_until = env::block_height() + TX_VALIDITY_BLOCKS;
+            // The token can't change hands while this could still run.
+            wallet.owner_signed_until = env::block_height() + SIGNED_TRANSFER_BLOCKS;
             wallet.policy
         };
 
         let public_key = ed25519_key(&tx.public_key);
-        let signer_id = hex::encode(public_key);
-        let block_hash: near_sdk::CryptoHash = tx.block_hash.into();
-        let transaction = transfer_transaction(
-            &signer_id,
-            &public_key,
-            tx.nonce.0,
+        let max_block_height = env::block_height() + SIGNED_TRANSFER_BLOCKS;
+        let transaction = transfer_delegate_action(
+            &hex::encode(public_key),
             receiver_id.as_str(),
-            &block_hash,
             amount.as_yoctonear(),
+            tx.nonce.0,
+            max_block_height,
+            &public_key,
         );
-        let digest = env::sha256(&transaction);
+        let digest = delegate_action_hash(&transaction);
         let request = near_sdk::serde_json::json!({
             "request": {
                 "path": wallet_path(&token_id),
@@ -302,6 +312,7 @@ impl Contract {
                         token_id,
                         owner,
                         policy,
+                        U64(max_block_height),
                         Base64VecU8(transaction),
                         Payment {
                             receiver_id,
@@ -320,6 +331,7 @@ impl Contract {
         token_id: TokenId,
         owner_id: AccountId,
         policy: u32,
+        max_block_height: U64,
         transaction: Base64VecU8,
         payment: Payment,
         #[callback_result] signed: Result<near_sdk::serde_json::Value, PromiseError>,
@@ -356,13 +368,12 @@ impl Contract {
                 "data": [{ "token_id": token_id, "payment": payment }],
             })
         ));
-        let hash = near_sdk::bs58::encode(env::sha256(&transaction.0)).into_string();
-        let mut signed_transaction = transaction.0;
-        signed_transaction.push(0); // Signature::ED25519
-        signed_transaction.extend_from_slice(&signature);
+        let mut signed = transaction.0;
+        signed.push(0); // Signature::ED25519
+        signed.extend_from_slice(&signature);
         Some(WalletSigned {
-            signed_transaction: Base64VecU8(signed_transaction),
-            hash,
+            signed_delegate_action: Base64VecU8(signed),
+            max_block_height,
         })
     }
 }
@@ -430,7 +441,7 @@ impl Contract {
             require!(
                 wallet.owner_signed_until == 0 || env::block_height() > wallet.owner_signed_until,
                 format!(
-                    "Transfers its owner signed from this token's wallet could still be sent until block {}; it can change hands after that",
+                    "Transfers its owner signed from this token's wallet could still run until block {}; it can change hands after that",
                     wallet.owner_signed_until
                 )
             );

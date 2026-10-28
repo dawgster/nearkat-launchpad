@@ -636,14 +636,16 @@ async fn balance(env: &Env, account: &str) -> TestResult<u128> {
 
 /// Has the collection build and the MPC network sign a transfer from the
 /// token's wallet, then sends it, as the keeper or the web app does.
-async fn wallet_send(
+/// Has the collection build and the MPC network sign a transfer from the
+/// token's wallet. Returns the signed delegate action, or the contract's refusal.
+async fn sign_wallet_send(
     env: &Env,
     who: &User,
     wallet_key: &str,
     receiver: &str,
     amount: NearToken,
     deposit: NearToken,
-) -> TestResult<Result<String, String>> {
+) -> TestResult<Result<Vec<u8>, String>> {
     let implicit = hex::encode(bs58::decode(wallet_key.trim_start_matches("ed25519:")).into_vec()?);
     let key = rpc(
         env,
@@ -652,7 +654,6 @@ async fn wallet_send(
                 "account_id": implicit, "public_key": wallet_key }),
     )
     .await?;
-    let block = rpc(env, "block", json!({ "finality": "final" })).await?;
     let outcome = env
         .contract
         .call_function(
@@ -665,7 +666,6 @@ async fn wallet_send(
                 "tx": {
                     "public_key": wallet_key,
                     "nonce": (key["nonce"].as_u64().unwrap() + 1).to_string(),
-                    "block_hash": block["header"]["hash"],
                 },
             }),
         )
@@ -679,14 +679,49 @@ async fn wallet_send(
         Ok(success) => success.json()?,
         Err(failure) => return Ok(Err(format!("{failure:?}"))),
     };
-    let sent = rpc(
-        env,
-        "send_tx",
-        json!({ "signed_tx_base64": signed["signed_transaction"], "wait_until": "FINAL" }),
-    )
-    .await?;
-    assert_eq!(sent["transaction"]["hash"], signed["hash"]);
-    Ok(Ok(signed["hash"].as_str().unwrap().to_string()))
+    use near_sdk::base64::Engine;
+    Ok(Ok(near_sdk::base64::engine::general_purpose::STANDARD
+        .decode(
+            signed["signed_delegate_action"].as_str().unwrap(),
+        )?))
+}
+
+/// Relays a signed transfer as a meta-transaction: the relayer pays the gas,
+/// the wallet only what it sends.
+async fn relay(
+    env: &Env,
+    relayer: &User,
+    wallet_key: &str,
+    signed: &[u8],
+) -> TestResult<Result<(), String>> {
+    let implicit = hex::encode(bs58::decode(wallet_key.trim_start_matches("ed25519:")).into_vec()?);
+    let delegate: near_api::types::transaction::delegate_action::SignedDelegateAction =
+        near_sdk::borsh::BorshDeserialize::try_from_slice(signed)?;
+    let outcome = near_api::Transaction::construct(relayer.id.clone(), implicit.parse()?)
+        .add_action(near_api::types::transaction::actions::Action::Delegate(
+            Box::new(delegate),
+        ))
+        .with_signer(relayer.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    Ok(outcome
+        .into_result()
+        .map(|_| ())
+        .map_err(|failure| format!("{failure:?}")))
+}
+
+async fn wallet_send(
+    env: &Env,
+    who: &User,
+    wallet_key: &str,
+    receiver: &str,
+    amount: NearToken,
+    deposit: NearToken,
+) -> TestResult<Result<(), String>> {
+    match sign_wallet_send(env, who, wallet_key, receiver, amount, deposit).await? {
+        Ok(signed) => relay(env, who, wallet_key, &signed).await,
+        Err(refused) => Ok(Err(refused)),
+    }
 }
 
 #[tokio::test]
@@ -744,7 +779,7 @@ async fn a_tokens_wallet_sends_near_signed_by_the_mpc_network() -> TestResult {
     let held = transfer(&env, &env.alice, &env.bob, &id).await?;
     assert!(held
         .unwrap_err()
-        .contains("could still be sent until block"));
+        .contains("could still run until block"));
 
     // The mind can't, until the owner allows it; then only within the allowance.
     let refused = wallet_send(
@@ -867,4 +902,54 @@ async fn get_wallet(env: &Env) -> TestResult<Value> {
         .fetch_from(&env.network)
         .await?
         .data)
+}
+
+#[tokio::test]
+async fn a_signed_transfer_expires_in_minutes_and_then_the_token_can_be_sold() -> TestResult {
+    let env = setup_with_key_source().await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
+    let wallet = get_wallet(&env).await?;
+    let wallet_key: String = Contract(wallet["mpc_contract_id"].as_str().unwrap().parse()?)
+        .call_function(
+            "derived_public_key",
+            json!({ "path": wallet["path"], "predecessor": env.contract.0, "domain_id": 1 }),
+        )
+        .read_only::<String>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    let implicit = hex::encode(bs58::decode(wallet_key.trim_start_matches("ed25519:")).into_vec()?);
+    Tokens::account(env.bob.id.clone())
+        .send_to(implicit.parse()?)
+        .near(NearToken::from_near(2))
+        .with_signer(env.bob.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+
+    // Alice signs a transfer but keeps it, hoping to send it after selling.
+    let kept = sign_wallet_send(
+        &env,
+        &env.alice,
+        &wallet_key,
+        env.alice.id.as_str(),
+        NearToken::from_near(1),
+        NearToken::from_millinear(10),
+    )
+    .await??;
+    assert!(
+        transfer(&env, &env.alice, &env.bob, &id).await?.is_err(),
+        "held while it could run"
+    );
+
+    // Two minutes of blocks later it has expired: the network refuses it, and the sale goes through.
+    rpc(&env, "sandbox_fast_forward", json!({ "delta_height": 130 })).await?;
+    let late = relay(&env, &env.alice, &wallet_key, &kept).await?;
+    assert!(late.is_err(), "an expired transfer must not run");
+    transfer(&env, &env.alice, &env.bob, &id).await??;
+    assert_eq!(
+        balance(&env, &implicit).await?,
+        NearToken::from_near(2).as_yoctonear()
+    );
+    Ok(())
 }

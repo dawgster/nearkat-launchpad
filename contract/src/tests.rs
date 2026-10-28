@@ -1197,7 +1197,6 @@ fn wallet_tx() -> crate::wallet::WalletTx {
             near_sdk::bs58::encode([9u8; 32]).into_string()
         ),
         nonce: 5.into(),
-        block_hash: [3u8; 32].into(),
     }
 }
 
@@ -1392,16 +1391,16 @@ fn ctx_h(predecessor: &str, deposit: NearToken, height: u64) {
 }
 
 #[test]
-#[should_panic(expected = "could still be sent until block 86500")]
+#[should_panic(expected = "could still run until block 220")]
 fn the_owner_cant_sell_while_a_transfer_they_signed_could_still_be_sent() {
     let mut c = with_wallet();
     ctx_h("alice.near", YOCTO, 100);
     let _ = c.wallet_send("1".to_string(), acc("bob.near"), MILLI, None, wallet_tx());
     assert_eq!(
         c.get_wallet("1".to_string()).unwrap().owner_signed_until,
-        Some(86_500.into())
+        Some(220.into())
     );
-    ctx_h("alice.near", YOCTO, 86_500);
+    ctx_h("alice.near", YOCTO, 220);
     c.nft_transfer(acc("bob.near"), "1".to_string(), None, None);
 }
 
@@ -1410,7 +1409,7 @@ fn the_token_can_change_hands_once_those_transfers_expire() {
     let mut c = with_wallet();
     ctx_h("alice.near", YOCTO, 100);
     let _ = c.wallet_send("1".to_string(), acc("bob.near"), MILLI, None, wallet_tx());
-    ctx_h("alice.near", YOCTO, 86_501);
+    ctx_h("alice.near", YOCTO, 221);
     c.nft_transfer(acc("bob.near"), "1".to_string(), None, None);
     assert!(c
         .get_wallet("1".to_string())
@@ -1460,6 +1459,7 @@ fn an_unsigned_payment_never_refunds_rules_set_since() {
         "1".to_string(),
         acc("alice.near"),
         1,
+        200.into(),
         vec![1].into(),
         payment,
         Err(near_sdk::PromiseError::Failed),
@@ -1473,13 +1473,13 @@ fn an_unsigned_payment_never_refunds_rules_set_since() {
 #[test]
 fn a_signed_transfer_is_returned_ready_to_send_and_recorded() {
     let mut c = with_wallet();
-    let tx = crate::wallet::transfer_transaction(
+    let tx = crate::wallet::transfer_delegate_action(
         &"09".repeat(32),
-        &[9u8; 32],
-        5,
         "bob.near",
-        &[3u8; 32],
         7,
+        5,
+        200,
+        &[9u8; 32],
     );
     let payment = crate::wallet::Payment {
         receiver_id: acc("bob.near"),
@@ -1494,6 +1494,7 @@ fn a_signed_transfer_is_returned_ready_to_send_and_recorded() {
             "1".to_string(),
             acc("alice.near"),
             1,
+            200.into(),
             tx.clone().into(),
             payment.clone(),
             Ok(near_sdk::serde_json::json!({ "scheme": "Ed25519", "signature": vec![1u8; 64] })),
@@ -1502,11 +1503,8 @@ fn a_signed_transfer_is_returned_ready_to_send_and_recorded() {
     let mut expected = tx.clone();
     expected.push(0);
     expected.extend_from_slice(&[1u8; 64]);
-    assert_eq!(signed.signed_transaction.0, expected);
-    assert_eq!(
-        signed.hash,
-        near_sdk::bs58::encode(env::sha256(&tx)).into_string()
-    );
+    assert_eq!(signed.signed_delegate_action.0, expected);
+    assert_eq!(signed.max_block_height, 200.into());
     let wallet = c.get_wallet("1".to_string()).unwrap();
     assert_eq!(wallet.payments, 1);
     assert_eq!(wallet.last_payment, Some(payment));
@@ -1528,6 +1526,7 @@ fn an_unsigned_payment_gives_the_mind_its_allowance_back() {
         "1".to_string(),
         acc("alice.near"),
         1,
+        200.into(),
         vec![1, 2, 3].into(),
         payment,
         Err(near_sdk::PromiseError::Failed),
@@ -1539,14 +1538,20 @@ fn an_unsigned_payment_gives_the_mind_its_allowance_back() {
 }
 
 #[test]
-fn a_transfer_is_laid_out_as_near_expects() {
-    let tx = crate::wallet::transfer_transaction("ab", &[1u8; 32], 2, "c", &[4u8; 32], 5);
-    let mut expected = vec![2, 0, 0, 0, b'a', b'b', 0];
-    expected.extend_from_slice(&[1u8; 32]);
-    expected.extend_from_slice(&2u64.to_le_bytes());
-    expected.extend_from_slice(&[1, 0, 0, 0, b'c']);
-    expected.extend_from_slice(&[4u8; 32]);
-    expected.extend_from_slice(&[1, 0, 0, 0, 3]);
+fn a_transfer_is_laid_out_as_a_nep366_delegate_action() {
+    let action = crate::wallet::transfer_delegate_action("ab", "c", 5, 2, 9, &[1u8; 32]);
+    let mut expected = vec![2, 0, 0, 0, b'a', b'b', 1, 0, 0, 0, b'c', 1, 0, 0, 0, 3];
     expected.extend_from_slice(&5u128.to_le_bytes());
-    assert_eq!(tx, expected);
+    expected.extend_from_slice(&2u64.to_le_bytes());
+    expected.extend_from_slice(&9u64.to_le_bytes());
+    expected.push(0);
+    expected.extend_from_slice(&[1u8; 32]);
+    assert_eq!(action, expected);
+    // Signed with NEP-461's prefix, 2^30 + 366, in front.
+    let mut message = 1_073_742_190u32.to_le_bytes().to_vec();
+    message.extend_from_slice(&action);
+    assert_eq!(
+        crate::wallet::delegate_action_hash(&action),
+        env::sha256(&message)
+    );
 }
