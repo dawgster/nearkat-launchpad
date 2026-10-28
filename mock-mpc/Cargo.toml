@@ -3,7 +3,7 @@ name = "nearkat-mock-mpc"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Test stand-in for NEAR's MPC signer contract's confidential key derivation. Not for production: it holds the master secret."
+description = "Test stand-in for NEAR's MPC signer contract: confidential key derivation and Ed25519 signing. Not for production: it holds the master secrets."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -14,9 +14,13 @@ bls12_381 = { version = "0.8", default-features = false, features = ["groups", "
 sha2 = "0.9"
 sha3 = "0.10"
 bs58 = "0.5"
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+sha2_10 = { package = "sha2", version = "0.10", default-features = false }
 
 [dev-dependencies]
 near-sdk = { version = "5.29.1", features = ["unit-testing"] }
+rand = "0.8.5"
+ed25519-dalek = "2"
 
 [profile.release]
 codegen-units = 1

@@ -1,5 +1,5 @@
 {
-  "source": "github.com/near/mpc at dc62e306c4cc12020f77ce2f835e1bd6e0960e89: crates/near-mpc-crypto-types/src/snapshots (derive_app_id__has_not_changed) and crates/contract/src/primitives/snapshots (hash_app_id_with_pk__should_produce_stable_output)",
+  "source": "github.com/near/mpc at dc62e306c4cc12020f77ce2f835e1bd6e0960e89: crates/near-mpc-crypto-types/src/snapshots (derive_app_id__has_not_changed) and crates/contract/src/primitives/snapshots (hash_app_id_with_pk__should_produce_stable_output); crates/near-mpc-crypto-types/src/snapshots (derive_tweak__has_not_changed) and crates/contract/src/crypto_shared/snapshots (derive_public_key_edwards_point_ed25519_has_not_changed)",
   "app_ids": [
     {
       "account": "dwefqwg",
@@ -86,5 +86,93 @@
     "pk": "G2 generator, compressed",
     "app_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "point": "91a9e23bb0a79b6c542b80e8ee10c102a4903ffb8e8bd5592bc4aba557742dd352417b686c0d067714818275c22c886a"
+  },
+  "tweaks": [
+    {
+      "account": "dwefqwg",
+      "path": "frwewegwegweg",
+      "tweak": "ad2d6fc1f445a1b43830415e7e6e3d03cd077673047848a085f130c24f53ee00"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "fwei2.3f230",
+      "tweak": "5f76eba48a20e3dd355e38f512c142ab8c8da4999f6b32ecd326d227b44ac05a"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "f23fjwef8232",
+      "tweak": "d133f73abcb3c7cb944dcc0dd3bf72dd89fdc3cf988c9f025af571a205c9b730"
+    },
+    {
+      "account": "dwefqwg",
+      "path": "fwefwo23fewfw",
+      "tweak": "3dd0192c45be59eee3dd0ba62776864245f7aac29514314b80baab2057453ec7"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "frwewegwegweg",
+      "tweak": "510cd39f09b3c1bdc1fd655ce57ab29eb20dfce647584727fcca0e483163a8d0"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "fwei2.3f230",
+      "tweak": "9cf7f40ab14bc5dd6feee48122b3d85f58461bd595e436fac186b8fa384f3048"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "f23fjwef8232",
+      "tweak": "f53f5cb5c6902ee079681013b452f1908922f48fd668ad6ca522bd49842bf72a"
+    },
+    {
+      "account": "qfweqwgwegqw",
+      "path": "fwefwo23fewfw",
+      "tweak": "79051ad14a62552ee9da3fb813813a9d2f2fa8e1549e5f4c658254052562e18f"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "frwewegwegweg",
+      "tweak": "f91edb212a03607ab61ce79f54e38901af6d9ff8709593f2d303e590691c26a6"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "fwei2.3f230",
+      "tweak": "dfb60b3ba4348d3d787aa1af912910a4ccc2fb34e92c010fdae6730f4fab0734"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "f23fjwef8232",
+      "tweak": "353862e7968f7f058a4f0498afbbcd504b6621690dfb3118878a7a6502e22e0e"
+    },
+    {
+      "account": "fqwerijqw385",
+      "path": "fwefwo23fewfw",
+      "tweak": "ac05f6320b0ed20f9f18a3531c571db237f41ab9b31203598bd8239631cb040f"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "frwewegwegweg",
+      "tweak": "7571fcaad0445387087ebcde589540e80926cfd08144aa3f45bc78b8683d06c3"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "fwei2.3f230",
+      "tweak": "74f118cfd013dc109848cfc5e0f963e1781dcbb095ae6429623007ccf59b6248"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "f23fjwef8232",
+      "tweak": "874bdff117d6d90c0eb5cd7a181e7f20d99abfaa04f503e97867ec08f6796f96"
+    },
+    {
+      "account": "fnwef0942534",
+      "path": "fwefwo23fewfw",
+      "tweak": "91da4d8973ea3ccaad9c7b71cb81fa512c4cc939c5157cdbf6a9605d3d1ce4a2"
+    }
+  ],
+  "ed25519_derivation": {
+    "master_scalar": "StdRng::from_seed([42; 32]).gen::<[u8; 32]>() (rand 0.8), reduced mod l",
+    "predecessor": "hello",
+    "path": "my-path",
+    "derived_public_key": "14a5f4002b886dffd3962c252a475ff17149ee4aa4f6049406c2817cb9a16aaa"
   }
 }
