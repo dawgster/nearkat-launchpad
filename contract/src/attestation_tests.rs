@@ -186,6 +186,7 @@ fn tee_collection() -> Contract {
             terms: crate::Terms::default(),
             sealed_prompt: None,
             key_source: crate::tests::mpc_source(),
+            wallet_domain_id: None,
         },
         None,
     );
@@ -270,6 +271,7 @@ fn registration_needs_a_tee_requirement() {
             terms: crate::Terms::default(),
             sealed_prompt: None,
             key_source: crate::tests::mpc_source(),
+            wallet_domain_id: None,
         },
         None,
     );

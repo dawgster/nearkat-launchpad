@@ -37,6 +37,7 @@ impl User {
 struct Env {
     // Dropping the sandbox stops the node, so it lives as long as the test.
     _sandbox: Sandbox,
+    rpc_url: String,
     network: NetworkConfig,
     contract: Contract,
     admin: User,
@@ -71,6 +72,7 @@ async fn setup_with_code(code: &[u8], tee: Value) -> TestResult<Env> {
 
     let owner = User::new(&accounts[0])?;
     let env = Env {
+        rpc_url: sandbox.rpc_addr.clone(),
         _sandbox: sandbox,
         network,
         contract: Contract(owner.id.clone()),
@@ -506,6 +508,7 @@ async fn setup_with_key_source() -> TestResult<Env> {
 
     let owner = User::new(&accounts[0])?;
     let env = Env {
+        rpc_url: sandbox.rpc_addr.clone(),
         _sandbox: sandbox,
         network,
         contract: Contract(owner.id.clone()),
@@ -529,6 +532,7 @@ async fn setup_with_key_source() -> TestResult<Env> {
                     "symbol": "KAT",
                     "base_uri": "",
                     "key_source": { "mpc_contract_id": mpc_user.id, "domain_id": 2 },
+                    "wallet_domain_id": 1,
                 },
             }),
         )?
@@ -603,4 +607,257 @@ async fn a_collection_from_before_key_epochs_upgrades_and_keeps_its_tokens() -> 
     .await??;
     assert_eq!(kat(&env, &id).await?["key_epoch"], 1);
     Ok(())
+}
+
+/// A raw JSON-RPC call to the sandbox node.
+async fn rpc(env: &Env, method: &str, params: Value) -> TestResult<Value> {
+    let response: Value = reqwest::Client::new()
+        .post(&env.rpc_url)
+        .json(&json!({ "jsonrpc": "2.0", "id": "t", "method": method, "params": params }))
+        .send()
+        .await?
+        .json()
+        .await?;
+    match response.get("result") {
+        Some(result) => Ok(result.clone()),
+        None => Err(format!("{method} failed: {response}").into()),
+    }
+}
+
+async fn balance(env: &Env, account: &str) -> TestResult<u128> {
+    let view = rpc(
+        env,
+        "query",
+        json!({ "request_type": "view_account", "finality": "optimistic", "account_id": account }),
+    )
+    .await?;
+    Ok(view["amount"].as_str().unwrap().parse()?)
+}
+
+/// Has the collection build and the MPC network sign a transfer from the
+/// token's wallet, then sends it, as the keeper or the web app does.
+async fn wallet_send(
+    env: &Env,
+    who: &User,
+    wallet_key: &str,
+    receiver: &str,
+    amount: NearToken,
+    deposit: NearToken,
+) -> TestResult<Result<String, String>> {
+    let implicit = hex::encode(bs58::decode(wallet_key.trim_start_matches("ed25519:")).into_vec()?);
+    let key = rpc(
+        env,
+        "query",
+        json!({ "request_type": "view_access_key", "finality": "optimistic",
+                "account_id": implicit, "public_key": wallet_key }),
+    )
+    .await?;
+    let block = rpc(env, "block", json!({ "finality": "final" })).await?;
+    let outcome = env
+        .contract
+        .call_function(
+            "wallet_send",
+            json!({
+                "token_id": "1",
+                "receiver_id": receiver,
+                "amount": amount,
+                "memo": "a gift",
+                "tx": {
+                    "public_key": wallet_key,
+                    "nonce": (key["nonce"].as_u64().unwrap() + 1).to_string(),
+                    "block_hash": block["header"]["hash"],
+                },
+            }),
+        )
+        .transaction()
+        .deposit(deposit)
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(who.id.clone(), who.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    let signed: Value = match outcome.into_result() {
+        Ok(success) => success.json()?,
+        Err(failure) => return Ok(Err(format!("{failure:?}"))),
+    };
+    let sent = rpc(
+        env,
+        "send_tx",
+        json!({ "signed_tx_base64": signed["signed_transaction"], "wait_until": "FINAL" }),
+    )
+    .await?;
+    assert_eq!(sent["transaction"]["hash"], signed["hash"]);
+    Ok(Ok(signed["hash"].as_str().unwrap().to_string()))
+}
+
+#[tokio::test]
+async fn a_tokens_wallet_sends_near_signed_by_the_mpc_network() -> TestResult {
+    let env = setup_with_key_source().await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
+    let wallet: Value = env
+        .contract
+        .call_function("get_wallet", json!({ "token_id": id }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    assert_eq!(wallet["path"], "nearkat/wallet/1");
+    // The wallet's key, as the MPC network derives it for this collection and path.
+    let wallet_key: String = Contract(wallet["mpc_contract_id"].as_str().unwrap().parse()?)
+        .call_function(
+            "derived_public_key",
+            json!({ "path": wallet["path"], "predecessor": env.contract.0, "domain_id": 1 }),
+        )
+        .read_only::<String>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    let implicit = hex::encode(bs58::decode(wallet_key.trim_start_matches("ed25519:")).into_vec()?);
+
+    // Anyone can put NEAR in it: the first transfer creates the account.
+    Tokens::account(env.bob.id.clone())
+        .send_to(implicit.parse()?)
+        .near(NearToken::from_near(2))
+        .with_signer(env.bob.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+
+    // The owner sends from it.
+    let treasury_before = balance(&env, env.treasury.id.as_str()).await?;
+    wallet_send(
+        &env,
+        &env.alice,
+        &wallet_key,
+        env.treasury.id.as_str(),
+        NearToken::from_millinear(500),
+        YOCTO,
+    )
+    .await??;
+    assert_eq!(
+        balance(&env, env.treasury.id.as_str()).await? - treasury_before,
+        NearToken::from_millinear(500).as_yoctonear()
+    );
+
+    // The mind can't, until the owner allows it; then only within the allowance.
+    let refused = wallet_send(
+        &env,
+        &env.keeper,
+        &wallet_key,
+        env.bob.id.as_str(),
+        NearToken::from_millinear(10),
+        NearToken::from_yoctonear(0),
+    )
+    .await?;
+    assert!(refused
+        .unwrap_err()
+        .contains("hasn't let this token's mind spend"));
+    call(
+        &env,
+        &env.alice,
+        "set_wallet_policy",
+        json!({ "token_id": id, "daily_allowance": NearToken::from_millinear(100), "max_payment": NearToken::from_millinear(60) }),
+        NearToken::from_millinear(10),
+    )
+    .await??;
+    let bob_before = balance(&env, env.bob.id.as_str()).await?;
+    wallet_send(
+        &env,
+        &env.keeper,
+        &wallet_key,
+        env.bob.id.as_str(),
+        NearToken::from_millinear(60),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+    assert_eq!(
+        balance(&env, env.bob.id.as_str()).await? - bob_before,
+        NearToken::from_millinear(60).as_yoctonear()
+    );
+    let over = wallet_send(
+        &env,
+        &env.keeper,
+        &wallet_key,
+        env.bob.id.as_str(),
+        NearToken::from_millinear(60),
+        NearToken::from_yoctonear(0),
+    )
+    .await?;
+    assert!(over
+        .unwrap_err()
+        .contains("more than the owner lets the mind send today"));
+
+    let wallet: Value = env
+        .contract
+        .call_function("get_wallet", json!({ "token_id": id }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    // Payments are recorded once the owner has set rules, so only the mind's here.
+    assert_eq!(wallet["payments"], 1);
+    assert_eq!(wallet["last_payment"]["by_mind"], true);
+    assert_eq!(
+        wallet["spent_today"],
+        NearToken::from_millinear(60).as_yoctonear().to_string()
+    );
+    Ok(())
+}
+
+/// The collection contract as of commit 824f1dc: key epochs, before token wallets.
+const BEFORE_WALLETS_WASM: &[u8] = include_bytes!("fixtures/nearkat_nft-824f1dc.wasm");
+
+#[tokio::test]
+async fn a_collection_from_before_wallets_upgrades_and_can_turn_them_on() -> TestResult {
+    let env = setup_with_code(BEFORE_WALLETS_WASM, Value::Null).await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
+    call(
+        &env,
+        &env.keeper,
+        "set_context",
+        json!({ "token_id": id, "context_hash": hash_b64(7), "context_ref": "ref-1", "version": "1", "key_epoch": 1 }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+    Contract::deploy_global_contract_code(wasm().to_vec())
+        .as_hash()
+        .with_signer(env.admin.id.clone(), env.admin.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+    let code_hash: near_sdk::json_types::Base58CryptoHash =
+        near_sdk::env::sha256_array(wasm()).into();
+    env.contract
+        .call_function("upgrade", json!({ "code_hash": code_hash }))
+        .transaction()
+        .deposit(YOCTO)
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(env.admin.id.clone(), env.admin.signer.clone())
+        .send_to(&env.network)
+        .await?
+        .into_result()?;
+
+    let kat_after = kat(&env, &id).await?;
+    assert_eq!(kat_after["context_ref"], "ref-1");
+    assert_eq!(kat_after["key_epoch"], 1);
+    assert_eq!(get_wallet(&env).await?, Value::Null, "wallets start off");
+    call(
+        &env,
+        &env.admin,
+        "enable_wallets",
+        json!({ "domain_id": 1 }),
+        YOCTO,
+    )
+    .await??;
+    assert_eq!(get_wallet(&env).await?["path"], "nearkat/wallet/1");
+    Ok(())
+}
+
+async fn get_wallet(env: &Env) -> TestResult<Value> {
+    Ok(env
+        .contract
+        .call_function("get_wallet", json!({ "token_id": "1" }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data)
 }

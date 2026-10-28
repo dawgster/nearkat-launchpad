@@ -60,6 +60,7 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         terms: crate::Terms::default(),
         sealed_prompt: None,
         key_source: crate::tests::mpc_source(),
+        wallet_domain_id: Some(1),
     }
 }
 
@@ -1087,8 +1088,8 @@ fn a_context_under_an_old_key_is_refused() {
 fn previous_layout(
     c: Contract,
     key_source: Option<crate::KeySource>,
-) -> crate::upgrade::PreviousContract {
-    crate::upgrade::PreviousContract {
+) -> crate::upgrade::ContractV1 {
+    crate::upgrade::ContractV1 {
         tokens: c.tokens,
         kats: c.kats,
         admin_id: c.admin_id,
@@ -1172,4 +1173,257 @@ fn migrating_the_current_layout_keeps_it() {
     near_sdk::env::state_write(&c);
     let c = Contract::migrate([9u8; 32].into());
     assert_eq!(c.get_collection().key_epoch, 2);
+}
+
+// Token wallets.
+
+const DAY: u64 = 86_400 * 1_000_000_000;
+const MILLI: NearToken = NearToken::from_millinear(1);
+
+fn ctx_at(predecessor: &str, deposit: NearToken, timestamp: u64) {
+    let storage_usage = env::storage_usage();
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(acc(predecessor))
+        .attached_deposit(deposit)
+        .storage_usage(storage_usage)
+        .block_timestamp(timestamp)
+        .build());
+}
+
+fn wallet_tx() -> crate::wallet::WalletTx {
+    crate::wallet::WalletTx {
+        public_key: format!(
+            "ed25519:{}",
+            near_sdk::bs58::encode([9u8; 32]).into_string()
+        ),
+        nonce: 5.into(),
+        block_hash: [3u8; 32].into(),
+    }
+}
+
+/// A token owned by alice, whose owner lets its mind send 10 milliNEAR a day, 4 at a time.
+fn with_wallet() -> Contract {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx_at("alice.near", NearToken::from_millinear(10), DAY);
+    c.set_wallet_policy(
+        "1".to_string(),
+        MILLI.saturating_mul(10),
+        MILLI.saturating_mul(4),
+    );
+    c
+}
+
+fn mind_sends(c: &mut Contract, amount: NearToken, at: u64) {
+    ctx_at("keeper.near", NearToken::from_yoctonear(0), at);
+    let _ = c.wallet_send(
+        "1".to_string(),
+        acc("bob.near"),
+        amount,
+        Some("a gift".to_string()),
+        wallet_tx(),
+    );
+}
+
+#[test]
+fn every_token_has_a_wallet_path_and_starts_with_no_allowance() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    let wallet = c.get_wallet("1".to_string()).unwrap();
+    assert_eq!(wallet.path, "nearkat/wallet/1");
+    assert_eq!(wallet.domain_id, 1);
+    assert_eq!(wallet.mpc_contract_id, acc("v1.signer"));
+    assert!(wallet.daily_allowance.is_zero());
+    assert!(c.get_wallet("2".to_string()).is_none());
+}
+
+#[test]
+fn a_collection_without_wallets_has_none() {
+    let mut c = deploy_with(Collection {
+        wallet_domain_id: None,
+        ..collection("Lantern", "LNT", "")
+    });
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    assert!(c.get_wallet("1".to_string()).is_none());
+}
+
+#[test]
+fn the_mind_sends_within_the_owners_allowance() {
+    let mut c = with_wallet();
+    mind_sends(&mut c, MILLI.saturating_mul(4), DAY + 1);
+    mind_sends(&mut c, MILLI.saturating_mul(4), DAY + 2);
+    assert_eq!(
+        c.get_wallet("1".to_string()).unwrap().spent_today,
+        MILLI.saturating_mul(8)
+    );
+}
+
+#[test]
+#[should_panic(expected = "more than the owner lets the mind send today")]
+fn the_mind_cant_go_over_the_daily_allowance() {
+    let mut c = with_wallet();
+    for i in 0..3 {
+        mind_sends(&mut c, MILLI.saturating_mul(4), DAY + i);
+    }
+}
+
+#[test]
+fn the_allowance_comes_back_the_next_day() {
+    let mut c = with_wallet();
+    mind_sends(&mut c, MILLI.saturating_mul(4), DAY + 1);
+    mind_sends(&mut c, MILLI.saturating_mul(4), DAY + 2);
+    mind_sends(&mut c, MILLI.saturating_mul(4), 2 * DAY + 1);
+    ctx_at("alice.near", NearToken::from_yoctonear(0), 2 * DAY + 2);
+    assert_eq!(
+        c.get_wallet("1".to_string()).unwrap().spent_today,
+        MILLI.saturating_mul(4)
+    );
+}
+
+#[test]
+#[should_panic(expected = "more than the owner lets the mind send at once")]
+fn the_mind_cant_go_over_the_largest_payment() {
+    let mut c = with_wallet();
+    mind_sends(&mut c, MILLI.saturating_mul(5), DAY + 1);
+}
+
+#[test]
+#[should_panic(expected = "The owner hasn't let this token's mind spend")]
+fn a_new_owner_starts_with_no_allowance_for_the_mind() {
+    let mut c = with_wallet();
+    ctx("alice.near", YOCTO);
+    c.nft_transfer(acc("bob.near"), "1".to_string(), None, None);
+    assert!(c
+        .get_wallet("1".to_string())
+        .unwrap()
+        .daily_allowance
+        .is_zero());
+    mind_sends(&mut c, MILLI, DAY + 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper can call this method")]
+fn nobody_else_can_spend_for_the_mind() {
+    let mut c = with_wallet();
+    ctx_at("mallory.near", NearToken::from_yoctonear(0), DAY + 1);
+    let _ = c.wallet_send(
+        "1".to_string(),
+        acc("mallory.near"),
+        MILLI,
+        None,
+        wallet_tx(),
+    );
+}
+
+#[test]
+fn the_owner_sends_anything_with_one_yocto() {
+    let mut c = with_wallet();
+    ctx_at("alice.near", YOCTO, DAY + 1);
+    let _ = c.wallet_send(
+        "1".to_string(),
+        acc("bob.near"),
+        NearToken::from_near(5),
+        None,
+        wallet_tx(),
+    );
+    // The owner's own payments don't use up the mind's allowance.
+    assert!(c.get_wallet("1".to_string()).unwrap().spent_today.is_zero());
+}
+
+#[test]
+#[should_panic(expected = "Only the token's owner can set its wallet's rules")]
+fn only_the_owner_sets_the_rules() {
+    let mut c = with_wallet();
+    ctx("mallory.near", MILLI.saturating_mul(10));
+    c.set_wallet_policy("1".to_string(), MILLI, MILLI);
+}
+
+#[test]
+#[should_panic(expected = "Attach at least")]
+fn the_rules_pay_for_their_storage() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+    ctx("alice.near", NearToken::from_yoctonear(0));
+    c.set_wallet_policy("1".to_string(), MILLI, MILLI);
+}
+
+#[test]
+fn a_signed_transfer_is_returned_ready_to_send_and_recorded() {
+    let mut c = with_wallet();
+    let tx = crate::wallet::transfer_transaction(
+        &"09".repeat(32),
+        &[9u8; 32],
+        5,
+        "bob.near",
+        &[3u8; 32],
+        7,
+    );
+    let payment = crate::wallet::Payment {
+        receiver_id: acc("bob.near"),
+        amount: NearToken::from_yoctonear(7),
+        by_mind: true,
+        memo: "a gift".to_string(),
+        at: DAY.into(),
+    };
+    ctx_at("nearkat.near", NearToken::from_yoctonear(0), DAY);
+    let signed = c
+        .on_wallet_signed(
+            "1".to_string(),
+            tx.clone().into(),
+            payment.clone(),
+            Ok(near_sdk::serde_json::json!({ "scheme": "Ed25519", "signature": vec![1u8; 64] })),
+        )
+        .unwrap();
+    let mut expected = tx.clone();
+    expected.push(0);
+    expected.extend_from_slice(&[1u8; 64]);
+    assert_eq!(signed.signed_transaction.0, expected);
+    assert_eq!(
+        signed.hash,
+        near_sdk::bs58::encode(env::sha256(&tx)).into_string()
+    );
+    let wallet = c.get_wallet("1".to_string()).unwrap();
+    assert_eq!(wallet.payments, 1);
+    assert_eq!(wallet.last_payment, Some(payment));
+}
+
+#[test]
+fn an_unsigned_payment_gives_the_mind_its_allowance_back() {
+    let mut c = with_wallet();
+    mind_sends(&mut c, MILLI.saturating_mul(4), DAY + 1);
+    let payment = crate::wallet::Payment {
+        receiver_id: acc("bob.near"),
+        amount: MILLI.saturating_mul(4),
+        by_mind: true,
+        memo: String::new(),
+        at: (DAY + 1).into(),
+    };
+    ctx_at("nearkat.near", NearToken::from_yoctonear(0), DAY + 2);
+    let signed = c.on_wallet_signed(
+        "1".to_string(),
+        vec![1, 2, 3].into(),
+        payment,
+        Err(near_sdk::PromiseError::Failed),
+    );
+    assert!(signed.is_none());
+    let wallet = c.get_wallet("1".to_string()).unwrap();
+    assert!(wallet.spent_today.is_zero());
+    assert_eq!(wallet.payments, 0);
+}
+
+#[test]
+fn a_transfer_is_laid_out_as_near_expects() {
+    let tx = crate::wallet::transfer_transaction("ab", &[1u8; 32], 2, "c", &[4u8; 32], 5);
+    let mut expected = vec![2, 0, 0, 0, b'a', b'b', 0];
+    expected.extend_from_slice(&[1u8; 32]);
+    expected.extend_from_slice(&2u64.to_le_bytes());
+    expected.extend_from_slice(&[1, 0, 0, 0, b'c']);
+    expected.extend_from_slice(&[4u8; 32]);
+    expected.extend_from_slice(&[1, 0, 0, 0, 3]);
+    expected.extend_from_slice(&5u128.to_le_bytes());
+    assert_eq!(tx, expected);
 }

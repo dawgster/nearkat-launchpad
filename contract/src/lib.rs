@@ -6,6 +6,7 @@ mod keeper;
 mod nft;
 mod payout;
 pub(crate) mod upgrade;
+pub mod wallet;
 
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
@@ -39,6 +40,7 @@ enum StorageKey {
     Kats,
     AttestedKeys,
     KatEpochs,
+    Wallets,
 }
 
 #[derive(PanicOnDefault)]
@@ -91,6 +93,10 @@ pub struct Contract {
     /// `Kat` so token records from before epochs still read; a token missing
     /// here was saved under epoch 0, the key from before epochs.
     kat_epochs: LookupMap<TokenId, u32>,
+    /// The MPC network's Ed25519 signing domain for token wallets. None: no wallets.
+    wallet_domain_id: Option<u64>,
+    /// Each token's wallet rules, once its owner has set them.
+    wallets: LookupMap<TokenId, wallet::Wallet>,
 }
 
 #[near]
@@ -116,6 +122,7 @@ impl Contract {
             terms,
             sealed_prompt,
             key_source,
+            wallet_domain_id,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -209,6 +216,8 @@ impl Contract {
             key_source,
             key_epoch: 1,
             kat_epochs: LookupMap::new(StorageKey::KatEpochs),
+            wallet_domain_id,
+            wallets: LookupMap::new(StorageKey::Wallets),
         }
     }
 
@@ -300,6 +309,7 @@ impl Contract {
             sealed_key_attested: self.sealed_key_attested,
             key_source: self.key_source.clone(),
             key_epoch: self.key_epoch,
+            wallet_domain_id: self.wallet_domain_id,
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),
