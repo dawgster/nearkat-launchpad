@@ -119,7 +119,7 @@ async fn setup() -> TestResult<Env> {
         &env.launchpad.id,
         &env.admin,
         "set_key_source",
-        json!({ "key_source": { "mpc_contract_id": "mpc.test.near", "domain_id": 2 } }),
+        json!({ "key_source": { "mpc_contract_id": "mpc.test.near", "domain_id": 2, "wallet_domain_id": 1 } }),
         NearToken::from_yoctonear(1),
     )
     .await??;
@@ -191,6 +191,10 @@ async fn a_creator_launches_a_collection_and_someone_mints_from_it() -> TestResu
     let listed = view(&env, &env.launchpad.id, "get_collections", json!({})).await?;
     assert_eq!(listed[0]["account_id"], collection.as_str());
     assert_eq!(listed[0]["live"], true);
+
+    // Every launch gets wallets from the launchpad's MPC domain.
+    let info = view(&env, &collection, "get_collection", json!({})).await?;
+    assert_eq!(info["wallet_domain_id"], 1);
 
     // The collection runs the published code with what the creator chose.
     let info = view(&env, &collection, "get_collection", json!({})).await?;

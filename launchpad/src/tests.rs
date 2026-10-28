@@ -33,6 +33,7 @@ fn deploy() -> Launchpad {
     l.set_key_source(Some(crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
+        wallet_domain_id: Some(1),
     }));
     l
 }
@@ -278,11 +279,15 @@ fn launches_carry_the_launchpads_key_source_not_the_creators() {
     let source = crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
+        wallet_domain_id: Some(1),
     };
     let collection = args("magister").collection;
     let value = crate::with_key_source(&collection, &source);
     assert_eq!(value["key_source"]["mpc_contract_id"], "v1.signer");
     assert_eq!(value["key_source"]["domain_id"], 2);
+    // The wallet domain goes to its own field, which the collection reads.
+    assert_eq!(value["wallet_domain_id"], 1);
+    assert!(value["key_source"].get("wallet_domain_id").is_none());
     // A creator who tries to name their own is ignored: the field isn't theirs to send.
     let sneaky: crate::CollectionArgs =
         near_sdk::serde_json::from_value(near_sdk::serde_json::json!({
@@ -313,6 +318,7 @@ fn the_admin_sets_the_key_source() {
     l.set_key_source(Some(crate::KeySource {
         mpc_contract_id: acc("v1.signer"),
         domain_id: 2,
+        wallet_domain_id: None,
     }));
     assert_eq!(l.get_config().key_source.unwrap().domain_id, 2);
 }

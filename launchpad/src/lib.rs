@@ -70,7 +70,12 @@ pub struct CollectionArgs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeySource {
     pub mpc_contract_id: AccountId,
+    /// The CKD domain context keys come from.
     pub domain_id: u64,
+    /// The same network's Ed25519 signing domain, which gives every token of
+    /// a launch its own wallet. None: launches have no wallets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_domain_id: Option<u64>,
 }
 
 #[near(serializers = [json])]
@@ -441,7 +446,12 @@ fn with_key_source(
 ) -> near_sdk::serde_json::Value {
     let mut value = near_sdk::serde_json::to_value(collection)
         .unwrap_or_else(|_| env::panic_str("Collection arguments can't be encoded"));
-    value["key_source"] = near_sdk::serde_json::to_value(key_source)
-        .unwrap_or_else(|_| env::panic_str("Key source can't be encoded"));
+    value["key_source"] = near_sdk::serde_json::json!({
+        "mpc_contract_id": key_source.mpc_contract_id,
+        "domain_id": key_source.domain_id,
+    });
+    if let Some(domain) = key_source.wallet_domain_id {
+        value["wallet_domain_id"] = domain.into();
+    }
     value
 }
