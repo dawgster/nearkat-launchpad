@@ -259,17 +259,18 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM) || !existsSync(WALLET
       const balanceOf = async (id: string) =>
         BigInt((await keeperB.near.rpc.getAccount(id, { finality: "optimistic" })).amount);
       const before = await balanceOf(creatorId);
-      b.inference.nextReply = `A gift for my maker!\nPAY 0.05 NEAR TO ${creatorId} FOR a thank-you`;
+      b.inference.nextPay = [{ amount: "0.05", receiver_id: creatorId, reason: "a thank-you" }];
+      b.inference.nextReply = "A gift for my maker!";
       const reply = await eventually(() =>
-        b.kats.chat(alice.id, "1", "send the creator a thank-you"),
+        b.kats.chat(alice.id, "1", `send ${creatorId} a thank-you`),
       );
       expect(reply.reply).toBe("A gift for my maker!");
       expect(reply.payment).toMatchObject({ status: "sent", receiver_id: creatorId });
       expect((await balanceOf(creatorId)) - before).toBe(5n * 10n ** 22n);
 
       // A second one would go over the day's allowance: refused, and nothing moves.
-      b.inference.nextReply = `Another!\nPAY 0.06 NEAR TO ${creatorId} FOR more thanks`;
-      const again = await b.kats.chat(alice.id, "1", "and again");
+      b.inference.nextPay = [{ amount: "0.06", receiver_id: creatorId, reason: "more thanks" }];
+      const again = await b.kats.chat(alice.id, "1", `and again to ${creatorId}`);
       expect(again.payment).toMatchObject({ status: "refused" });
       expect((await balanceOf(creatorId)) - before).toBe(5n * 10n ** 22n);
     }, 240_000);

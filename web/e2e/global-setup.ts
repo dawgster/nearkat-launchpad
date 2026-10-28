@@ -54,25 +54,50 @@ function startFakeModel() {
     });
     request.on("end", () => {
       if (request.url?.startsWith("/chat/completions")) {
-        const { messages } = JSON.parse(body) as {
+        const { messages, tools } = JSON.parse(body) as {
           messages: Array<{ role: string; content: string }>;
+          tools?: Array<{ function: { name: string } }>;
         };
         const system = messages[0]?.content ?? "";
-        const last = messages.at(-1)?.content ?? "";
+        const last = messages.at(-1);
         // Two kinds of request reach the model: a chat turn, and the update that
         // carries a conversation into the kat's character and memory.
-        // Asked to pay someone, and allowed to, the kat pays a little.
-        const payee = /please pay (\S+)/i.exec(last)?.[1];
-        const content = system.includes("CHARACTER:")
-          ? "CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\nThe owner kept saying hello."
-          : payee && system.includes("PAY <amount> NEAR")
-            ? `Fine, a small gift.\nPAY 0.01 NEAR TO ${payee} FOR a gift`
-            : `${system.includes("grumpy") ? "Hmph." : "Meow!"} You said: ${last}`;
+        // Asked to pay someone, and offered the pay tool, the kat pays a little;
+        // told how that went, it says so.
+        const payee = /please pay (\S+)/i.exec(last?.content ?? "")?.[1];
+        const message = system.includes("CHARACTER:")
+          ? {
+              content:
+                "CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\nThe owner kept saying hello.",
+            }
+          : last?.role === "tool"
+            ? { content: "Fine, a small gift." }
+            : payee && tools?.some((tool) => tool.function.name === "pay")
+              ? {
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: "call-1",
+                      type: "function",
+                      function: {
+                        name: "pay",
+                        arguments: JSON.stringify({
+                          amount: "0.01",
+                          receiver_id: payee,
+                          reason: "a gift",
+                        }),
+                      },
+                    },
+                  ],
+                }
+              : {
+                  content: `${system.includes("grumpy") ? "Hmph." : "Meow!"} You said: ${last?.content}`,
+                };
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
             id: `chat-${Date.now()}`,
-            choices: [{ message: { role: "assistant", content } }],
+            choices: [{ message: { role: "assistant", ...message } }],
           }),
         );
       } else {

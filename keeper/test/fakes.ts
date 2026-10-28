@@ -11,7 +11,7 @@ import {
 import { appId, contextKeyPath, type KeySource, MpcKeyring } from "../src/ckd.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
-import type { ChatResult, Inference } from "../src/inference.ts";
+import type { ChatResult, Inference, Tool } from "../src/inference.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
 import { PaymentRefused, type WalletView } from "../src/wallet.ts";
 
@@ -309,12 +309,44 @@ export class FakeInference implements Inference {
   whileThinking: (() => void) | null = null;
   /** What the model writes when asked to update a kat's character and memory. */
   evolveTo: { character: string; memory: string } | null = null;
+  /** The tools offered with each call. */
+  readonly tools: Array<string[]> = [];
+  /** Used once, when the pay tool is offered: the model calls it with these arguments. */
+  nextPay: Array<Record<string, unknown> | string> | null = null;
+  /** Fails the call after the next tool call, as if the model went down mid-turn. */
+  downAfterTool = false;
 
-  async chat(messages: ChatMessage[]): Promise<ChatResult> {
+  async chat(messages: ChatMessage[], tools?: Tool[]): Promise<ChatResult> {
     if (this.down) {
       throw new InferenceError("model offline");
     }
     this.calls.push(messages.map((message) => ({ ...message })));
+    this.tools.push(tools?.map((tool) => tool.function.name) ?? []);
+    if (this.nextPay && tools?.some((tool) => tool.function.name === "pay")) {
+      const calls = this.nextPay;
+      this.nextPay = null;
+      if (this.downAfterTool) {
+        this.down = true;
+      }
+      return {
+        reply: "",
+        toolCalls: calls.map((args, i) => ({
+          id: `call-${i}`,
+          type: "function" as const,
+          function: {
+            name: "pay",
+            arguments: typeof args === "string" ? args : JSON.stringify(args),
+          },
+        })),
+        verification: {
+          chat_id: `chat-${this.calls.length}`,
+          model: "fake-model",
+          request_hash: "aa",
+          response_hash: "bb",
+          signature: null,
+        },
+      };
+    }
     const n = this.calls.length;
     this.whileThinking?.();
     const updating = messages[0]?.content.includes("CHARACTER:") ?? false;
@@ -326,6 +358,7 @@ export class FakeInference implements Inference {
     this.nextReply = null;
     return {
       reply,
+      toolCalls: [],
       verification: {
         chat_id: `chat-${n}`,
         model: "fake-model",

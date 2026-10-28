@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { InferenceError } from "../src/errors.ts";
 import { NearAiInference } from "../src/inference.ts";
+import { PAY_TOOL } from "../src/wallet.ts";
 
 const sha256 = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
 const completion =
@@ -98,6 +99,55 @@ describe("NearAiInference", () => {
       "x-no-aliasing": "true",
     });
     expect(calls[1]?.url).toBe("https://ai.example/v1/signature/chat-1?signing_algo=ecdsa");
+  });
+
+  test("offers tools, and returns only calls to tools it offered", async () => {
+    const call = (id: string, name: string) => ({
+      id,
+      type: "function",
+      function: { name, arguments: '{"amount":"0.01","receiver_id":"bob.near","reason":"x"}' },
+    });
+    const { inference, calls } = setup((url) =>
+      url.includes("/signature/")
+        ? Response.json(signature)
+        : Response.json({
+            id: "c",
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [call("a", "pay"), call("b", "delete_everything"), { id: "c" }],
+                },
+              },
+            ],
+          }),
+    );
+    const result = await inference.chat(messages, [PAY_TOOL]);
+    expect(JSON.parse(Buffer.from(calls[0]?.init?.body as Uint8Array).toString())).toMatchObject({
+      tools: [PAY_TOOL],
+      tool_choice: "auto",
+    });
+    expect(result.reply).toBe("");
+    expect(result.toolCalls).toEqual([call("a", "pay")]);
+  });
+
+  test("ignores tool calls when it offered none, and needs a reply then", async () => {
+    const { inference } = setup((url) =>
+      url.includes("/signature/")
+        ? Response.json(signature)
+        : Response.json({
+            id: "c",
+            choices: [
+              {
+                message: {
+                  content: "",
+                  tool_calls: [{ id: "a", function: { name: "pay", arguments: "{}" } }],
+                },
+              },
+            ],
+          }),
+    );
+    await expect(inference.chat(messages)).rejects.toThrow(InferenceError);
   });
 
   test("retries a signature that is not ready yet", async () => {

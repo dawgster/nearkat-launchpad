@@ -3,17 +3,18 @@ import type { Keyring } from "./ckd.ts";
 import { DEFAULT_COLLECTION, type Persona, promptFor } from "./collection.ts";
 import { contextHash, newContext, openContext, sealContext } from "./context.ts";
 import { HttpError, InferenceError } from "./errors.ts";
-import type { ChatResult, Inference, Verification } from "./inference.ts";
+import type { ChatResult, Inference, Tool, Verification } from "./inference.ts";
 import { leaksSecret } from "./leak.ts";
 import type { Meter } from "./meter.ts";
 import type { ContextStore } from "./store.ts";
 import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
 import {
   formatNear,
+  maySpend,
+  PAY_TOOL,
   type PaymentOutcome,
-  stripPaymentLines,
+  readPayment,
   type TokenWallets,
-  takePayment,
   type WalletInfo,
   walletInstructions,
 } from "./wallet.ts";
@@ -204,27 +205,63 @@ export class KatService {
           })
         : null;
 
-      let result: ChatResult;
-      try {
-        result = await this.#o.inference.chat([
-          systemMessage(await this.#collection(), doc, wallet),
-          ...session.messages,
-          user,
-        ]);
-      } catch (error) {
-        if (error instanceof InferenceError) {
-          this.#log(`Inference failed for kat ${tokenId}: ${error.message}`);
-          throw new HttpError(503, "inference_unavailable", "The kat cannot think right now");
+      const think = async (messages: ChatMessage[], tools?: Tool[]): Promise<ChatResult> => {
+        try {
+          return await this.#o.inference.chat(messages, tools);
+        } catch (error) {
+          if (error instanceof InferenceError) {
+            this.#log(`Inference failed for kat ${tokenId}: ${error.message}`);
+            throw new HttpError(503, "inference_unavailable", "The kat cannot think right now");
+          }
+          throw error;
         }
-        throw error;
-      }
+      };
       // The kat may have been transferred while the model was thinking. The
       // reply was built from the previous owner's context, so it is not released.
-      const current = await this.#o.chain.getKat(tokenId);
-      if (current?.owner_id !== accountId) {
-        this.#sessions.delete(tokenId);
-        throw new HttpError(403, "not_owner", `Only the owner of kat ${tokenId} can do this`);
+      const stillOwned = async () => {
+        const current = await this.#o.chain.getKat(tokenId);
+        if (current?.owner_id !== accountId) {
+          this.#sessions.delete(tokenId);
+          throw new HttpError(403, "not_owner", `Only the owner of kat ${tokenId} can do this`);
+        }
+      };
+
+      const conversation: ChatMessage[] = [
+        systemMessage(await this.#collection(), doc, wallet),
+        ...session.messages,
+        user,
+      ];
+      // The pay tool is offered only while the owner lets the mind spend.
+      let result = await think(conversation, wallet && maySpend(wallet) ? [PAY_TOOL] : undefined);
+      await stillOwned();
+
+      let payment: PaymentOutcome | undefined;
+      if (result.toolCalls.length > 0) {
+        // One payment per message: the first call is made, any others are refused.
+        const [first, ...others] = result.toolCalls;
+        payment = await this.#pay(tokenId, wallet, message, first?.function.arguments ?? "");
+        this.#log(`${tokenId} asked to pay: ${JSON.stringify(payment)}`);
+        const answered: ChatMessage[] = [
+          { role: "assistant", content: result.reply, tool_calls: result.toolCalls },
+          { role: "tool", tool_call_id: first?.id ?? "", content: describePayment(payment) },
+          ...others.map(
+            (call): ChatMessage => ({
+              role: "tool",
+              tool_call_id: call.id,
+              content: "Not made: only one payment per message.",
+            }),
+          ),
+        ];
+        // The model answers knowing the outcome. If it can't, the payment
+        // still stands and the owner still sees what became of it.
+        const toolReply = result.reply;
+        result = await this.#o.inference.chat([...conversation, ...answered]).catch((error) => {
+          this.#log(`Reply after paying failed for kat ${tokenId}: ${String(error)}`);
+          return { ...result, reply: toolReply || "…" };
+        });
+        await stillOwned();
       }
+
       const persona = await this.#collection();
       // Checked with the recent replies, so a quote fed out a few words at a time is caught too.
       const recent = session.messages
@@ -240,29 +277,14 @@ export class KatService {
       if (withheld) {
         this.#log(`Withheld a reply from ${tokenId} that quoted its secret instructions`);
       }
-      const asked = withheld ? { reply: WITHHELD_REPLY, request: null } : takePayment(result.reply);
-      const reply = asked.reply;
-      let payment: PaymentOutcome | undefined;
-      if (asked.request) {
-        payment =
-          wallet && this.#o.wallets
-            ? await this.#o.wallets.pay(tokenId, wallet, asked.request)
-            : {
-                status: "refused",
-                receiver_id: asked.request.receiverId,
-                amount: asked.request.amount.toString(),
-                memo: asked.request.memo,
-                reason: "This token has no wallet",
-              };
-        this.#log(`${tokenId} asked to pay: ${JSON.stringify(payment)}`);
-      }
-      // The mind is told what became of its payment, so it never believes one that failed.
+      const reply = withheld ? WITHHELD_REPLY : result.reply || "…";
+      // Later turns see what became of the payment too, so the mind never believes one that failed.
       const note = payment ? `\n[${describePayment(payment)}]` : "";
       session.messages.push(user, { role: "assistant", content: reply + note });
       session.lastActive = this.#now();
       this.#o.meter.charge(tokenId, this.#o.prices.chat);
       if (payment?.status === "sent") {
-        // A payment costs the keeper a signing transaction, charged like a save.
+        // A payment costs the keeper a transaction and a second reply, charged like a save.
         this.#o.meter.charge(tokenId, this.#o.prices.save);
       }
 
@@ -280,6 +302,45 @@ export class KatService {
         ...(payment ? { payment } : {}),
       };
     });
+  }
+
+  /**
+   * Runs the mind's `pay` call. The receiver must be an account the owner
+   * named in this message, so nothing planted in the token's character or
+   * memory, or by an earlier owner, can steer a payment elsewhere.
+   */
+  async #pay(
+    tokenId: string,
+    wallet: WalletInfo | null,
+    message: string,
+    args: string,
+  ): Promise<PaymentOutcome> {
+    let request: ReturnType<typeof readPayment>;
+    try {
+      request = readPayment(args);
+    } catch (error) {
+      return {
+        status: "refused",
+        receiver_id: "",
+        amount: "0",
+        memo: "",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const refused = (reason: string): PaymentOutcome => ({
+      status: "refused",
+      receiver_id: request.receiverId,
+      amount: request.amount.toString(),
+      memo: request.memo,
+      reason,
+    });
+    if (!wallet || !this.#o.wallets) {
+      return refused("This token has no wallet");
+    }
+    if (!namedIn(message, request.receiverId)) {
+      return refused(`Your owner didn't name ${request.receiverId} in this message`);
+    }
+    return this.#o.wallets.pay(tokenId, wallet, request);
   }
 
   /** Folds sessions that have been idle for 10 minutes into long-term memory. */
@@ -383,13 +444,8 @@ export class KatService {
         },
       ]);
       const update = parseUpdate(summary.reply);
-      // A payment instruction never makes it into what the token keeps, so
-      // nobody can plant one for a later owner's allowance.
-      const character = stripPaymentLines(update.character ?? doc.personality).slice(
-        0,
-        MAX_CHARACTER_CHARS,
-      );
-      const memory = stripPaymentLines(update.memory).slice(0, MAX_SUMMARY_CHARS);
+      const character = (update.character ?? doc.personality).slice(0, MAX_CHARACTER_CHARS);
+      const memory = update.memory.slice(0, MAX_SUMMARY_CHARS);
       await this.#save(newContext(tokenId, doc.version + 1, character, memory));
     } catch (error) {
       this.#log(`Memory save skipped for kat ${tokenId}: ${String(error)}`);
@@ -532,6 +588,15 @@ export class KatService {
   }
 }
 
+/** Whether `accountId` appears in `message` as a whole account id. */
+function namedIn(message: string, accountId: string): boolean {
+  return message
+    .toLowerCase()
+    .split(/[^a-z0-9._-]+/)
+    .map((word) => word.replace(/[.]+$/, ""))
+    .includes(accountId);
+}
+
 function describePayment(payment: PaymentOutcome): string {
   const what = `${formatNear(BigInt(payment.amount))} NEAR to ${payment.receiver_id}`;
   switch (payment.status) {
@@ -540,7 +605,9 @@ function describePayment(payment: PaymentOutcome): string {
     case "pending":
       return `Your payment of ${what} was asked for and may still go through; don't pay it again.`;
     default:
-      return `Your payment of ${what} did not go through: ${payment.reason}.`;
+      return payment.receiver_id
+        ? `Your payment of ${what} did not go through: ${payment.reason}.`
+        : `Your payment was not made: ${payment.reason}.`;
   }
 }
 

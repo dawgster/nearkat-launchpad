@@ -48,12 +48,15 @@ keys, and for a TEE collection only an attested keeper key can ask.
 
 **Wallets.** In a collection with wallets, each token has its own NEAR
 account, `<token_id>.<collection>`, that only the contract can send from,
-within its owner's rules (`src/wallet.ts`). The mind is told its address, balance and allowance,
-and pays by ending a reply with `PAY <amount> NEAR TO <account> FOR
-<reason>`. The keeper takes that line out, checks the limits, asks the
-contract to send it (`wallet_send`), and reports what
-happened to the owner (`payment` in the chat reply) and to the mind. A sent
-payment is charged like a save.
+within its owner's rules (`src/wallet.ts`). The mind is told its address,
+balance and allowance and, while its owner lets it spend, is offered a `pay`
+tool (OpenAI-style function calling: `amount`, `receiver_id`, `reason`).
+When it calls it, the keeper checks the call: one payment per message, only
+to an account the owner named in that message, within the limits. It asks
+the contract to send (`wallet_send`), gives the model the outcome as the
+tool's result so its reply knows what happened, and reports the outcome to
+the owner (`payment` in the chat reply). A sent payment is charged like a
+save.
 
 **Key epochs.** Changing keeper, revoking an attested key or
 `rotate_context_key` moves the collection to a new key epoch. The keeper

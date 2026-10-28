@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { InferenceError } from "./errors.ts";
-import type { ChatMessage } from "./types.ts";
+import type { ChatMessage, ToolCallMessage } from "./types.ts";
 
 /** Signature data from the inference provider, passed through for the client to verify. */
 export interface SignatureInfo {
@@ -20,13 +20,27 @@ export interface Verification {
   signature: SignatureInfo | null;
 }
 
+/** A function the model may call, in the OpenAI-compatible form. */
+export interface Tool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    /** JSON Schema of the arguments. */
+    parameters: Record<string, unknown>;
+  };
+}
+
 export interface ChatResult {
+  /** The model's text; empty when it only called tools. */
   reply: string;
+  /** Tools the model called, if it was offered any. */
+  toolCalls: ToolCallMessage[];
   verification: Verification;
 }
 
 export interface Inference {
-  chat(messages: ChatMessage[]): Promise<ChatResult>;
+  chat(messages: ChatMessage[], tools?: Tool[]): Promise<ChatResult>;
 }
 
 export interface NearAiOptions {
@@ -57,10 +71,16 @@ export class NearAiInference implements Inference {
     this.#fetch = options.fetch ?? fetch;
   }
 
-  async chat(messages: ChatMessage[]): Promise<ChatResult> {
+  async chat(messages: ChatMessage[], tools?: Tool[]): Promise<ChatResult> {
     const { baseUrl, apiKey, model, maxTokens = 2048, timeoutMs = 60_000 } = this.#options;
+    const request = {
+      model,
+      messages,
+      max_tokens: maxTokens,
+      ...(tools?.length ? { tools, tool_choice: "auto" } : {}),
+    };
     // The signature covers the exact bytes sent and received, so both are hashed raw.
-    const body = Buffer.from(JSON.stringify({ model, messages, max_tokens: maxTokens }), "utf8");
+    const body = Buffer.from(JSON.stringify(request), "utf8");
     let response: Response;
     let raw: Buffer;
     try {
@@ -84,20 +104,36 @@ export class NearAiInference implements Inference {
       throw new InferenceError(`Inference returned HTTP ${response.status}`);
     }
     let chatId: unknown;
-    let reply: unknown;
+    let reply: string;
+    let toolCalls: ToolCallMessage[];
     try {
       const parsed = JSON.parse(raw.toString("utf8"));
       chatId = parsed.id;
-      const content: unknown = parsed.choices?.[0]?.message?.content;
-      reply = typeof content === "string" ? content.trim() : content;
+      const message = parsed.choices?.[0]?.message;
+      reply = typeof message?.content === "string" ? message.content.trim() : "";
+      // Only calls to tools that were offered, in the expected shape, count.
+      const offered = new Set(tools?.map((tool) => tool.function.name));
+      toolCalls = (Array.isArray(message?.tool_calls) ? message.tool_calls : [])
+        .filter(
+          (call: unknown): call is ToolCallMessage =>
+            typeof (call as ToolCallMessage)?.id === "string" &&
+            offered.has((call as ToolCallMessage).function?.name) &&
+            typeof (call as ToolCallMessage).function?.arguments === "string",
+        )
+        .map((call: ToolCallMessage) => ({
+          id: call.id,
+          type: "function" as const,
+          function: { name: call.function.name, arguments: call.function.arguments },
+        }));
     } catch {
       throw new InferenceError("Inference returned a body that is not JSON");
     }
-    if (typeof chatId !== "string" || typeof reply !== "string" || reply.length === 0) {
+    if (typeof chatId !== "string" || (reply.length === 0 && toolCalls.length === 0)) {
       throw new InferenceError("Inference returned no reply");
     }
     return {
       reply,
+      toolCalls,
       verification: {
         chat_id: chatId,
         model,

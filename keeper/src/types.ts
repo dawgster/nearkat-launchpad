@@ -18,7 +18,14 @@ export interface ContextDoc {
   memory_summary: string;
 }
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+/** A tool call as OpenAI-compatible chat completions carry it. */
+export interface ToolCallMessage {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 }
+
+export type ChatMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; tool_calls?: ToolCallMessage[] }
+  | { role: "tool"; content: string; tool_call_id: string };

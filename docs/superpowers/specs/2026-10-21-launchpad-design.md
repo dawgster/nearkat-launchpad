@@ -299,16 +299,18 @@ deposit, so a limited access key can't, and keeps what was spent today. The
 wallet's record is paid for once, at its largest size, when it's opened.
 
 In conversation, the keeper tells the mind its wallet's address, balance and
-allowance, or that it isn't open yet. To pay, the mind ends a reply with one
-line: `PAY <amount> NEAR TO <account> FOR <reason>`. Only the reply's last
-line counts, in exactly that form; anything else that looks like a payment
-is dropped unpaid, and never kept in the token's character or memory, so
-nobody can plant one for a later owner's allowance. The keeper takes the
-line out of the reply, checks the limits, calls `wallet_send`, and reports
-the outcome to the owner (under the reply) and to the mind (in the
-conversation), so it never believes a payment that failed. A call that timed
-out is reported as possibly still going through, not as failed, so the mind
-doesn't pay twice. A sent payment is charged like a save.
+allowance, or that it isn't open yet. While the owner lets it spend, the
+model is offered a `pay` tool (function calling: `amount`, `receiver_id`,
+`reason`). The keeper checks every call before acting on it: one payment per
+message, only to an account the owner named in that message (so nothing
+planted in the token's character or memory, or by an earlier owner, can
+steer a payment), and within the limits. It calls `wallet_send`, then hands
+the model the outcome as the tool's result, so the reply it writes knows
+whether the payment went through; the owner sees the outcome under the
+reply too. A call that timed out is reported as possibly still going
+through, not as failed, so the mind doesn't pay twice. If the model can't
+reply after paying, the payment still stands and is still shown. A sent
+payment is charged like a save.
 
 The launchpad's `set_wallet_code_hash` gives every launch the wallet code; a
 collection from before wallets can turn them on once with `enable_wallets`.
