@@ -5,6 +5,7 @@ import { Chat } from "../components/Chat.tsx";
 import { FundPanel } from "../components/FundPanel.tsx";
 import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { Growth } from "../components/Growth.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
@@ -87,6 +88,16 @@ function Den({
       onVersion(version);
     }
   }, [version, onVersion]);
+  const avatar = (
+    <TokenArt
+      contractId={scope.contractId}
+      tokenId={tokenId}
+      contextVersion={version ?? 1}
+      style={scope.art}
+      size={32}
+      decorative
+    />
+  );
   const settling = behind !== null && waits < SETTLE_WAITS;
   useEffect(() => {
     // Each failed attempt bumps `waits`, which schedules the next one.
@@ -106,7 +117,12 @@ function Den({
   }
   if (settling) {
     return (
-      <p className="mt-10 text-lamp" role="status">
+      <p className="card mt-8 flex items-center gap-3 text-lamp" role="status">
+        <span className="dots flex gap-1" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
         {behind === "waking_up"
           ? `${name} is waking up. This takes a few seconds.`
           : `The keeper is catching up with the chain. ${name} will be here in a few seconds.`}
@@ -115,15 +131,19 @@ function Den({
   }
   if (context.status === "loading") {
     return (
-      <p className="mt-10 text-mist" role="status">
+      <p className="card mt-8 flex items-center gap-3 text-mist" role="status">
+        <Icon name="key" size={18} className="shrink-0 text-lamp" />
         Opening {name}'s mind. Your wallet may ask you to approve a sign-in message.
       </p>
     );
   }
   if (context.status === "error") {
     return (
-      <div className="mt-10" role="alert">
-        <p className="text-alarm">{describeProblem(context.error)}</p>
+      <div className="card mt-8" role="alert">
+        <p className="flex items-start gap-2 text-alarm">
+          <Icon name="alert" size={18} className="mt-0.5 shrink-0" />
+          {describeProblem(context.error)}
+        </p>
         <button
           type="button"
           className="button button-quiet mt-4"
@@ -139,48 +159,62 @@ function Den({
   }
 
   return (
-    <div className="mt-10 grid gap-12 lg:grid-cols-[1.5fr_1fr]">
-      <Chat
-        katName={name}
-        chatPrice={prices.chat}
-        send={(message) =>
-          session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
-        }
-        onReply={(reply) => {
-          setBalance(BigInt(reply.balance));
-          setOutOfBalance(false);
-          rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
-          // A long conversation may have just been folded into memory.
-          void reloadContext();
-          if (reply.payment) {
-            void reloadWallet();
+    <div className="mt-8 grid items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:gap-6">
+      <div className="lg:sticky lg:top-5">
+        <Chat
+          katName={name}
+          avatar={avatar}
+          chatPrice={prices.chat}
+          send={(message) =>
+            session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
           }
-        }}
-        onOutOfBalance={() => setOutOfBalance(true)}
-        starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
-      />
-      <aside className="min-w-0 space-y-10 lg:border-l lg:border-cream/10 lg:pl-10">
-        <CharacterPanel character={context.data.personality} noun={scope.noun} />
-        <section aria-labelledby="memory">
-          <h2 id="memory" className="font-sans text-lg font-bold">
-            Memory
-          </h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-mist">
-            {context.data.memory_summary ||
-              `Nothing remembered yet. After a longer conversation, the ${scope.noun} writes down what mattered.`}
+          onReply={(reply) => {
+            setBalance(BigInt(reply.balance));
+            setOutOfBalance(false);
+            rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
+            // A long conversation may have just been folded into memory.
+            void reloadContext();
+            if (reply.payment) {
+              void reloadWallet();
+            }
+          }}
+          onOutOfBalance={() => setOutOfBalance(true)}
+          starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
+        />
+      </div>
+      <aside className="min-w-0 space-y-5">
+        <div className="card space-y-5">
+          <p className="card-title flex items-center gap-2">
+            <Icon name="sparkle" size={18} className="text-mist" />
+            Its mind
           </p>
-          <p className="mt-3 text-sm text-mist">
-            Saving what it learned costs {formatNear(prices.save, 6)} NEAR from its balance, after
-            about ten exchanges.
-          </p>
-        </section>
+          <CharacterPanel character={context.data.personality} noun={scope.noun} />
+          <div className="divider" />
+          <section aria-labelledby="memory">
+            <h2 id="memory" className="eyebrow">
+              Memory
+            </h2>
+            <p
+              className={`mt-2 whitespace-pre-wrap leading-relaxed ${
+                context.data.memory_summary ? "font-medium text-cream" : "text-sm text-mist"
+              }`}
+            >
+              {context.data.memory_summary ||
+                `Nothing remembered yet. After a longer conversation, the ${scope.noun} writes down what mattered.`}
+            </p>
+            <p className="mt-3 text-xs leading-relaxed text-mist">
+              Saving what it learned costs {formatNear(prices.save, 6)} NEAR from its balance, after
+              about ten exchanges.
+            </p>
+          </section>
+        </div>
         {tokenWallet.status === "loading" && (
-          <p className="text-sm text-mist" role="status">
+          <p className="card text-sm text-mist" role="status">
             Reading its wallet…
           </p>
         )}
         {tokenWallet.status === "error" && (
-          <p className="text-sm text-mist" role="status">
+          <p className="card text-sm text-mist" role="status">
             Its wallet can't be read right now. {describeProblem(tokenWallet.error)}
           </p>
         )}
@@ -277,17 +311,18 @@ function saveJson(filename: string, data: unknown): void {
 function ExportPanel({ noun, download }: { noun: string; download: () => Promise<void> }) {
   const [state, setState] = useState<"idle" | "busy" | "done" | string>("idle");
   return (
-    <section aria-labelledby="export">
-      <h2 id="export" className="font-sans text-lg font-bold">
+    <section aria-labelledby="export" className="card">
+      <h2 id="export" className="card-title flex items-center gap-2">
+        <Icon name="download" size={18} className="text-mist" />
         Keep a copy
       </h2>
-      <p className="mt-2 text-sm leading-relaxed text-mist">
+      <p className="mt-1.5 text-sm leading-relaxed text-mist">
         Download this {noun}'s mind with the on-chain record that proves it is the one the contract
         holds. It's yours to keep, whatever happens to this keeper.
       </p>
       <button
         type="button"
-        className="button button-quiet mt-3"
+        className="button button-quiet mt-4 w-full"
         disabled={state === "busy"}
         onClick={async () => {
           setState("busy");
@@ -335,7 +370,11 @@ export function Kat() {
   return (
     <Shell world="burrow">
       <div className="descend">
-        <Link to={scope.backPath} className="text-sm text-mist underline-offset-4 hover:underline">
+        <Link
+          to={scope.backPath}
+          className="inline-flex items-center gap-1.5 text-sm text-mist transition-colors hover:text-cream"
+        >
+          <Icon name="arrowLeft" size={15} />
           {scope.backLabel}
         </Link>
         {kat.status === "loading" && <p className="mt-10 text-mist">Climbing down…</p>}
@@ -352,19 +391,27 @@ export function Kat() {
         )}
         {kat.status === "ready" && kat.data && (
           <>
-            <header className="mt-6 flex flex-wrap items-center gap-5">
-              <TokenArt
-                contractId={scope.contractId}
-                tokenId={id}
-                contextVersion={version}
-                style={scope.art}
-                size={120}
-                decorative
-              />
+            <header className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-7">
+              <div className="relative w-fit shrink-0">
+                <div
+                  className="absolute -inset-6 rounded-full bg-[radial-gradient(closest-side,#f2bd3540,transparent)]"
+                  aria-hidden="true"
+                />
+                <div className="relative rounded-full ring-1 ring-lamp/30 ring-offset-4 ring-offset-transparent">
+                  <TokenArt
+                    contractId={scope.contractId}
+                    tokenId={id}
+                    contextVersion={version}
+                    style={scope.art}
+                    size={128}
+                    decorative
+                  />
+                </div>
+              </div>
               <div className="min-w-0">
-                <h1 className="text-4xl sm:text-5xl">{name}</h1>
-                <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-mist">
-                  <span>
+                <h1 className="text-4xl sm:text-6xl">{name}</h1>
+                <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-mist">
+                  <span className="chip text-mist">
                     Owned by{" "}
                     <span className="font-mono text-cream" title={kat.data.owner_id}>
                       {shorten(kat.data.owner_id, 12)}
@@ -372,13 +419,14 @@ export function Kat() {
                   </span>
                   <Link
                     to={`${scope.tokenPath(id)}/verify`}
-                    className="text-lamp underline underline-offset-4"
+                    className="chip chip-accent transition-colors hover:bg-lamp/20"
                   >
+                    <Icon name="shield" size={14} />
                     Verify this {scope.noun}
                   </Link>
                 </p>
                 {version > 0 && (
-                  <div className="mt-3">
+                  <div className="mt-4">
                     <Growth contextVersion={version} plain={!scope.home} />
                   </div>
                 )}
@@ -394,7 +442,8 @@ export function Kat() {
                 onVersion={onVersion}
               />
             ) : (
-              <p className="mt-10 max-w-prose text-mist">
+              <p className="card mt-8 flex max-w-2xl items-start gap-3 text-mist">
+                <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-lamp" />
                 {wallet.status === "connected"
                   ? `Only its owner can talk to ${name} or read its mind. The connected wallet isn't the owner.`
                   : `Only its owner can talk to ${name} or read its mind. Connect the wallet that owns it.`}

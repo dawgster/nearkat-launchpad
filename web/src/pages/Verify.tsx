@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from "react";
 import { Link, useParams } from "react-router";
+import { Icon, type IconName } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { describeProblem } from "../lib/problems.ts";
 import { recallProof } from "../lib/proof.ts";
@@ -18,11 +19,31 @@ import { proofId, useScope } from "../scope.tsx";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
-const MARK: Record<Verdict, { label: string; className: string }> = {
-  pass: { label: "Checked", className: "bg-glow text-night" },
-  partial: { label: "Partly checked", className: "bg-lamp text-earth" },
-  fail: { label: "Failed", className: "bg-alarm text-night" },
-  unknown: { label: "Not checked", className: "border border-cream/50 text-cream" },
+const MARK: Record<Verdict, { label: string; className: string; icon: IconName; edge: string }> = {
+  pass: {
+    label: "Checked",
+    className: "bg-glow/15 text-glow ring-1 ring-glow/40",
+    icon: "check",
+    edge: "before:bg-glow",
+  },
+  partial: {
+    label: "Partly checked",
+    className: "bg-lamp/15 text-lamp ring-1 ring-lamp/40",
+    icon: "minus",
+    edge: "before:bg-lamp",
+  },
+  fail: {
+    label: "Failed",
+    className: "bg-alarm/15 text-alarm ring-1 ring-alarm/40",
+    icon: "x",
+    edge: "before:bg-alarm",
+  },
+  unknown: {
+    label: "Not checked",
+    className: "bg-cream/5 text-mist ring-1 ring-cream/20",
+    icon: "clock",
+    edge: "before:bg-cream/20",
+  },
 };
 
 function Check({
@@ -35,14 +56,15 @@ function Check({
   children: ReactNode;
 }) {
   return (
-    <li className="grid gap-x-6 gap-y-2 border-t border-cream/15 py-6 sm:grid-cols-[9rem_1fr]">
-      <span
-        className={`h-fit w-fit rounded px-2 py-1 text-sm font-bold ${MARK[verdict].className}`}
-      >
+    <li
+      className={`card overflow-hidden before:absolute before:inset-y-0 before:left-0 before:w-1 sm:flex sm:gap-6 ${MARK[verdict].edge}`}
+    >
+      <span className={`badge h-fit w-fit shrink-0 sm:w-36 ${MARK[verdict].className}`}>
+        <Icon name={MARK[verdict].icon} size={14} />
         {MARK[verdict].label}
       </span>
-      <div className="min-w-0">
-        <h2 className="font-sans text-lg font-bold">{title}</h2>
+      <div className="mt-3 min-w-0 sm:mt-0">
+        <h2 className="card-title">{title}</h2>
         <div className="mt-1 max-w-prose space-y-2 text-sm leading-relaxed text-mist">
           {children}
         </div>
@@ -187,15 +209,21 @@ export function Verify() {
     <Shell world="burrow">
       <Link
         to={scope.tokenPath(id)}
-        className="text-sm text-mist underline-offset-4 hover:underline"
+        className="inline-flex items-center gap-1.5 text-sm text-mist transition-colors hover:text-cream"
       >
+        <Icon name="arrowLeft" size={15} />
         Back to {name}
       </Link>
-      <h1 className="mt-6 text-4xl sm:text-5xl">Verify {name}</h1>
+      <div className="mt-6 flex items-center gap-4">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-lamp/12 text-lamp ring-1 ring-lamp/30">
+          <Icon name="shield" size={24} />
+        </span>
+        <h1 className="text-4xl sm:text-5xl">Verify {name}</h1>
+      </div>
       <p className="mt-4 max-w-prose text-mist">
         What this page can check for itself, in your browser, and what it can't.
       </p>
-      <ul className="mt-10">
+      <ul className="mt-8 space-y-3">
         <Check
           verdict={kat.context_hash ? "pass" : "unknown"}
           title="Its mind is recorded on-chain"

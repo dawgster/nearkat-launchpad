@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { Icon } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenSigil } from "../components/TokenSigil.tsx";
 import { formatNear, parseNear, shorten } from "../lib/format.ts";
@@ -37,11 +38,11 @@ function Field({
 }) {
   return (
     <div>
-      <label htmlFor={id} className="block font-bold">
+      <label htmlFor={id} className="label">
         {label}
       </label>
       {hint && (
-        <p id={`${id}-hint`} className="mt-1 text-sm text-mist">
+        <p id={`${id}-hint`} className="hint mt-1">
           {hint}
         </p>
       )}
@@ -52,6 +53,40 @@ function Field({
         </p>
       )}
     </div>
+  );
+}
+
+/** One numbered part of the form, drawn as a card. A fieldset when it groups choices. */
+function Step({
+  n,
+  title,
+  children,
+  group = false,
+}: {
+  n: number;
+  title: string;
+  children: React.ReactNode;
+  group?: boolean;
+}) {
+  const heading = (
+    <p className="card-title mb-5 flex items-center gap-3" aria-hidden={group || undefined}>
+      <span className="flex size-7 items-center justify-center rounded-full bg-glow/12 font-mono text-xs text-glow ring-1 ring-glow/30">
+        {n}
+      </span>
+      {title}
+    </p>
+  );
+  return group ? (
+    <fieldset className="card">
+      <legend className="sr-only">{title}</legend>
+      {heading}
+      {children}
+    </fieldset>
+  ) : (
+    <section className="card">
+      {heading}
+      <div className="space-y-6">{children}</div>
+    </section>
   );
 }
 
@@ -262,7 +297,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
 
   return (
     <Shell world="surface">
-      <div className="pt-10">
+      <div className="pt-8 sm:pt-12">
+        <p className="chip chip-accent mb-5">
+          <Icon name="rocket" size={14} />
+          Launchpad
+        </p>
         <h1 className="text-[2.4rem] leading-[1.05] sm:text-6xl">Launch a collection</h1>
         <p className="mt-5 max-w-[40rem] text-lg leading-relaxed text-mist">
           Every token in your collection shares one prompt and starts from the same context. From
@@ -271,223 +310,231 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
         </p>
       </div>
 
-      <div className="mt-12 grid gap-12 lg:grid-cols-[1.4fr_1fr]">
-        <form onSubmit={submit} className="space-y-8" noValidate>
-          <div className="grid gap-6 sm:grid-cols-[1fr_9rem]">
-            <Field id="name" label="Name" problem={show(problems.name)}>
-              <input
-                id="name"
-                className="field"
-                value={name}
-                maxLength={64}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </Field>
-            <Field id="symbol" label="Symbol" problem={show(problems.symbol)}>
-              <input
-                id="symbol"
-                className="field"
-                value={symbol}
-                maxLength={10}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              />
-            </Field>
-          </div>
-
-          <Field
-            id="slug"
-            label="Address"
-            hint="The collection gets its own NEAR account. This can't be changed later."
-            problem={taken ? "That address is taken." : show(problems.slug)}
-          >
-            <div className="flex items-center gap-2">
-              <input
-                id="slug"
-                className="field max-w-xs"
-                value={effectiveSlug}
-                aria-describedby="slug-hint"
-                onChange={(e) => {
-                  setSlugEdited(true);
-                  setSlug(e.target.value.toLowerCase());
-                }}
-              />
-              <span className="truncate font-mono text-sm text-mist">.{launchpad.id}</span>
+      <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-8">
+        <form onSubmit={submit} className="space-y-5" noValidate>
+          <Step n={1} title="Your collection">
+            <div className="grid gap-6 sm:grid-cols-[1fr_9rem]">
+              <Field id="name" label="Name" problem={show(problems.name)}>
+                <input
+                  id="name"
+                  className="field"
+                  value={name}
+                  maxLength={64}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </Field>
+              <Field id="symbol" label="Symbol" problem={show(problems.symbol)}>
+                <input
+                  id="symbol"
+                  className="field"
+                  value={symbol}
+                  maxLength={10}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                />
+              </Field>
             </div>
-          </Field>
 
-          <Field
-            id="prompt"
-            label="Prompt"
-            hint="What every token is. Any kind of prompt works. {name} and {token_id} are filled in for each token. Everyone can read it before minting."
-            problem={show(problems.prompt)}
-          >
-            <div className="mb-2 flex flex-wrap gap-2">
-              <span className="text-sm text-mist">Start from:</span>
-              {PROMPT_TEMPLATES.map((template) => (
-                <button
-                  key={template.label}
-                  type="button"
-                  className="rounded-full border border-glow/40 px-3 py-0.5 text-sm hover:border-glow hover:bg-glow/10"
-                  onClick={() => {
-                    setPrompt(template.prompt);
-                    setStarter(template.starter);
+            <Field
+              id="slug"
+              label="Address"
+              hint="The collection gets its own NEAR account. This can't be changed later."
+              problem={taken ? "That address is taken." : show(problems.slug)}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  id="slug"
+                  className="field max-w-xs"
+                  value={effectiveSlug}
+                  aria-describedby="slug-hint"
+                  onChange={(e) => {
+                    setSlugEdited(true);
+                    setSlug(e.target.value.toLowerCase());
                   }}
-                >
-                  {template.label}
-                </button>
-              ))}
-            </div>
-            <textarea
+                />
+                <span className="truncate font-mono text-sm text-mist">.{launchpad.id}</span>
+              </div>
+            </Field>
+          </Step>
+
+          <Step n={2} title="What every token is">
+            <Field
               id="prompt"
-              className="field min-h-36"
-              value={prompt}
-              aria-describedby="prompt-hint"
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-            <Counter text={prompt} max={MAX_PROMPT_CHARS} />
-          </Field>
+              label="Prompt"
+              hint="What every token is. Any kind of prompt works. {name} and {token_id} are filled in for each token. Everyone can read it before minting."
+              problem={show(problems.prompt)}
+            >
+              <div className="mb-2 flex flex-wrap gap-2">
+                <span className="self-center text-sm text-mist">Start from:</span>
+                {PROMPT_TEMPLATES.map((template) => (
+                  <button
+                    key={template.label}
+                    type="button"
+                    className="rounded-full border border-glow/35 bg-glow/5 px-3 py-1 text-sm transition-colors hover:border-glow hover:bg-glow/12"
+                    onClick={() => {
+                      setPrompt(template.prompt);
+                      setStarter(template.starter);
+                    }}
+                  >
+                    {template.label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                id="prompt"
+                className="field min-h-36"
+                value={prompt}
+                aria-describedby="prompt-hint"
+                onChange={(e) => setPrompt(e.target.value)}
+              />
+              <Counter text={prompt} max={MAX_PROMPT_CHARS} />
+            </Field>
 
-          <Field
-            id="starter"
-            label="Where each token starts"
-            hint="Its first memory of itself. After that it changes only through conversations with its owner. Nobody can write it, you included."
-            problem={show(problems.starter)}
-          >
-            <textarea
+            <Field
               id="starter"
-              className="field min-h-24"
-              value={starter}
-              aria-describedby="starter-hint"
-              onChange={(e) => setStarter(e.target.value)}
-            />
-            <Counter text={starter} max={MAX_STARTER_CHARS} />
-          </Field>
-
-          <div className="grid gap-6 sm:grid-cols-2">
-            <Field id="price" label="Mint price (NEAR)" problem={show(problems.price)}>
-              <input
-                id="price"
-                className="field"
-                inputMode="decimal"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
+              label="Where each token starts"
+              hint="Its first memory of itself. After that it changes only through conversations with its owner. Nobody can write it, you included."
+              problem={show(problems.starter)}
+            >
+              <textarea
+                id="starter"
+                className="field min-h-24"
+                value={starter}
+                aria-describedby="starter-hint"
+                onChange={(e) => setStarter(e.target.value)}
               />
+              <Counter text={starter} max={MAX_STARTER_CHARS} />
             </Field>
-            <Field id="supply" label="Supply" problem={show(problems.supply)}>
-              <input
-                id="supply"
-                className="field"
-                inputMode="numeric"
-                placeholder="No limit"
-                value={supply}
-                onChange={(e) => setSupply(e.target.value)}
-              />
-            </Field>
-          </div>
+          </Step>
 
-          <fieldset className="rounded-xl border border-cream/15 p-5">
-            <legend className="px-2 font-bold">What you earn</legend>
+          <Step n={3} title="Price and earnings">
             <div className="grid gap-6 sm:grid-cols-2">
-              <Field
-                id="royalty"
-                label="Royalty on resales (%)"
-                hint="Paid to you by marketplaces that honour NEAR royalties (NEP-199). Up to 25%."
-                problem={show(problems.royalty)}
-              >
+              <Field id="price" label="Mint price (NEAR)" problem={show(problems.price)}>
                 <input
-                  id="royalty"
+                  id="price"
                   className="field"
                   inputMode="decimal"
-                  value={royalty}
-                  aria-describedby="royalty-hint"
-                  onChange={(e) => setRoyalty(e.target.value)}
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
                 />
               </Field>
-              <Field
-                id="share"
-                label="Your share of conversations (%)"
-                hint="Taken from every message and memory save. Up to 50%; raises the price owners pay."
-                problem={show(problems.share)}
-              >
+              <Field id="supply" label="Supply" problem={show(problems.supply)}>
                 <input
-                  id="share"
+                  id="supply"
                   className="field"
-                  inputMode="decimal"
-                  value={share}
-                  aria-describedby="share-hint"
-                  onChange={(e) => setShare(e.target.value)}
-                />
-              </Field>
-              <Field
-                id="chat-price"
-                label="Price per message (NEAR)"
-                hint={`Optional. Empty means the keeper's price, ${formatNear(prices.chat, 6)} NEAR, plus your share.`}
-                problem={show(problems.chatPrice)}
-              >
-                <input
-                  id="chat-price"
-                  className="field"
-                  inputMode="decimal"
-                  value={chatPrice}
-                  aria-describedby="chat-price-hint"
-                  onChange={(e) => setChatPrice(e.target.value)}
-                />
-              </Field>
-              <Field
-                id="save-price"
-                label="Price per memory save (NEAR)"
-                hint={`Optional. Empty means the keeper's price, ${formatNear(prices.save, 6)} NEAR, plus your share.`}
-                problem={show(problems.savePrice)}
-              >
-                <input
-                  id="save-price"
-                  className="field"
-                  inputMode="decimal"
-                  value={savePrice}
-                  aria-describedby="save-price-hint"
-                  onChange={(e) => setSavePrice(e.target.value)}
+                  inputMode="numeric"
+                  placeholder="No limit"
+                  value={supply}
+                  onChange={(e) => setSupply(e.target.value)}
                 />
               </Field>
             </div>
-            <p className="mt-4 text-sm text-mist">
-              A keeper only serves a collection whose prices still cover its own after your share.
-              These are fixed at launch.
-            </p>
-          </fieldset>
 
-          <fieldset className="rounded-xl border border-cream/15 p-5">
-            <legend className="px-2 font-bold">Token images</legend>
-            <label className="flex gap-3">
-              <input
-                type="radio"
-                name="images"
-                checked={!ownImages}
-                onChange={() => setOwnImages(false)}
-              />
-              <span>
-                Generated, and growing
-                <span className="block text-sm text-mist">
-                  Each token gets the art in the preview, served by the keeper, so wallets and
-                  marketplaces see it change as the token grows.
+            <div className="divider" />
+            <fieldset>
+              <legend className="eyebrow mb-4">What you earn</legend>
+              <div className="grid gap-6 sm:grid-cols-2">
+                <Field
+                  id="royalty"
+                  label="Royalty on resales (%)"
+                  hint="Paid to you by marketplaces that honour NEAR royalties (NEP-199). Up to 25%."
+                  problem={show(problems.royalty)}
+                >
+                  <input
+                    id="royalty"
+                    className="field"
+                    inputMode="decimal"
+                    value={royalty}
+                    aria-describedby="royalty-hint"
+                    onChange={(e) => setRoyalty(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  id="share"
+                  label="Your share of conversations (%)"
+                  hint="Taken from every message and memory save. Up to 50%; raises the price owners pay."
+                  problem={show(problems.share)}
+                >
+                  <input
+                    id="share"
+                    className="field"
+                    inputMode="decimal"
+                    value={share}
+                    aria-describedby="share-hint"
+                    onChange={(e) => setShare(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  id="chat-price"
+                  label="Price per message (NEAR)"
+                  hint={`Optional. Empty means the keeper's price, ${formatNear(prices.chat, 6)} NEAR, plus your share.`}
+                  problem={show(problems.chatPrice)}
+                >
+                  <input
+                    id="chat-price"
+                    className="field"
+                    inputMode="decimal"
+                    value={chatPrice}
+                    aria-describedby="chat-price-hint"
+                    onChange={(e) => setChatPrice(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  id="save-price"
+                  label="Price per memory save (NEAR)"
+                  hint={`Optional. Empty means the keeper's price, ${formatNear(prices.save, 6)} NEAR, plus your share.`}
+                  problem={show(problems.savePrice)}
+                >
+                  <input
+                    id="save-price"
+                    className="field"
+                    inputMode="decimal"
+                    value={savePrice}
+                    aria-describedby="save-price-hint"
+                    onChange={(e) => setSavePrice(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <p className="hint mt-4">
+                A keeper only serves a collection whose prices still cover its own after your share.
+                These are fixed at launch.
+              </p>
+            </fieldset>
+          </Step>
+
+          <Step n={4} title="Token images" group>
+            <div className="grid gap-3">
+              <label className="option">
+                <input
+                  type="radio"
+                  name="images"
+                  checked={!ownImages}
+                  onChange={() => setOwnImages(false)}
+                />
+                <span>
+                  Generated, and growing
+                  <span className="block text-sm text-mist">
+                    Each token gets the art in the preview, served by the keeper, so wallets and
+                    marketplaces see it change as the token grows.
+                  </span>
                 </span>
-              </span>
-            </label>
-            <label className="mt-4 flex gap-3">
-              <input
-                type="radio"
-                name="images"
-                checked={ownImages}
-                onChange={() => setOwnImages(true)}
-              />
-              <span>
-                My own images
-                <span className="block text-sm text-mist">
-                  Token 1's image is at your address followed by 1 and the extension.
+              </label>
+              <label className="option">
+                <input
+                  type="radio"
+                  name="images"
+                  checked={ownImages}
+                  onChange={() => setOwnImages(true)}
+                />
+                <span>
+                  My own images
+                  <span className="block text-sm text-mist">
+                    Token 1's image is at your address followed by 1 and the extension.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            </div>
             {ownImages && (
-              <div className="mt-5 grid gap-5 pl-7 sm:grid-cols-[1fr_8rem]">
+              <div className="mt-5 grid gap-5 sm:grid-cols-[1fr_8rem]">
                 <Field id="image-base" label="Image address" problem={show(problems.imageBase)}>
                   <input
                     id="image-base"
@@ -511,49 +558,50 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                 </Field>
               </div>
             )}
-          </fieldset>
+          </Step>
 
-          <fieldset className="rounded-xl border border-cream/15 p-5">
-            <legend className="px-2 font-bold">Who can open the tokens' minds</legend>
-            <label className="flex gap-3">
-              <input
-                type="radio"
-                name="privacy"
-                checked={!private_}
-                onChange={() => setPrivate(false)}
-              />
-              <span>
-                The launchpad's keeper
-                {config.status === "ready" && (
-                  <span className="font-mono text-sm text-mist">
-                    {" "}
-                    ({shorten(config.data.keeper_id, 14)})
+          <Step n={5} title="Who can open the tokens' minds" group>
+            <div className="grid gap-3">
+              <label className="option">
+                <input
+                  type="radio"
+                  name="privacy"
+                  checked={!private_}
+                  onChange={() => setPrivate(false)}
+                />
+                <span>
+                  The launchpad's keeper
+                  {config.status === "ready" && (
+                    <span className="font-mono text-sm text-mist">
+                      {" "}
+                      ({shorten(config.data.keeper_id, 14)})
+                    </span>
+                  )}
+                  <span className="block text-sm text-mist">
+                    Only owners can read their token's context through the app, but the keeper's
+                    operator could read it too unless the keeper runs in a TEE.
                   </span>
-                )}
-                <span className="block text-sm text-mist">
-                  Only owners can read their token's context through the app, but the keeper's
-                  operator could read it too unless the keeper runs in a TEE.
                 </span>
-              </span>
-            </label>
-            <label className="mt-4 flex gap-3">
-              <input
-                type="radio"
-                name="privacy"
-                checked={private_}
-                onChange={() => setPrivate(true)}
-              />
-              <span>
-                Only inside a Phala TEE app
-                <span className="block text-sm text-mist">
-                  Contexts are encrypted with keys that only this Phala Cloud app can get from
-                  dstack's key service. A keeper running as any other app refuses to serve the
-                  collection. This is fixed at launch.
+              </label>
+              <label className="option">
+                <input
+                  type="radio"
+                  name="privacy"
+                  checked={private_}
+                  onChange={() => setPrivate(true)}
+                />
+                <span>
+                  Only inside a Phala TEE app
+                  <span className="block text-sm text-mist">
+                    Contexts are encrypted with keys that only this Phala Cloud app can get from
+                    dstack's key service. A keeper running as any other app refuses to serve the
+                    collection. This is fixed at launch.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            </div>
             {private_ && (
-              <div className="mt-5 space-y-5 pl-7">
+              <div className="mt-5 space-y-5">
                 <Field id="app-id" label="Phala app id" problem={show(problems.appId)}>
                   <input
                     id="app-id"
@@ -592,9 +640,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                 </Field>
               </div>
             )}
-          </fieldset>
+          </Step>
 
-          <div className="rounded-xl border border-cream/15 bg-dusk/80 p-5">
+          <div className="card card-lit">
             {config.status === "ready" ? (
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between gap-4">
@@ -605,9 +653,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                   <dt className="text-mist">The collection's own storage</dt>
                   <dd>{formatNear(config.data.collection_funding)} NEAR</dd>
                 </div>
-                <div className="flex items-baseline justify-between gap-4 border-t border-cream/15 pt-3">
+                <div className="flex items-baseline justify-between gap-4 border-t border-[var(--card-line)] pt-3">
                   <dt className="text-mist">You pay</dt>
-                  <dd className="text-xl font-bold">{formatNear(cost ?? 0n)} NEAR</dd>
+                  <dd className="font-display text-2xl tracking-tight">
+                    {formatNear(cost ?? 0n)} NEAR
+                  </dd>
                 </div>
               </dl>
             ) : (
@@ -624,9 +674,10 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
             {wallet.near ? (
               <button
                 type="submit"
-                className="button mt-5 w-full"
+                className="button mt-5 w-full py-3 text-base"
                 disabled={busy || config.status !== "ready"}
               >
+                <Icon name="rocket" size={18} />
                 {busy ? "Launching…" : "Launch collection"}
               </button>
             ) : (
@@ -654,8 +705,8 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           </div>
         </form>
 
-        <aside className="lg:sticky lg:top-6 lg:self-start" aria-labelledby="preview">
-          <h2 id="preview" className="font-sans text-lg font-bold">
+        <aside className="card lg:sticky lg:top-5 lg:self-start" aria-labelledby="preview">
+          <h2 id="preview" className="card-title">
             Preview
           </h2>
           <div className="mt-4 flex gap-3">
@@ -672,8 +723,8 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           <p className="mt-2 text-sm text-mist">
             Each token's art comes from its number and grows as it saves conversations.
           </p>
-          <h3 className="mt-6 text-sm font-bold">What token #1 is told</h3>
-          <blockquote className="mt-2 whitespace-pre-wrap rounded-lg bg-black/30 p-4 text-sm leading-relaxed">
+          <h3 className="eyebrow mt-6">What token #1 is told</h3>
+          <blockquote className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
             {sample}
             {starter && (
               <>
@@ -686,7 +737,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           </blockquote>
           {account && (
             <p className="mt-4 text-sm text-mist">
-              Address <span className="font-mono text-cream">{account}</span>
+              Address <span className="break-all font-mono text-cream">{account}</span>
             </p>
           )}
         </aside>
@@ -697,7 +748,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           Launched so far
         </h2>
         {listing.status === "ready" && listing.data.length === 0 && (
-          <p className="mt-4 text-mist">Nothing yet. Yours could be the first.</p>
+          <p className="card mt-6 text-mist">Nothing yet. Yours could be the first.</p>
         )}
         {listing.status === "error" && (
           <p className="mt-4 text-alarm" role="alert">
@@ -712,7 +763,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                 <li key={entry.account_id}>
                   <Link
                     to={`/c/${entry.account_id}`}
-                    className="group flex items-center gap-4 rounded-xl border border-cream/10 p-4 hover:border-glow/50"
+                    className="card group flex items-center gap-4 !p-4 transition-colors hover:border-glow/50"
                   >
                     <TokenSigil seed={`${entry.account_id}/1`} stage={2} size={56} decorative />
                     <span className="min-w-0">

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { Icon, type IconName } from "../components/Icon.tsx";
 import { KatPortrait } from "../components/KatPortrait.tsx";
 import { MintPanel } from "../components/MintPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
@@ -39,8 +40,12 @@ export function Home() {
 
   return (
     <Shell world="surface">
-      <div className="grid gap-12 pt-10 lg:grid-cols-[1.25fr_1fr] lg:items-start lg:pt-20">
+      <div className="grid gap-12 pt-8 lg:grid-cols-[1.25fr_1fr] lg:items-center lg:pt-16">
         <div>
+          <p className="chip chip-accent mb-6">
+            <Icon name="sparkle" size={14} />
+            NFTs with a mind of their own
+          </p>
           <h1 className="text-[2.6rem] leading-[1.02] sm:text-7xl">
             Raise a kat.
             <br />
@@ -53,9 +58,21 @@ export function Home() {
             and when you hand it to someone else, its memories go with it. Only the kat's owner can
             read its mind.
           </p>
+          <ul className="mt-7 flex flex-wrap gap-2">
+            {FEATURES.map((feature) => (
+              <li key={feature.text} className="chip text-mist">
+                <Icon name={feature.icon} size={14} className="text-glow" />
+                {feature.text}
+              </li>
+            ))}
+          </ul>
         </div>
         {config.status === "ready" ? (
-          <div>
+          <div className="relative">
+            <div
+              className="absolute -inset-10 -z-10 rounded-full bg-[radial-gradient(closest-side,#19f6a11f,transparent)]"
+              aria-hidden="true"
+            />
             <MintPanel
               mintPrice={BigInt(config.data.mint_price)}
               chatPrice={prices.chat}
@@ -69,7 +86,7 @@ export function Home() {
             )}
           </div>
         ) : (
-          <p className="rounded-xl border border-cream/15 bg-dusk/80 p-6 text-mist" role="status">
+          <p className="card text-mist" role="status">
             {config.status === "loading"
               ? "Reading the contract…"
               : `Can't read the contract. ${describeProblem(config.error)}`}
@@ -80,13 +97,18 @@ export function Home() {
       <HowItWorks chatPrice={prices.chat} />
 
       {app.factoryId && (
-        <section className="mt-16 rounded-xl border border-glow/25 bg-dusk/70 p-6 sm:flex sm:items-center sm:justify-between sm:gap-8">
-          <div>
-            <h2 className="text-2xl">Make your own</h2>
-            <p className="mt-2 max-w-prose text-mist">
-              Kats are one collection. On the launchpad, anyone can launch NFTs built on their own
-              prompt: a tutor, a game master, a character, anything that grows by being talked to.
-            </p>
+        <section className="card card-lit mt-16 sm:flex sm:items-center sm:justify-between sm:gap-8">
+          <div className="sm:flex sm:items-start sm:gap-5">
+            <span className="mb-4 flex size-12 shrink-0 items-center justify-center rounded-2xl bg-glow/10 text-glow ring-1 ring-glow/30 sm:mb-0">
+              <Icon name="rocket" size={22} />
+            </span>
+            <div>
+              <h2 className="text-2xl">Make your own</h2>
+              <p className="mt-2 max-w-prose text-mist">
+                Kats are one collection. On the launchpad, anyone can launch NFTs built on their own
+                prompt: a tutor, a game master, a character, anything that grows by being talked to.
+              </p>
+            </div>
           </div>
           <Link to="/launch" className="button mt-4 shrink-0 sm:mt-0">
             Open the launchpad
@@ -106,13 +128,18 @@ export function Home() {
             </p>
           )}
           {kats.status === "ready" && kats.data.length === 0 && (
-            <p className="mt-4 text-mist">No kats in this wallet yet. Mint your first one above.</p>
+            <p className="card mt-6 text-mist">
+              No kats in this wallet yet. Mint your first one above.
+            </p>
           )}
           {kats.status === "ready" && kats.data.length > 0 && (
-            <ul className="mt-6 flex flex-wrap gap-x-8 gap-y-6">
+            <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {kats.data.map(({ id, version }) => (
                 <li key={id}>
-                  <Link to={`/kat/${id}`} className="group flex items-center gap-3">
+                  <Link
+                    to={`/kat/${id}`}
+                    className="card group flex items-center gap-4 !p-4 transition-colors hover:border-glow/50"
+                  >
                     <TokenArt
                       contractId={app.contractId}
                       tokenId={id}
@@ -135,6 +162,12 @@ export function Home() {
     </Shell>
   );
 }
+
+const FEATURES: Array<{ icon: IconName; text: string }> = [
+  { icon: "lock", text: "Only the owner reads its mind" },
+  { icon: "key", text: "Keys from NEAR's MPC network" },
+  { icon: "stack", text: "Memories stored on NEAR" },
+];
 
 const STEPS = [
   {
@@ -162,9 +195,9 @@ function HowItWorks({ chatPrice }: { chatPrice: bigint }) {
       <h2 id="how" className="text-3xl">
         How it works
       </h2>
-      <ol className="mt-8 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+      <ol className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {STEPS.map((step, index) => (
-          <li key={step.title} className="flex gap-4 lg:block">
+          <li key={step.title} className="card flex gap-4 !p-5 lg:block">
             <KatPortrait
               seed="nearkat-guide"
               stage={index as 0 | 1 | 2 | 3}
@@ -172,8 +205,11 @@ function HowItWorks({ chatPrice }: { chatPrice: bigint }) {
               label={`${STAGE_NAMES[index]} kat`}
             />
             <div className="lg:mt-4">
-              <h3 className="font-bold">
-                <span className="text-lamp">{index + 1}.</span> {step.title}
+              <h3 className="flex items-center gap-2 font-bold">
+                <span className="flex size-6 items-center justify-center rounded-full bg-lamp/15 text-xs text-lamp">
+                  {index + 1}
+                </span>
+                {step.title}
               </h3>
               <p className="mt-1 text-sm leading-relaxed text-mist">
                 {step.title === "Talk"

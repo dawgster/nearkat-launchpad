@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { formatNear, parseNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { Icon } from "./Icon.tsx";
 
 export interface FundPanelProps {
   balance: bigint;
@@ -35,24 +36,25 @@ export function FundPanel({ balance, urgent, fund, noun = "kat" }: FundPanelProp
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className={urgent ? "rounded-lg outline outline-2 outline-offset-8 outline-lamp" : undefined}
-    >
-      <h2 className="font-sans text-lg font-bold">Balance</h2>
-      <p className="mt-1">
-        <span className="text-2xl font-bold">{formatNear(balance)}</span> NEAR
+    <form onSubmit={submit} className={`card ${urgent ? "card-lit ring-2 ring-lamp" : ""}`}>
+      <h2 className="card-title flex items-center gap-2">
+        <Icon name="coin" size={18} className="text-mist" />
+        Balance
+      </h2>
+      <p className="mt-2 flex items-baseline gap-1.5">
+        <span className="font-display text-3xl tracking-tight">{formatNear(balance)}</span>
+        <span className="text-sm text-mist">NEAR</span>
       </p>
       <p className="mt-1 text-sm text-mist">
         Pays for messages and memory. It stays with the {noun} and can't be withdrawn.
       </p>
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-4 flex items-center gap-2">
         <label htmlFor="fund-amount" className="sr-only">
           NEAR to add
         </label>
         <input
           id="fund-amount"
-          className="field w-24 text-right"
+          className="field w-28 text-right"
           inputMode="decimal"
           value={amount}
           onChange={(event) => setAmount(event.target.value)}

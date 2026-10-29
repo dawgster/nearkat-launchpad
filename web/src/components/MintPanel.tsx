@@ -45,10 +45,7 @@ export function MintPanel({
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="rounded-xl border border-cream/15 bg-dusk/80 p-6 backdrop-blur"
-    >
+    <form onSubmit={submit} className="card card-lit backdrop-blur">
       <h2 className="text-2xl">Mint a {noun}</h2>
       <dl className="mt-5 space-y-3 text-sm">
         <div className="flex justify-between gap-4">
@@ -64,7 +61,7 @@ export function MintPanel({
           <dd className="flex items-center gap-2">
             <input
               id="starting-balance"
-              className="field w-24 text-right"
+              className="field w-28 text-right"
               inputMode="decimal"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
@@ -80,20 +77,24 @@ export function MintPanel({
           ? "Enter an amount in NEAR, like 1 or 0.5."
           : `Enough for up to ${chatPrice > 0n ? startingBalance / chatPrice : 0n} messages. Long conversations also pay for memory saves. It stays with the ${noun}, even if you give it away.`}
       </p>
-      <div className="mt-5 flex items-baseline justify-between border-t border-cream/15 pt-4">
+      <div className="mt-5 flex items-baseline justify-between border-t border-[var(--card-line)] pt-4">
         <span className="text-mist">You pay</span>
-        <span className="text-xl font-bold">
+        <span className="font-display text-2xl tracking-tight">
           {total === null ? "…" : `${formatNear(total)} NEAR`}
         </span>
       </div>
       {onMint ? (
-        <button type="submit" className="button mt-5 w-full" disabled={busy || total === null}>
+        <button
+          type="submit"
+          className="button mt-5 w-full py-3 text-base"
+          disabled={busy || total === null}
+        >
           {busy ? "Minting…" : `Mint a ${noun}`}
         </button>
       ) : (
         <button
           type="button"
-          className="button mt-5 w-full"
+          className="button mt-5 w-full py-3 text-base"
           onClick={() => {
             setProblem(null);
             onConnect().catch((error) => setProblem(describeProblem(error)));

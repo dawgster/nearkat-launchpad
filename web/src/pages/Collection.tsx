@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
+import { Icon, type IconName } from "../components/Icon.tsx";
 import { MintPanel } from "../components/MintPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
@@ -20,7 +21,7 @@ import { useWallet } from "../wallet/WalletProvider.tsx";
 function Privacy({ tee }: { tee: TeeRequirement | null }) {
   if (tee) {
     return (
-      <p className="mt-2 text-sm leading-relaxed">
+      <p className="text-sm leading-relaxed">
         <span className="font-bold text-glow">Opened only inside a Phala TEE app.</span>{" "}
         <span className="text-mist">
           Contexts are encrypted with keys only Phala app{" "}
@@ -31,10 +32,37 @@ function Privacy({ tee }: { tee: TeeRequirement | null }) {
     );
   }
   return (
-    <p className="mt-2 text-sm leading-relaxed text-mist">
+    <p className="text-sm leading-relaxed text-mist">
       Any keeper the creator names. Owners are the only ones who can read their token's context
       through the app; whether the keeper's operator can too depends on where the keeper runs.
     </p>
+  );
+}
+
+/** One figure about the collection, with a bar when it fills toward a limit. */
+function Stat({ label, value, share }: { label: string; value: string; share?: number }) {
+  return (
+    <div className="card !p-4">
+      <dt className="eyebrow">{label}</dt>
+      <dd className="mt-1.5 truncate font-display text-xl tracking-tight sm:text-2xl">{value}</dd>
+      {share !== undefined && (
+        <div className="meter mt-2.5" aria-hidden="true">
+          <span style={{ width: `${Math.min(share * 100, 100)}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One line of the privacy summary, with its icon. */
+function Point({ icon, children }: { icon: IconName; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-glow/10 text-glow ring-1 ring-glow/25">
+        <Icon name={icon} size={16} />
+      </span>
+      <div className="min-w-0">{children}</div>
+    </li>
   );
 }
 
@@ -95,90 +123,137 @@ export function Collection() {
 
   return (
     <Shell world="surface">
-      <div className="grid gap-12 pt-10 lg:grid-cols-[1.3fr_1fr] lg:items-start">
-        <div className="min-w-0">
-          <div className="flex items-center gap-5">
+      <div className="flex flex-col gap-6 pt-8 sm:flex-row sm:items-center sm:gap-8 sm:pt-12">
+        <div className="relative w-fit shrink-0">
+          <div
+            className="absolute -inset-8 rounded-full bg-[radial-gradient(closest-side,#19f6a133,transparent)]"
+            aria-hidden="true"
+          />
+          <div className="relative">
             <TokenArt
               contractId={contractId}
               tokenId="1"
               contextVersion={4}
               style={style}
-              size={104}
+              size={128}
               decorative
             />
-            <div className="min-w-0">
-              <h1 className="text-4xl sm:text-5xl">{c.name}</h1>
-              <p className="mt-2 text-sm text-mist">
-                {c.symbol} · by{" "}
-                <span className="font-mono text-cream" title={s.admin_id}>
-                  {shorten(s.admin_id, 12)}
-                </span>{" "}
-                · {c.minted} minted{c.max_supply !== null && ` of ${c.max_supply}`}
-              </p>
-            </div>
           </div>
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-4xl sm:text-6xl">{c.name}</h1>
+          <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-mist">
+            <span className="chip font-mono">{c.symbol}</span>
+            <span className="chip text-mist">
+              by{" "}
+              <span className="font-mono text-cream" title={s.admin_id}>
+                {shorten(s.admin_id, 12)}
+              </span>
+            </span>
+            {c.tee && (
+              <span className="chip chip-accent">
+                <Icon name="lock" size={14} />
+                TEE only
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
 
-          <section className="mt-10" aria-labelledby="prompt">
-            <h2 id="prompt" className="font-sans text-lg font-bold">
-              The prompt every token shares
-            </h2>
-            <p className="mt-2 whitespace-pre-wrap rounded-lg bg-black/30 p-4 text-sm leading-relaxed">
-              {c.prompt}
-            </p>
-          </section>
-          <section className="mt-8" aria-labelledby="starter">
-            <h2 id="starter" className="font-sans text-lg font-bold">
-              Where each token starts
-            </h2>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{c.starter}</p>
-            <p className="mt-2 text-sm text-mist">
-              From here it changes only through conversations with its owner.
-            </p>
-          </section>
-          <section className="mt-8" aria-labelledby="privacy">
-            <h2 id="privacy" className="font-sans text-lg font-bold">
+      <dl className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Mint price" value={`${formatNear(s.mint_price)} NEAR`} />
+        <Stat
+          label="Minted"
+          value={`${c.minted}${c.max_supply !== null ? ` of ${c.max_supply}` : ""}`}
+          share={c.max_supply ? Number(c.minted) / Number(c.max_supply) : undefined}
+        />
+        <Stat label="Royalty" value={`${c.terms.royalty_bps / 100}%`} />
+        <Stat
+          label="Per message"
+          value={`${formatNear(home ? prices.chat : pricesFor(c.terms, prices).chat, 6)} NEAR`}
+        />
+      </dl>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <div className="min-w-0 space-y-5">
+          <div className="card space-y-6">
+            <section aria-labelledby="prompt">
+              <h2 id="prompt" className="card-title">
+                The prompt every token shares
+              </h2>
+              <p className="mt-3 whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
+                {c.prompt}
+              </p>
+            </section>
+            <section aria-labelledby="starter">
+              <h2 id="starter" className="eyebrow">
+                Where each token starts
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{c.starter}</p>
+              <p className="mt-2 text-sm text-mist">
+                From here it changes only through conversations with its owner.
+              </p>
+            </section>
+          </div>
+          <section className="card" aria-labelledby="privacy">
+            <h2 id="privacy" className="card-title">
               Who can open the tokens' minds
             </h2>
-            <Privacy tee={c.tee} />
-            {c.key_source ? (
-              <p className="mt-2 text-sm leading-relaxed text-mist">
-                <span className="font-bold text-cream">Keys from NEAR's MPC network.</span> Each
-                token's key derives from a key the network (
-                <span className="font-mono">{c.key_source.mpc_contract_id}</span>, domain{" "}
-                {c.key_source.domain_id}) makes for this collection's account alone, and hands only
-                to the keeper this contract names. No keeper holds a key of its own that could open
-                them, and a new keeper can take over without anything being handed across.
-              </p>
-            ) : (
-              <p className="mt-2 text-sm leading-relaxed text-mist">
-                Keys come from the keeper's own secret.
-              </p>
-            )}
-            {c.wallet_code_hash != null && (
-              <p className="mt-2 text-sm leading-relaxed text-mist">
-                <span className="font-bold text-cream">Every token can have its own wallet</span>: a
-                NEAR account with no keys, which only this contract can send from. Its owner can
-                always send from it; the token itself only within what its owner allows. It goes
-                with the token the moment it changes hands.
-              </p>
-            )}
-            {c.sealed_prompt && (
-              <p className="mt-2 text-sm leading-relaxed text-mist">
-                <span className="font-bold text-cream">It also has secret instructions</span>,
-                sealed to key{" "}
-                <span className="font-mono">{shorten(c.sealed_prompt.sealed_to, 8)}</span>.{" "}
-                {c.sealed_key_attested
-                  ? "The contract has verified that this key lives inside the app."
-                  : "The contract hasn't yet verified a keeper holding this key inside the app."}
-              </p>
-            )}
+            <ul className="mt-4 space-y-4">
+              <Point icon="lock">
+                <Privacy tee={c.tee} />
+              </Point>
+              {c.key_source ? (
+                <Point icon="key">
+                  <p className="text-sm leading-relaxed text-mist">
+                    <span className="font-bold text-cream">Keys from NEAR's MPC network.</span> Each
+                    token's key derives from a key the network (
+                    <span className="font-mono">{c.key_source.mpc_contract_id}</span>, domain{" "}
+                    {c.key_source.domain_id}) makes for this collection's account alone, and hands
+                    only to the keeper this contract names. No keeper holds a key of its own that
+                    could open them, and a new keeper can take over without anything being handed
+                    across.
+                  </p>
+                </Point>
+              ) : (
+                <Point icon="key">
+                  <p className="text-sm leading-relaxed text-mist">
+                    Keys come from the keeper's own secret.
+                  </p>
+                </Point>
+              )}
+              {c.wallet_code_hash != null && (
+                <Point icon="wallet">
+                  <p className="text-sm leading-relaxed text-mist">
+                    <span className="font-bold text-cream">
+                      Every token can have its own wallet
+                    </span>
+                    : a NEAR account with no keys, which only this contract can send from. Its owner
+                    can always send from it; the token itself only within what its owner allows. It
+                    goes with the token the moment it changes hands.
+                  </p>
+                </Point>
+              )}
+              {c.sealed_prompt && (
+                <Point icon="shield">
+                  <p className="text-sm leading-relaxed text-mist">
+                    <span className="font-bold text-cream">It also has secret instructions</span>,
+                    sealed to key{" "}
+                    <span className="font-mono">{shorten(c.sealed_prompt.sealed_to, 8)}</span>.{" "}
+                    {c.sealed_key_attested
+                      ? "The contract has verified that this key lives inside the app."
+                      : "The contract hasn't yet verified a keeper holding this key inside the app."}
+                  </p>
+                </Point>
+              )}
+            </ul>
           </section>
-          <section className="mt-8" aria-labelledby="terms">
-            <h2 id="terms" className="font-sans text-lg font-bold">
+          <section className="card" aria-labelledby="terms">
+            <h2 id="terms" className="card-title">
               Terms
             </h2>
             <Terms terms={c.terms} />
-            <p className="mt-2 text-sm text-mist">
+            <p className="hint mt-4">
               {c.base_uri
                 ? `Token images are at ${c.base_uri}<number>.${c.media_extension}.`
                 : "Token images exist only in this app."}{" "}
@@ -195,11 +270,9 @@ export function Collection() {
           <Version contractId={contractId} collection={c} adminId={s.admin_id} />
         </div>
 
-        <div>
+        <div className="lg:sticky lg:top-5">
           {soldOut ? (
-            <p className="rounded-xl border border-cream/15 bg-dusk/80 p-6 text-mist">
-              All {c.max_supply} have been minted.
-            </p>
+            <p className="card text-mist">All {c.max_supply} have been minted.</p>
           ) : (
             <MintPanel
               mintPrice={BigInt(s.mint_price)}
@@ -224,10 +297,10 @@ export function Collection() {
             Yours
           </h2>
           {tokens.status === "ready" && tokens.data.length === 0 && (
-            <p className="mt-4 text-mist">None in this wallet yet.</p>
+            <p className="card mt-6 text-mist">None in this wallet yet.</p>
           )}
           {tokens.status === "ready" && tokens.data.length > 0 && (
-            <ul className="mt-6 flex flex-wrap gap-x-8 gap-y-6">
+            <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {tokens.data.map(({ id, version }) => {
                 const art = (
                   <>
@@ -253,7 +326,7 @@ export function Collection() {
                   <li key={id}>
                     <Link
                       to={home ? `/kat/${id}` : `/c/${contractId}/kat/${id}`}
-                      className="flex items-center gap-3 hover:text-glow"
+                      className="card flex items-center gap-4 !p-4 transition-colors hover:border-glow/50"
                     >
                       {art}
                     </Link>
@@ -294,13 +367,19 @@ function KeeperNote({ contractId, keeperId }: { contractId: string; keeperId: st
     return null;
   }
   return (
-    <p className="mt-4 text-sm leading-relaxed text-mist">
-      {served
-        ? "This app's keeper serves this collection: open one of your tokens to talk to it."
-        : waiting
-          ? `This app's keeper doesn't serve this collection: ${waiting.reason}.`
-          : "This app's keeper hasn't picked this collection up yet. New launches are found within a minute."}{" "}
-      Its keeper is <span className="font-mono">{shorten(keeperId, 12)}</span>.
+    <p className="mt-4 flex items-start gap-2 px-1 text-sm leading-relaxed text-mist">
+      <span
+        className={`mt-1.5 size-2 shrink-0 rounded-full ${served ? "bg-glow shadow-[0_0_8px_#19f6a1]" : "bg-lamp"}`}
+        aria-hidden="true"
+      />
+      <span>
+        {served
+          ? "This app's keeper serves this collection: open one of your tokens to talk to it."
+          : waiting
+            ? `This app's keeper doesn't serve this collection: ${waiting.reason}.`
+            : "This app's keeper hasn't picked this collection up yet. New launches are found within a minute."}{" "}
+        Its keeper is <span className="font-mono">{shorten(keeperId, 12)}</span>.
+      </span>
     </p>
   );
 }
@@ -312,7 +391,7 @@ function Terms({ terms }: { terms: CollectionTerms }) {
       ? "The keeper's price, plus the creator's share"
       : "The keeper's price";
   return (
-    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm">
+    <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2.5 text-sm">
       <dt className="text-mist">Royalty on resales</dt>
       <dd>{percent(terms.royalty_bps)}, to the creator</dd>
       <dt className="text-mist">Creator's share of conversations</dt>
@@ -372,8 +451,8 @@ function KeeperPanel({
   }
 
   return (
-    <section className="mt-8" aria-labelledby="keeper">
-      <h2 id="keeper" className="font-sans text-lg font-bold">
+    <section className="card" aria-labelledby="keeper">
+      <h2 id="keeper" className="card-title">
         Keeper
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-mist">
@@ -388,7 +467,8 @@ function KeeperPanel({
         .
       </p>
       {isAdmin && (
-        <div className="mt-3 space-y-3">
+        <div className="mt-5 space-y-3 rounded-xl bg-black/25 p-4 ring-1 ring-cream/8">
+          <p className="eyebrow">Creator controls</p>
           <form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
@@ -407,7 +487,7 @@ function KeeperPanel({
             <label className="text-sm">
               <span className="block text-mist">Hand the collection to another keeper</span>
               <input
-                className="field mt-1 w-64 font-mono"
+                className="field mt-1 w-64 max-w-full font-mono"
                 value={newKeeper}
                 onChange={(event) => setNewKeeper(event.target.value)}
                 placeholder="keeper account id"
@@ -492,8 +572,8 @@ function Version({
   }
 
   return (
-    <section className="mt-8" aria-labelledby="version">
-      <h2 id="version" className="font-sans text-lg font-bold">
+    <section className="card" aria-labelledby="version">
+      <h2 id="version" className="card-title">
         Version
       </h2>
       <p className="mt-2 text-sm text-mist">

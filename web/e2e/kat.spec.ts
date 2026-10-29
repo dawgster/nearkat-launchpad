@@ -6,6 +6,14 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
 const shot = async (page: import("@playwright/test").Page, name: string) => {
   if (SHOTS) {
     await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
+    // And at phone width, where most people will open it.
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${SHOTS}/${name}-phone.png`, fullPage: true });
+    if (size) {
+      await page.setViewportSize(size);
+    }
   }
 };
 
@@ -171,12 +179,12 @@ test("a creator launches a collection with its own prompt, and mints from it", a
   await expect(page.getByRole("region", { name: "Who can open the tokens' minds" })).toContainText(
     "Keys from NEAR's MPC network.",
   );
-  await expect(page.getByText("0 minted of 2")).toBeVisible();
+  await expect(page.getByText("0 of 2", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Mint a token" }).click();
   await expect(page.getByText("Minted Magister #1.")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole("region", { name: "Yours" })).toContainText("Magister #1");
-  await expect(page.getByText("1 minted of 2")).toBeVisible();
+  await expect(page.getByText("1 of 2", { exact: true })).toBeVisible();
   await shot(page, "5-collection");
 
   // This keeper runs in local mode, so it must refuse a collection that requires a Phala app.

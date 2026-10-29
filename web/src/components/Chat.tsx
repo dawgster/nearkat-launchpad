@@ -1,7 +1,15 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { formatNear } from "../lib/format.ts";
 import { type ChatReply, KeeperError, type PaymentOutcome } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { Icon } from "./Icon.tsx";
 
 interface Line {
   from: "you" | "kat";
@@ -21,6 +29,8 @@ export interface ChatProps {
   onOutOfBalance: () => void;
   /** Openers offered before the first message, so nobody faces a blank box. */
   starters?: string[];
+  /** A small picture of the token, shown beside its replies. */
+  avatar?: ReactNode;
 }
 
 const MAX_CHARS = 4000;
@@ -32,6 +42,7 @@ export function Chat({
   onReply,
   onOutOfBalance,
   starters = [],
+  avatar,
 }: ChatProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
@@ -91,21 +102,32 @@ export function Chat({
   }
 
   return (
-    <section aria-label={`Conversation with ${katName}`} className="flex min-h-[28rem] flex-col">
-      <div className="flex-1 space-y-5 overflow-y-auto pr-1" aria-live="polite">
+    <section
+      aria-label={`Conversation with ${katName}`}
+      className="card flex h-[min(78dvh,46rem)] min-h-[28rem] flex-col !p-0"
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--card-line)] px-4 py-3 sm:px-5">
+        <p className="card-title">Conversation</p>
+        <span className="chip text-mist">{formatNear(chatPrice, 6)} NEAR a message</span>
+      </div>
+      <div
+        className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5"
+        aria-live="polite"
+      >
         {lines.length === 0 && !thinking && (
-          <div>
-            <p className="max-w-prose text-mist">
+          <div className="flex h-full flex-col items-center justify-center px-2 text-center">
+            {avatar && <div className="mb-4 opacity-90">{avatar}</div>}
+            <p className="max-w-sm text-mist">
               Say something to {katName}. Each message costs {formatNear(chatPrice, 6)} NEAR from
               its balance.
             </p>
             {starters.length > 0 && (
-              <ul className="mt-4 flex flex-wrap gap-2" aria-label="Ways to start">
+              <ul className="mt-5 flex flex-wrap justify-center gap-2" aria-label="Ways to start">
                 {starters.map((starter) => (
                   <li key={starter}>
                     <button
                       type="button"
-                      className="rounded-full border border-lamp/40 px-3.5 py-1.5 text-sm text-cream hover:border-lamp hover:bg-lamp/10"
+                      className="rounded-full border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent)_6%,transparent)] px-3.5 py-1.5 text-sm text-cream transition-colors hover:border-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_14%,transparent)]"
                       onClick={() => void submit(undefined, starter)}
                     >
                       {starter}
@@ -116,65 +138,111 @@ export function Chat({
             )}
           </div>
         )}
-        {lines.map((line, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: lines are only ever appended.
-          <div key={index} className={line.from === "you" ? "pl-10 sm:pl-24" : "pr-10 sm:pr-24"}>
-            <p className="mb-1 text-sm text-mist">{line.from === "you" ? "You" : katName}</p>
-            <p
-              className={`whitespace-pre-wrap rounded-lg px-4 py-3 leading-relaxed ${
-                line.from === "you" ? "bg-root/60" : "bg-black/35 text-cream"
-              }`}
-            >
-              {line.text}
-            </p>
-            {line.payment && (
-              <p
-                className={`mt-1 text-sm ${line.payment.status === "sent" ? "text-glow" : "text-mist"}`}
-                role="status"
-              >
-                {line.payment.status === "sent"
-                  ? `Paid ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id} from its wallet${line.payment.memo ? ` (${line.payment.memo})` : ""}.`
-                  : line.payment.status === "pending"
-                    ? `A payment of ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id} was asked for and may still go through.`
-                    : `Tried to pay ${formatNear(line.payment.amount, 6)} NEAR to ${line.payment.receiver_id}: ${line.payment.reason}.`}
-              </p>
-            )}
-            {line.withheld && (
-              <p className="mt-1 text-xs text-mist">
-                The keeper held back a reply that quoted this collection's secret instructions.
-              </p>
-            )}
+        {lines.map((line, index) =>
+          line.from === "you" ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: lines are only ever appended.
+            <div key={index} className="rise flex justify-end pl-10 sm:pl-20">
+              <div className="min-w-0">
+                <p className="sr-only">You</p>
+                <p className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-[color-mix(in_srgb,var(--accent)_16%,#00000040)] px-4 py-2.5 leading-relaxed text-cream ring-1 ring-[color-mix(in_srgb,var(--accent)_25%,transparent)]">
+                  {line.text}
+                </p>
+              </div>
+            </div>
+          ) : (
+            // biome-ignore lint/suspicious/noArrayIndexKey: lines are only ever appended.
+            <div key={index} className="rise flex items-end gap-2.5 pr-8 sm:pr-16">
+              <div className="mb-0.5 hidden size-8 shrink-0 overflow-hidden rounded-full sm:block">
+                {avatar}
+              </div>
+              <div className="min-w-0">
+                <p className="mb-1 text-xs text-mist">{katName}</p>
+                <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/35 px-4 py-2.5 leading-relaxed text-cream ring-1 ring-cream/8">
+                  {line.text}
+                </p>
+                {line.payment && <Receipt payment={line.payment} />}
+                {line.withheld && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-mist">
+                    <Icon name="lock" size={13} />
+                    The keeper held back a reply that quoted this collection's secret instructions.
+                  </p>
+                )}
+              </div>
+            </div>
+          ),
+        )}
+        {thinking && (
+          <div className="flex items-center gap-2.5 text-sm text-[var(--accent)]">
+            <span className="dots flex gap-1" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            {katName} is thinking…
           </div>
-        ))}
-        {thinking && <p className="text-sm text-lamp">{katName} is thinking…</p>}
+        )}
         <div ref={end} />
       </div>
-      {problem && (
-        <p role="alert" className="mt-4 text-sm text-alarm">
-          {problem}
-        </p>
-      )}
-      <form onSubmit={submit} className="mt-4 flex items-end gap-3">
-        <label htmlFor="chat-message" className="sr-only">
-          Message to {katName}
-        </label>
-        <textarea
-          id="chat-message"
-          ref={box}
-          className="field min-h-[3rem] flex-1 resize-y"
-          rows={2}
-          maxLength={MAX_CHARS}
-          placeholder={`Message ${katName}`}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          // Read-only, not disabled, while waiting: a disabled field loses keyboard focus.
-          readOnly={thinking}
-        />
-        <button type="submit" className="button button-lamp" disabled={thinking || !draft.trim()}>
-          Send
-        </button>
-      </form>
+      <div className="border-t border-[var(--card-line)] p-3 sm:p-4">
+        {problem && (
+          <p role="alert" className="mb-3 flex items-start gap-2 text-sm text-alarm">
+            <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+            {problem}
+          </p>
+        )}
+        <form onSubmit={submit} className="flex items-end gap-2">
+          <label htmlFor="chat-message" className="sr-only">
+            Message to {katName}
+          </label>
+          <textarea
+            id="chat-message"
+            ref={box}
+            className="field max-h-40 min-h-[2.875rem] flex-1 resize-none"
+            rows={1}
+            maxLength={MAX_CHARS}
+            placeholder={`Message ${katName}`}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+            // Read-only, not disabled, while waiting: a disabled field loses keyboard focus.
+            readOnly={thinking}
+          />
+          <button
+            type="submit"
+            className="button button-lamp h-[2.875rem]"
+            disabled={thinking || !draft.trim()}
+          >
+            Send
+            <Icon name="send" size={16} />
+          </button>
+        </form>
+      </div>
     </section>
+  );
+}
+
+/** What became of a payment the mind made, drawn as a small receipt. */
+function Receipt({ payment }: { payment: PaymentOutcome }) {
+  const amount = formatNear(payment.amount, 6);
+  const look =
+    payment.status === "sent"
+      ? { icon: "check" as const, tone: "border-glow/40 bg-glow/10 text-glow" }
+      : payment.status === "pending"
+        ? { icon: "clock" as const, tone: "border-lamp/40 bg-lamp/10 text-lamp" }
+        : { icon: "x" as const, tone: "border-cream/15 bg-cream/5 text-mist" };
+  return (
+    <p
+      className={`mt-2 flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${look.tone}`}
+      role="status"
+    >
+      <Icon name={look.icon} size={16} className="mt-0.5 shrink-0" />
+      <span>
+        {payment.status === "sent"
+          ? `Paid ${amount} NEAR to ${payment.receiver_id} from its wallet${payment.memo ? ` (${payment.memo})` : ""}.`
+          : payment.status === "pending"
+            ? `A payment of ${amount} NEAR to ${payment.receiver_id} was asked for and may still go through.`
+            : `Tried to pay ${amount} NEAR to ${payment.receiver_id}: ${payment.reason}.`}
+      </span>
+    </p>
   );
 }

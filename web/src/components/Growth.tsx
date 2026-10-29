@@ -32,7 +32,9 @@ export function Growth({
         {names.map((name, index) => (
           <li
             key={name}
-            className={`h-1.5 w-10 rounded-full ${index <= stage ? "bg-lamp" : "bg-cream/15"}`}
+            className={`h-1.5 w-12 rounded-full transition-colors ${
+              index <= stage ? "bg-lamp shadow-[0_0_10px_#f2bd3566]" : "bg-cream/15"
+            }`}
           />
         ))}
       </ol>

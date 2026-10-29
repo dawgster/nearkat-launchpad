@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { describeProblem } from "../lib/problems.ts";
+import { Icon } from "./Icon.tsx";
 
 export interface GiveAwayPanelProps {
   katName: string;
@@ -91,9 +92,12 @@ export function GiveAwayPanel({
   }
 
   return (
-    <form onSubmit={submit}>
-      <h2 className="font-sans text-lg font-bold">Give away</h2>
-      <p className="mt-1 text-sm text-mist">
+    <form onSubmit={submit} className="card">
+      <h2 className="card-title flex items-center gap-2">
+        <Icon name="gift" size={18} className="text-mist" />
+        Give away
+      </h2>
+      <p className="mt-1.5 text-sm text-mist">
         {katName} keeps its personality, memories and balance. You lose access.
       </p>
       <label htmlFor="receiver" className="sr-only">
@@ -115,7 +119,7 @@ export function GiveAwayPanel({
           setProblem(null);
         }}
       />
-      <p id="receiver-hint" className="mt-2 text-sm text-mist">
+      <p id="receiver-hint" className="mt-2 text-sm text-mist empty:hidden">
         {blocked}
       </p>
       {step === "confirm" || step === "giving" ? (
@@ -129,7 +133,7 @@ export function GiveAwayPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="submit"
-              className="button button-clay text-left"
+              className="button button-clay whitespace-normal text-left"
               disabled={step === "giving"}
             >
               <span className="break-all">
@@ -149,7 +153,7 @@ export function GiveAwayPanel({
       ) : (
         <button
           type="submit"
-          className="button button-quiet mt-1"
+          className="button button-quiet mt-3 w-full"
           disabled={!usable || step === "checking"}
         >
           {step === "checking" ? "Checking the account…" : `Give ${katName} away`}
