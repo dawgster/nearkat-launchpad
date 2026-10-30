@@ -61,6 +61,9 @@ pub struct CollectionArgs {
     /// Instructions encrypted to the keeper's sealing key. Passed through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sealed_prompt: Option<near_sdk::serde_json::Value>,
+    /// Whether owners may teach their token from their chat history. Passed through.
+    #[serde(default)]
+    pub history_import: bool,
 }
 
 /// Where every launched collection's context keys come from: NEAR's MPC

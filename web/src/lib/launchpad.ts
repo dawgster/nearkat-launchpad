@@ -27,6 +27,8 @@ export interface CollectionView {
   key_epoch?: number;
   /** The published code each token's wallet account runs; null without wallets. */
   wallet_code_hash?: string | null;
+  /** Whether owners may teach their token from their chat history. Absent on older contracts. */
+  history_import?: boolean;
 }
 
 /** NEAR's MPC network, which derives a collection's context key for its account alone. */
@@ -90,6 +92,8 @@ export interface LaunchRequest {
   };
   /** Secret instructions, already sealed to the keeper in this browser. */
   sealedPrompt: SealedPrompt | null;
+  /** Whether owners may teach their token from their ChatGPT or Claude history. */
+  historyImport: boolean;
 }
 
 export const MAX_PROMPT_CHARS = 4000;
@@ -162,6 +166,7 @@ export const PROMPT_TEMPLATES = [
     starter:
       "You know nothing about your owner yet. Ask what they are into, or suggest they share " +
       "their ChatGPT or Claude history under Teach it about you.",
+    historyImport: true,
   },
 ] as const;
 
@@ -230,6 +235,7 @@ export class Launchpad {
               save_price: request.terms.savePrice?.toString() ?? null,
             },
             ...(request.sealedPrompt ? { sealed_prompt: request.sealedPrompt } : {}),
+            history_import: request.historyImport,
           },
           keeper_id: request.keeperId,
         },

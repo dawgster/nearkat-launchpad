@@ -324,8 +324,11 @@ limits the owner set.
 
 ## Importing a chat history
 
-An owner can give their token what they have written to ChatGPT or Claude,
-so it knows their tastes from the start; a collection whose prompt is "get
+Where the creator chose it at launch (`history_import`, off by default), an
+owner can give their token what they have written to ChatGPT or Claude, so
+it knows their tastes from the start. Nearkat leaves it off: kats grow only
+by being talked to. A collection launched from the Private recommender
+template turns it on; a collection whose prompt is "get
 to know your owner and recommend what fits them" becomes a private
 recommender that nobody else can read.
 

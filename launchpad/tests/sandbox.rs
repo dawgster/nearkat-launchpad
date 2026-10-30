@@ -175,6 +175,7 @@ fn launch_args(slug: &str, app_id: &str) -> Value {
             "symbol": "LAT",
             "prompt": "You are {name} #{token_id}, a patient Latin tutor.",
             "starter": "Your student has not told you anything yet.",
+            "history_import": true,
             "max_supply": "2",
             "tee": { "Phala": { "app_id": app_id } },
         },
@@ -207,6 +208,8 @@ async fn a_creator_launches_a_collection_and_someone_mints_from_it() -> TestResu
         info["wallet_code_hash"],
         json!(Base58CryptoHash::from([6u8; 32]))
     );
+    // And lets its owners import their chat history, because the creator chose so.
+    assert_eq!(info["history_import"], true);
 
     // The collection runs the published code with what the creator chose.
     let info = view(&env, &collection, "get_collection", json!({})).await?;

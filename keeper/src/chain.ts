@@ -203,6 +203,7 @@ export class NearChain implements Chain {
       key_source: view.key_source,
       key_epoch: view.key_epoch,
       wallet_code_hash: view.wallet_code_hash ?? null,
+      history_import: view.history_import === true,
     };
   }
 

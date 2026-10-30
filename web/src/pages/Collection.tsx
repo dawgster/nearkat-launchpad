@@ -234,6 +234,17 @@ export function Collection() {
                   </p>
                 </Point>
               )}
+              {c.history_import && (
+                <Point icon="download">
+                  <p className="text-sm leading-relaxed text-mist">
+                    <span className="font-bold text-cream">
+                      Owners can teach their token their chat history
+                    </span>
+                    : a ChatGPT or Claude export, trimmed to their own messages and sealed in their
+                    browser to the keeper. The token keeps only what it learns.
+                  </p>
+                </Point>
+              )}
               {c.sealed_prompt && (
                 <Point icon="shield">
                   <p className="text-sm leading-relaxed text-mist">

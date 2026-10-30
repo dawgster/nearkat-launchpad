@@ -187,6 +187,7 @@ fn tee_collection() -> Contract {
             sealed_prompt: None,
             key_source: crate::tests::mpc_source(),
             wallet_code_hash: None,
+            history_import: false,
         },
         None,
     );
@@ -272,6 +273,7 @@ fn registration_needs_a_tee_requirement() {
             sealed_prompt: None,
             key_source: crate::tests::mpc_source(),
             wallet_code_hash: None,
+            history_import: false,
         },
         None,
     );

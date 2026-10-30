@@ -83,6 +83,12 @@ function Den({
       ),
   );
   const [attestation] = useAsync("keeper-attestation", () => keeper.attestation());
+  // Only where the collection's creator allowed it.
+  const [collectionView] = useAsync(`collection/${scope.contractId}`, () =>
+    contract.getCollection(),
+  );
+  const historyImport =
+    collectionView.status === "ready" && collectionView.data.history_import === true;
   const privacy: KeeperPrivacy | null =
     attestation.status === "ready"
       ? privacyOf(attestation.data)
@@ -236,25 +242,27 @@ function Den({
             </p>
           </section>
         </div>
-        <ImportPanel
-          name={name}
-          savePrice={prices.save}
-          privacy={privacy}
-          send={async (history) => {
-            const sealKey =
-              attestation.status === "ready" ? attestation.data.seal_public_key : undefined;
-            if (typeof sealKey !== "string") {
-              throw new Error("This keeper has no key to seal your history to.");
-            }
-            const sealed = await sealPrompt(sealKey, JSON.stringify(history), IMPORT_INFO);
-            const result = await session.call((token) =>
-              keeper.importHistory(token, tokenId, sealed, scope.keeperCollection),
-            );
-            setBalance(BigInt(result.balance));
-            await reloadContext();
-            return result;
-          }}
-        />
+        {historyImport && (
+          <ImportPanel
+            name={name}
+            savePrice={prices.save}
+            privacy={privacy}
+            send={async (history) => {
+              const sealKey =
+                attestation.status === "ready" ? attestation.data.seal_public_key : undefined;
+              if (typeof sealKey !== "string") {
+                throw new Error("This keeper has no key to seal your history to.");
+              }
+              const sealed = await sealPrompt(sealKey, JSON.stringify(history), IMPORT_INFO);
+              const result = await session.call((token) =>
+                keeper.importHistory(token, tokenId, sealed, scope.keeperCollection),
+              );
+              setBalance(BigInt(result.balance));
+              await reloadContext();
+              return result;
+            }}
+          />
+        )}
         {tokenWallet.status === "loading" && (
           <p className="card text-sm text-mist" role="status">
             Reading its wallet…

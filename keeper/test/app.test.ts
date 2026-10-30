@@ -2,6 +2,7 @@ import type { SignedMessage } from "near-kit";
 import { describe, expect, test } from "vitest";
 import { createApp } from "../src/app.ts";
 import { Auth } from "../src/auth.ts";
+import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { STARTER_PERSONALITY } from "../src/context.ts";
 import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
@@ -16,10 +17,12 @@ const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 async function setup(
   limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter },
   trustProxy = false,
+  historyImport = true,
 ) {
   const chain = new FakeChain();
   const inference = new FakeInference();
   const kats = new KatService({
+    collection: { ...DEFAULT_COLLECTION, history_import: historyImport },
     chain,
     store: new MemoryStore(),
     keyring: keyringFor(chain),
@@ -539,6 +542,17 @@ describe("importing a chat history", () => {
     expect(refused.status).toBe(400);
     const huge = await app.request("/kats/1/import", as(token, { sealed: "z".repeat(900 * 1024) }));
     expect(huge.status).toBe(413);
+  });
+
+  test("is refused in a collection whose creator didn't allow it", async () => {
+    const { app, signIn, as } = await setup(undefined, false, false);
+    const token = await signIn("alice.near");
+    const response = await app.request(
+      "/kats/1/import",
+      as(token, { sealed: seal({ source: "chatgpt", messages: ["hello there"] }) }),
+    );
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("import_off");
   });
 
   test("lets only the owner import, and only with the NEAR to pay for it", async () => {

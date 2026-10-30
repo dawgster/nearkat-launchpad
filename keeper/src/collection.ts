@@ -12,6 +12,8 @@ export interface Persona {
   starter: string;
   /** The sealed prompt, opened by this keeper. Never leaves the keeper. */
   secret_prompt?: string;
+  /** Whether owners may teach their token from their chat history. */
+  history_import?: boolean;
 }
 
 /** What a collection publishes on-chain about its tokens. */

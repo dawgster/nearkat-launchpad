@@ -161,6 +161,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const [slugEdited, setSlugEdited] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [starter, setStarter] = useState("");
+  const [historyImport, setHistoryImport] = useState(false);
   const [price, setPrice] = useState("1");
   const [supply, setSupply] = useState("");
   const [private_, setPrivate] = useState(false);
@@ -278,6 +279,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
             savePrice: savePriceValue,
           },
           sealedPrompt,
+          historyImport,
         },
         cost,
       );
@@ -373,6 +375,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                     onClick={() => {
                       setPrompt(template.prompt);
                       setStarter(template.starter);
+                      setHistoryImport("historyImport" in template && template.historyImport);
                     }}
                   >
                     {template.label}
@@ -404,6 +407,21 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
               />
               <Counter text={starter} max={MAX_STARTER_CHARS} />
             </Field>
+            <label className="option">
+              <input
+                type="checkbox"
+                checked={historyImport}
+                onChange={(e) => setHistoryImport(e.target.checked)}
+              />
+              <span>
+                Owners can teach their token their ChatGPT or Claude history
+                <span className="block text-sm text-mist">
+                  The export is opened and trimmed in the owner's browser and sealed to the keeper;
+                  the token keeps only what it learns. Good for companions and recommenders; leave
+                  it off for tokens that should grow only by being talked to. Fixed at launch.
+                </span>
+              </span>
+            </label>
           </Step>
 
           <Step n={3} title="Price and earnings">

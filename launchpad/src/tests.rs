@@ -52,6 +52,7 @@ fn args(slug: &str) -> LaunchArgs {
             media_extension: String::new(),
             terms: None,
             sealed_prompt: None,
+            history_import: false,
         },
         keeper_id: None,
     }

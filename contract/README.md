@@ -43,6 +43,12 @@ encrypted under, accepts only the current one, and records it on the token
 (`get_kat().key_epoch`). The keeper may request any epoch up to the current
 one, to read older contexts.
 
+**History import.** `collection.history_import` (default false) lets owners
+teach their token from their ChatGPT or Claude history; the keeper refuses
+imports otherwise. It's fixed at deployment and kept under its own storage
+key, so collections from before it read as off without a migration.
+`get_collection` reports it.
+
 **Wallets.** With `collection.wallet_code_hash` (the published
 `token-wallet/` code), every token can have its own NEAR account,
 `<token_id>.<collection>`. `open_wallet({ token_id })` (anyone, attach at

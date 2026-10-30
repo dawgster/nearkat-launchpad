@@ -43,6 +43,9 @@ enum StorageKey {
     Wallets,
 }
 
+/// Set when owners may import their chat history; see `Collection::history_import`.
+const HISTORY_IMPORT_KEY: &[u8] = b"history_import";
+
 #[derive(PanicOnDefault)]
 #[near(contract_state)]
 pub struct Contract {
@@ -123,6 +126,7 @@ impl Contract {
             sealed_prompt,
             key_source,
             wallet_code_hash,
+            history_import,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -182,6 +186,11 @@ impl Contract {
         // deploying directly initialises from the contract's own account.
         let factory_id = (env::predecessor_account_id() != env::current_account_id())
             .then(env::predecessor_account_id);
+        // Under its own key, so collections from before it read as "off"
+        // without a state migration. Fixed at deployment.
+        if history_import {
+            env::storage_write(HISTORY_IMPORT_KEY, &[1]);
+        }
         Self {
             tokens: NonFungibleToken::new(
                 StorageKey::OwnerById,
@@ -310,6 +319,7 @@ impl Contract {
             key_source: self.key_source.clone(),
             key_epoch: self.key_epoch,
             wallet_code_hash: self.wallet_code_hash.map(Into::into),
+            history_import: env::storage_has_key(HISTORY_IMPORT_KEY),
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),

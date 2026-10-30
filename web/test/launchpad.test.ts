@@ -57,6 +57,7 @@ test("launches with the arguments the factory expects", async () => {
         savePrice: null,
       },
       sealedPrompt: { ciphertext: "c2VhbGVk", sealed_to: "ab".repeat(32) },
+      historyImport: true,
     },
     3n * 10n ** 24n,
   );
@@ -83,6 +84,7 @@ test("launches with the arguments the factory expects", async () => {
             save_price: null,
           },
           sealed_prompt: { ciphertext: "c2VhbGVk", sealed_to: "ab".repeat(32) },
+          history_import: true,
         },
         keeper_id: null,
       },

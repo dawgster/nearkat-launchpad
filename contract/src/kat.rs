@@ -188,6 +188,10 @@ pub struct Collection {
     /// every token its own wallet account. None: no wallets.
     #[serde(default)]
     pub wallet_code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
+    /// Whether owners may teach their token from their chat history with
+    /// other assistants. The keeper refuses imports when this is off.
+    #[serde(default)]
+    pub history_import: bool,
 }
 
 #[near(serializers = [json])]
@@ -211,6 +215,8 @@ pub struct CollectionView {
     pub key_epoch: u32,
     /// The token wallet code its tokens' wallets run, if they have wallets.
     pub wallet_code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
+    /// Whether owners may teach their token from their chat history.
+    pub history_import: bool,
     /// Tokens minted so far.
     pub minted: U64,
     /// The launchpad this collection came from, which approves its upgrades.

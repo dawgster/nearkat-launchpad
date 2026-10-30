@@ -414,6 +414,13 @@ export class KatService {
     }
     const label =
       source === "chatgpt" ? "ChatGPT" : source === "claude" ? "Claude" : "another assistant";
+    if (!(await this.#collection()).history_import) {
+      throw new HttpError(
+        403,
+        "import_off",
+        "This collection's creator didn't let owners import their chat history",
+      );
+    }
     return this.#locked(tokenId, async () => {
       const owned = await this.#owned(accountId, tokenId);
       const chunks = chunksOf(texts, IMPORT_LIMITS.chunkChars);

@@ -58,8 +58,9 @@ tool's result so its reply knows what happened, and reports the outcome to
 the owner (`payment` in the chat reply). A sent payment is charged like a
 save.
 
-**Importing a chat history.** An owner can hand their token what they wrote
-to ChatGPT or Claude. The web app opens the export in their browser, keeps
+**Importing a chat history.** Where the collection's creator allowed it
+(`history_import`), an owner can hand their token what they wrote to
+ChatGPT or Claude; elsewhere the keeper answers 403 `import_off`. The web app opens the export in their browser, keeps
 only their own messages (newest first, up to 100,000 characters), blanks out
 emails, links, phone numbers and long numbers, and seals the rest to the
 keeper's sealing key for the import purpose (`nearkat-history-import:v1`),

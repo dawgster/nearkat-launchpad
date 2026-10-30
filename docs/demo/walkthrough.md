@@ -76,7 +76,10 @@ On the same page, under **Its wallet**:
 
 ## 4c. Teach it about you (1 minute)
 
-Under **Teach it about you**, choose your ChatGPT or Claude export (the .zip
+Kats don't take imports; this is a launchpad choice. Use a collection
+launched from the **Private recommender** template (it ticks "Owners can
+teach their token their ChatGPT or Claude history"), mint a token, and on its
+page, under **Teach it about you**, choose your ChatGPT or Claude export (the .zip
 they email you, or the conversations.json inside it).
 
 - "The file never leaves this page as it is. It keeps only what I wrote,

@@ -61,6 +61,7 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         sealed_prompt: None,
         key_source: crate::tests::mpc_source(),
         wallet_code_hash: Some([5u8; 32].into()),
+        history_import: false,
     }
 }
 
@@ -592,6 +593,17 @@ fn an_unconfigured_collection_is_the_original_nearkat() {
     assert_eq!(view.max_supply, None);
     assert_eq!(view.tee, None);
     assert_eq!(view.minted.0, 0);
+}
+
+#[test]
+fn history_import_is_the_creators_choice_and_off_unless_chosen() {
+    let off = deploy_with(collection("Nearkat", "KAT", ""));
+    assert!(!off.get_collection().history_import);
+    let on = deploy_with(Collection {
+        history_import: true,
+        ..collection("Taste", "TST", "")
+    });
+    assert!(on.get_collection().history_import);
 }
 
 #[test]
@@ -1251,6 +1263,7 @@ fn every_token_has_a_named_wallet_account_that_starts_closed() {
 fn a_collection_without_wallets_has_none() {
     let mut c = deploy_with(Collection {
         wallet_code_hash: None,
+        history_import: false,
         ..collection("Lantern", "LNT", "")
     });
     ctx("alice.near", NearToken::from_near(3));
