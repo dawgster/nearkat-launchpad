@@ -6,6 +6,7 @@ import { FundPanel } from "../components/FundPanel.tsx";
 import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { ImportPanel, type KeeperPrivacy } from "../components/ImportPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
@@ -13,6 +14,8 @@ import { formatNear, shorten } from "../lib/format.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
+import { IMPORT_INFO, sealPrompt } from "../lib/sealing.ts";
+import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { type TokenWallet, TokenWallets } from "../lib/wallet.ts";
 import { proofId, useScope } from "../scope.tsx";
@@ -24,6 +27,24 @@ const SETTLE_WAIT_MS = 2000;
 const SETTLE_WAITS = 30;
 /** Keeper answers that mean "not yet" while the contract shows this wallet as owner. */
 const SETTLING_CODES = ["waking_up", "not_owner", "not_found", "not_served"];
+
+/** Where the keeper runs, as far as its attestation shows this browser. */
+function privacyOf(report: Record<string, unknown>): KeeperPrivacy {
+  if (report.mode === "local") {
+    return { kind: "local" };
+  }
+  if (report.mode !== "phala") {
+    return { kind: "unknown", reason: "it reported no TEE" };
+  }
+  const check = checkPhalaReport(report as unknown as PhalaReport);
+  if (check.status !== "read") {
+    return { kind: "unknown", reason: check.reason };
+  }
+  if (!check.bindsKey || !check.logMatchesQuote) {
+    return { kind: "unknown", reason: "its quote doesn't bind the key it reports" };
+  }
+  return { kind: "tee", appId: check.appId };
+}
 
 /** The owner's side of the page: the conversation, and what the kat has become. */
 function Den({
@@ -61,6 +82,13 @@ function Den({
         keeper.getContext(token, tokenId, scope.keeperCollection),
       ),
   );
+  const [attestation] = useAsync("keeper-attestation", () => keeper.attestation());
+  const privacy: KeeperPrivacy | null =
+    attestation.status === "ready"
+      ? privacyOf(attestation.data)
+      : attestation.status === "error"
+        ? { kind: "unknown", reason: describeProblem(attestation.error) }
+        : null;
   // The keeper reports the balance after unsettled charges; the chain lags behind it.
   const [balance, setBalance] = useState(chainBalance);
   const [outOfBalance, setOutOfBalance] = useState(false);
@@ -208,6 +236,25 @@ function Den({
             </p>
           </section>
         </div>
+        <ImportPanel
+          name={name}
+          savePrice={prices.save}
+          privacy={privacy}
+          send={async (history) => {
+            const sealKey =
+              attestation.status === "ready" ? attestation.data.seal_public_key : undefined;
+            if (typeof sealKey !== "string") {
+              throw new Error("This keeper has no key to seal your history to.");
+            }
+            const sealed = await sealPrompt(sealKey, JSON.stringify(history), IMPORT_INFO);
+            const result = await session.call((token) =>
+              keeper.importHistory(token, tokenId, sealed, scope.keeperCollection),
+            );
+            setBalance(BigInt(result.balance));
+            await reloadContext();
+            return result;
+          }}
+        />
         {tokenWallet.status === "loading" && (
           <p className="card text-sm text-mist" role="status">
             Reading its wallet…

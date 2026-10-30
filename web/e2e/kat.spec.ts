@@ -87,6 +87,62 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   );
   await shot(page, "2b-wallet");
 
+  // Teach it from a ChatGPT export: read in the browser, sealed, folded into memory.
+  const importPanel = page.getByRole("region", { name: "Teach it about you" });
+  const exported = [
+    {
+      title: "Weekend",
+      mapping: {
+        a: {
+          message: {
+            author: { role: "user" },
+            create_time: 1_760_000_000,
+            content: { content_type: "text", parts: ["recommend hard sci-fi like The Expanse"] },
+          },
+        },
+        b: {
+          message: {
+            author: { role: "assistant" },
+            create_time: 1_760_000_005,
+            content: { content_type: "text", parts: ["Try Seveneves."] },
+          },
+        },
+        c: {
+          message: {
+            author: { role: "user" },
+            create_time: 1_760_000_100,
+            content: {
+              content_type: "text",
+              parts: ["plan a 10k trail run, and email me at me@example.com"],
+            },
+          },
+        },
+      },
+    },
+  ];
+  await importPanel.getByLabel("ChatGPT or Claude export file").setInputFiles({
+    name: "conversations.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(exported)),
+  });
+  await expect(importPanel.getByTestId("import-summary")).toContainText(
+    "2 of your ChatGPT messages, from 1 conversation",
+  );
+  // The email was blanked out before anything left the page; the reply was never included.
+  await expect(importPanel).toContainText("plan a 10k trail run, and email me at [email]");
+  await expect(importPanel).not.toContainText("Seveneves");
+  await expect(importPanel).toContainText("runs in local mode");
+  await importPanel.getByLabel(/I understand this keeper isn't sealed/).check();
+  await shot(page, "2c-import-preview");
+  await importPanel.getByRole("button", { name: "Seal and send to Nearkat #1" }).click();
+  await expect(importPanel).toContainText("Nearkat #1 read 2 of your ChatGPT messages", {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("region", { name: "Memory" })).toContainText(
+    "Loves hard sci-fi and trail running.",
+  );
+  await shot(page, "2c-import");
+
   await page.getByRole("link", { name: "Verify this kat" }).click();
   await expect(page.getByRole("heading", { name: "Verify Nearkat #1" })).toBeVisible();
   const row = (title: string) => page.getByRole("listitem").filter({ hasText: title });

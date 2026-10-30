@@ -152,6 +152,17 @@ export const PROMPT_TEMPLATES = [
       "Describe scenes in two or three sentences and always end by asking what the player does.",
     starter: "The adventure has not started. The player stands at the city gate at low tide.",
   },
+  {
+    label: "Private recommender",
+    prompt:
+      "You are {name} #{token_id}, a private taste companion. You get to know your owner from " +
+      "what they tell you and from the chat history they share with you, and recommend books, " +
+      "films, music, products and places that fit them, each with one line on why. Never repeat " +
+      "personal details back word for word, and say when you are unsure.",
+    starter:
+      "You know nothing about your owner yet. Ask what they are into, or suggest they share " +
+      "their ChatGPT or Claude history under Teach it about you.",
+  },
 ] as const;
 
 export class Launchpad {

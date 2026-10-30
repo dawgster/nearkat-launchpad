@@ -7,6 +7,7 @@ import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { RateLimiter } from "../src/ratelimit.ts";
+import { IMPORT_INFO, sealTo } from "../src/sealing.ts";
 import { MemoryStore } from "../src/store.ts";
 import { FAKE_COLLECTION, FakeChain, FakeInference, keyringFor, NEAR } from "./fakes.ts";
 
@@ -46,6 +47,7 @@ async function setup(
     homeContractId: "kats.near",
     limits,
     trustProxy,
+    sealing: keys.sealing(),
   });
   chain.mint("1", "alice.near", NEAR);
   await kats.wakeNew();
@@ -456,5 +458,97 @@ describe("art", () => {
     // Only the art is open to every origin.
     const info = await app.request("/info", { headers: { origin: "https://marketplace.example" } });
     expect(info.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
+
+describe("importing a chat history", () => {
+  const seal = (history: unknown, info = IMPORT_INFO) =>
+    sealTo(keys.sealing().publicKeyHex, JSON.stringify(history), info);
+
+  test("folds a sealed history into the token's memory, a save per part", async () => {
+    const { app, inference, signIn, as } = await setup();
+    const token = await signIn("alice.near");
+    inference.evolveTo = {
+      character: "You are curious.",
+      memory: "Loves sci-fi and trail running.",
+    };
+    const messages = ["what are good hard sci-fi novels?", "plan a 10k trail run for me"];
+    const response = await app.request(
+      "/kats/1/import",
+      as(token, { sealed: seal({ source: "chatgpt", messages }) }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ imported: 2, chunks: 1, version: 2 });
+    const prompt = inference.calls.at(-1)?.[1]?.content ?? "";
+    expect(prompt).toContain("Messages the owner wrote to ChatGPT:");
+    expect(prompt).toContain("plan a 10k trail run for me");
+    const context = await (
+      await app.request("/kats/1/context", as(token, undefined, "GET"))
+    ).json();
+    expect(context.memory_summary).toBe("Loves sci-fi and trail running.");
+    expect(context.personality).toBe("You are curious.");
+  });
+
+  test("reads a long history in parts, and charges for each", async () => {
+    const { app, inference, signIn, as } = await setup();
+    const token = await signIn("alice.near");
+    const messages = Array.from({ length: 50 }, (_, i) => `${i} ${"x".repeat(1000)}`);
+    const response = await app.request(
+      "/kats/1/import",
+      as(token, { sealed: seal({ source: "claude", messages }) }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).chunks).toBe(3);
+    expect(inference.calls).toHaveLength(3);
+    expect(inference.calls[0]?.[1]?.content).toContain("Messages the owner wrote to Claude:");
+  });
+
+  test("refuses a history that isn't sealed to this keeper for import", async () => {
+    const { app, signIn, as } = await setup();
+    const token = await signIn("alice.near");
+    const history = { source: "chatgpt", messages: ["hi there"] };
+    for (const sealed of [
+      JSON.stringify(history),
+      // Sealed to the right key, but as a secret prompt: a different purpose.
+      seal(history, "nearkat-sealed-prompt:v1"),
+      sealTo(
+        keysFromRootSecret(Buffer.alloc(32, 9)).sealing().publicKeyHex,
+        JSON.stringify(history),
+        IMPORT_INFO,
+      ),
+    ]) {
+      const response = await app.request("/kats/1/import", as(token, { sealed }));
+      expect(response.status).toBe(400);
+    }
+  });
+
+  test("takes a body far larger than other requests, but not an unlimited one", async () => {
+    const { app, signIn, as } = await setup();
+    const token = await signIn("alice.near");
+    const fits = Array.from({ length: 100 }, () => "y".repeat(1000));
+    const ok = await app.request(
+      "/kats/1/import",
+      as(token, { sealed: seal({ source: "chatgpt", messages: fits }) }),
+    );
+    expect(ok.status).toBe(200);
+    const tooMuch = Array.from({ length: 130 }, () => "y".repeat(1000));
+    const refused = await app.request(
+      "/kats/1/import",
+      as(token, { sealed: seal({ source: "chatgpt", messages: tooMuch }) }),
+    );
+    expect(refused.status).toBe(400);
+    const huge = await app.request("/kats/1/import", as(token, { sealed: "z".repeat(900 * 1024) }));
+    expect(huge.status).toBe(413);
+  });
+
+  test("lets only the owner import, and only with the NEAR to pay for it", async () => {
+    const { app, chain, signIn, as } = await setup();
+    const sealed = seal({ source: "chatgpt", messages: ["hello"] });
+    const bob = await signIn("bob.near");
+    expect((await app.request("/kats/1/import", as(bob, { sealed }))).status).toBe(403);
+    const alice = await signIn("alice.near");
+    (chain.kats.get("1") as { balance: string }).balance = (10n ** 21n).toString();
+    const poor = await app.request("/kats/1/import", as(alice, { sealed }));
+    expect(poor.status).toBe(402);
   });
 });

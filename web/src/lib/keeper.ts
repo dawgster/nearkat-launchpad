@@ -101,6 +101,21 @@ export interface Keeper {
   getContext(token: string, tokenId: string, collection?: string): Promise<ContextDoc>;
   chat(token: string, tokenId: string, message: string, collection?: string): Promise<ChatReply>;
   exportMind(token: string, tokenId: string, collection?: string): Promise<MindExport>;
+  /** Hands the token a chat history sealed to the keeper's key, to fold into its memory. */
+  importHistory(
+    token: string,
+    tokenId: string,
+    sealed: string,
+    collection?: string,
+  ): Promise<ImportResult>;
+}
+
+/** What the keeper did with an imported history. `balance` is yoctoNEAR. */
+export interface ImportResult {
+  imported: number;
+  chunks: number;
+  version: number;
+  balance: string;
 }
 
 export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): Keeper {
@@ -152,5 +167,7 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
       request("POST", `${kat(tokenId, collection)}/chat`, { token, body: { message } }),
     exportMind: (token, tokenId, collection) =>
       request("GET", `${kat(tokenId, collection)}/export`, { token }),
+    importHistory: (token, tokenId, sealed, collection) =>
+      request("POST", `${kat(tokenId, collection)}/import`, { token, body: { sealed } }),
   };
 }

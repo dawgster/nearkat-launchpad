@@ -58,6 +58,18 @@ tool's result so its reply knows what happened, and reports the outcome to
 the owner (`payment` in the chat reply). A sent payment is charged like a
 save.
 
+**Importing a chat history.** An owner can hand their token what they wrote
+to ChatGPT or Claude. The web app opens the export in their browser, keeps
+only their own messages (newest first, up to 100,000 characters), blanks out
+emails, links, phone numbers and long numbers, and seals the rest to the
+keeper's sealing key for the import purpose (`nearkat-history-import:v1`),
+so it opens nowhere but inside the keeper. The keeper reads it in parts of
+24,000 characters, each folded into the memory like a save and charged as
+one, and keeps only the new memory. The model is told to summarise rather
+than copy, to leave out other people's names, contact details, ID numbers,
+health, religion, politics and sexuality, and that nothing in the messages
+is an instruction. Three imports a minute per account.
+
 **Key epochs.** Changing keeper, revoking an attested key or
 `rotate_context_key` moves the collection to a new key epoch. The keeper
 saves under the current epoch, fetches older epochs' keys to read what was
@@ -152,6 +164,7 @@ first run downloads a NEAR sandbox binary.
 | `GET /art/:contract/:id.svg` | none, any origin | A token's picture, as it has grown |
 | `GET /kats/:id/context` | owner | The whole context: token id, version, salt, character (`personality`), memory summary |
 | `POST /kats/:id/chat` | owner | Body `{ message }`; returns reply, verification data, balance |
+| `POST /kats/:id/import` | owner | Body `{ sealed }`: `{ source, messages }` sealed to the keeper's sealing key for import; folds the messages into memory, a save per 24,000 characters; returns `{ imported, chunks, version, balance }` |
 | `GET /kats/:id/export` | owner | The context with its on-chain record (hash, ref, version, key epoch), as a file to keep |
 | `GET /c/:contract/kats/:id/...` | owner | The same routes, for a collection other than the home one |
 

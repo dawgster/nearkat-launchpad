@@ -10,6 +10,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
  * AES key is HKDF-SHA256 over the shared secret, salted with both keys.
  */
 const INFO = "nearkat-sealed-prompt:v1";
+/** For an owner's chat history, sealed for one token's mind. Must match the keeper's. */
+export const IMPORT_INFO = "nearkat-history-import:v1";
 
 function fromHex(hex: string): Uint8Array {
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
@@ -18,22 +20,31 @@ function fromHex(hex: string): Uint8Array {
   return Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
 }
 
-export async function sealPrompt(sealPublicKeyHex: string, plaintext: string): Promise<string> {
+export async function sealPrompt(
+  sealPublicKeyHex: string,
+  plaintext: string,
+  info = INFO,
+): Promise<string> {
   const recipient = fromHex(sealPublicKeyHex);
   const ephemeralSecret = x25519.utils.randomSecretKey();
   const ephemeral = x25519.getPublicKey(ephemeralSecret);
   const shared = x25519.getSharedSecret(ephemeralSecret, recipient);
   const salt = new Uint8Array([...ephemeral, ...recipient]);
-  const keyBytes = hkdf(sha256, shared, salt, new TextEncoder().encode(INFO), 32);
+  const keyBytes = hkdf(sha256, shared, salt, new TextEncoder().encode(info), 32);
   const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt"]);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(INFO) },
+      { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(info) },
       key,
       new TextEncoder().encode(plaintext),
     ),
   );
   const out = new Uint8Array([...ephemeral, ...nonce, ...sealed]);
-  return btoa(String.fromCharCode(...out));
+  // In pieces: spreading a large history into one call overflows the stack.
+  let binary = "";
+  for (let i = 0; i < out.length; i += 0x8000) {
+    binary += String.fromCharCode(...out.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
 }

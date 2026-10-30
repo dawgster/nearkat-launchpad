@@ -67,8 +67,11 @@ function startFakeModel() {
         const payee = /please pay (\S+)/i.exec(last?.content ?? "")?.[1];
         const message = system.includes("CHARACTER:")
           ? {
-              content:
-                "CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\nThe owner kept saying hello.",
+              content: `CHARACTER:\nYou are grumpy and suspicious of strangers.\nMEMORY:\n${
+                last?.content.includes("Messages the owner wrote to")
+                  ? "Loves hard sci-fi and trail running."
+                  : "The owner kept saying hello."
+              }`,
             }
           : last?.role === "tool"
             ? { content: "Fine, a small gift." }

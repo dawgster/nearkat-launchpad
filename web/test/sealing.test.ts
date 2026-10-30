@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { sealingKey } from "../../keeper/src/sealing.ts";
-import { sealPrompt } from "../src/lib/sealing.ts";
+import { IMPORT_INFO as KEEPER_IMPORT_INFO, sealingKey } from "../../keeper/src/sealing.ts";
+import { IMPORT_INFO, sealPrompt } from "../src/lib/sealing.ts";
 
 describe("sealPrompt", () => {
   const keeper = sealingKey(new Uint8Array(32).fill(5));
@@ -13,6 +13,14 @@ describe("sealPrompt", () => {
   test("can't be opened by any other key", async () => {
     const sealed = await sealPrompt(keeper.publicKeyHex, "secret");
     expect(() => sealingKey(new Uint8Array(32).fill(6)).open(sealed)).toThrow();
+  });
+
+  test("seals a large history for import, which only opens as an import", async () => {
+    expect(IMPORT_INFO).toBe(KEEPER_IMPORT_INFO);
+    const history = JSON.stringify({ source: "claude", messages: ["é".repeat(150_000)] });
+    const sealed = await sealPrompt(keeper.publicKeyHex, history, IMPORT_INFO);
+    expect(keeper.open(sealed, IMPORT_INFO)).toBe(history);
+    expect(() => keeper.open(sealed)).toThrow();
   });
 
   test("refuses something that isn't a key", async () => {

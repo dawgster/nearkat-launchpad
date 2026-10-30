@@ -195,6 +195,7 @@ const app = createApp({
     model: config.nearAiModel,
   },
   webOrigins: config.webOrigins,
+  sealing: keys.sealing(),
   trustProxy: config.trustProxy,
 });
 

@@ -74,6 +74,19 @@ On the same page, under **Its wallet**:
 - "If I sell or give the kat away, the wallet and what's in it go with it,
   right away. My rules don't: the new owner decides what it may spend."
 
+## 4c. Teach it about you (1 minute)
+
+Under **Teach it about you**, choose your ChatGPT or Claude export (the .zip
+they email you, or the conversations.json inside it).
+
+- "The file never leaves this page as it is. It keeps only what I wrote,
+  blanks out my email and phone number, and shows me exactly what will go."
+- Point at the check: in a TEE collection it says the history is sealed to
+  a key inside the keeper's enclave; in local mode it warns, and asks you to
+  confirm.
+- Send it. A moment later the memory reads like it has known you for a year.
+  Ask: "What should I read next?"
+
 ## 5. Verify (1 minute)
 
 Click **Verify this kat**.

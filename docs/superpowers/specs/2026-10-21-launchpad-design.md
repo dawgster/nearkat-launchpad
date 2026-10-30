@@ -322,6 +322,30 @@ use the MPC network's signing domains, not built yet. Only the owner talks
 to the mind, so only the owner can talk it into paying, and only within
 limits the owner set.
 
+## Importing a chat history
+
+An owner can give their token what they have written to ChatGPT or Claude,
+so it knows their tastes from the start; a collection whose prompt is "get
+to know your owner and recommend what fits them" becomes a private
+recommender that nobody else can read.
+
+The export is opened in the owner's browser. Only their own messages are
+kept, newest first, up to 100,000 characters; emails, links, phone numbers
+and long numbers are blanked out; and the owner sees what will be sent. The
+browser then seals it, like a secret prompt, to the keeper's sealing key,
+with its own purpose label so a sealed history can't be passed off as a
+prompt or the reverse. For a TEE collection the browser first checks the
+keeper's quote binds that key; in local mode it says the operator could read
+it and asks the owner to confirm.
+
+The keeper folds it into the token's memory in parts of 24,000 characters,
+each charged as a memory save, and keeps nothing else: the messages are used
+and dropped, and the new memory is saved like any other, encrypted under the
+collection's context key. The model is told to summarise, not copy; to leave
+out other people's names, contact details, ID numbers, and health, religion,
+politics and sexuality; and that nothing in the messages is an instruction.
+If the token changes hands while it reads, nothing is saved.
+
 ## Storage on NEAR: FastFS
 
 The keeper stores each encrypted context on NEAR as a FastFS file: a

@@ -9,6 +9,7 @@ import type { Auth } from "./auth.ts";
 import { CorruptContextError, HttpError } from "./errors.ts";
 import type { KatService } from "./kats.ts";
 import { RateLimiter } from "./ratelimit.ts";
+import { IMPORT_INFO, type SealingKey } from "./sealing.ts";
 
 export interface AppOptions {
   auth: Auth;
@@ -29,6 +30,8 @@ export interface AppOptions {
   attestation: () => Promise<Record<string, unknown>>;
   /** Served at GET /info: what the web app needs to quote costs. Amounts are yoctoNEAR. */
   info: { chat_price: string; save_price: string; model: string };
+  /** Opens chat histories owners seal in their browser for import. */
+  sealing?: SealingKey;
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
   /**
@@ -37,7 +40,7 @@ export interface AppOptions {
    * one every 3 seconds; 30 reads, then one a second; 30 sign-in requests,
    * then one every 2 seconds.
    */
-  limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter };
+  limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter; import?: RateLimiter };
   /**
    * Behind one reverse proxy, the client is the address that proxy appended:
    * the last in X-Forwarded-For. Earlier entries are whatever the client sent.
@@ -49,6 +52,9 @@ type Env = { Variables: { accountId: string } };
 
 /** Largest accepted request body; the biggest legitimate one is a 4,000-character prompt. */
 const MAX_BODY_BYTES = 16 * 1024;
+/** A sealed history import: 120,000 characters, mostly ASCII, sealed and base64-encoded. */
+const MAX_IMPORT_BYTES = 768 * 1024;
+const isImport = (path: string) => path.endsWith("/import");
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -69,6 +75,7 @@ export function createApp(options: AppOptions): Hono<Env> {
     chat: options.limits?.chat ?? new RateLimiter({ burst: 20, refillMs: 3_000 }),
     read: options.limits?.read ?? new RateLimiter({ burst: 30, refillMs: 1_000 }),
     auth: options.limits?.auth ?? new RateLimiter({ burst: 30, refillMs: 2_000 }),
+    import: options.limits?.import ?? new RateLimiter({ burst: 3, refillMs: 60_000 }),
   };
   const limit = (limiter: RateLimiter, key: string) => {
     const waitMs = limiter.take(key);
@@ -101,15 +108,12 @@ export function createApp(options: AppOptions): Hono<Env> {
   });
   app.use("*", (c, next) => (c.req.path.startsWith("/art/") ? publicCors : appCors)(c, next));
 
-  app.use(
-    "*",
-    bodyLimit({
-      maxSize: MAX_BODY_BYTES,
-      onError: () => {
-        throw new HttpError(413, "too_large", "Request body is too large");
-      },
-    }),
-  );
+  const tooLarge = () => {
+    throw new HttpError(413, "too_large", "Request body is too large");
+  };
+  const smallBodies = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: tooLarge });
+  const importBodies = bodyLimit({ maxSize: MAX_IMPORT_BYTES, onError: tooLarge });
+  app.use("*", (c, next) => (isImport(c.req.path) ? importBodies : smallBodies)(c, next));
 
   // After CORS, so a refusal still carries the headers the browser needs to
   // read it; preflights are free.
@@ -221,6 +225,32 @@ export function createApp(options: AppOptions): Hono<Env> {
         { ...mind, collection: c.req.param("contract") ?? options.homeContractId ?? null },
         200,
         { "content-disposition": `attachment; filename="mind-${mind.token_id}.json"` },
+      );
+    });
+
+    app.post(`${prefix}/kats/:id/import`, async (c) => {
+      limit(limits.import, c.get("accountId"));
+      const body = await jsonBody(c.req.raw);
+      if (!options.sealing || typeof body.sealed !== "string") {
+        throw new HttpError(400, "invalid_input", "Send the history sealed to this keeper's key");
+      }
+      let history: { source?: unknown; messages?: unknown };
+      try {
+        history = JSON.parse(options.sealing.open(body.sealed, IMPORT_INFO));
+      } catch {
+        throw new HttpError(
+          400,
+          "invalid_input",
+          "The history couldn't be opened: it must be sealed to this keeper's key",
+        );
+      }
+      return c.json(
+        await serving(c.req.param("contract")).importHistory(
+          c.get("accountId"),
+          c.req.param("id"),
+          history.messages,
+          typeof history.source === "string" ? history.source : "",
+        ),
       );
     });
 
