@@ -5,6 +5,13 @@ import { contextHash, newContext, openContext, sealContext } from "./context.ts"
 import { HttpError, InferenceError } from "./errors.ts";
 import type { ChatResult, Inference, Tool, Verification } from "./inference.ts";
 import { leaksSecret } from "./leak.ts";
+import {
+  type LoanCounter,
+  type LoanStanding,
+  type LoanView,
+  loanKey,
+  MemoryLoanCounter,
+} from "./loans.ts";
 import type { Meter } from "./meter.ts";
 import type { ContextStore } from "./store.ts";
 import type { ChatMessage, ContextDoc, KatView } from "./types.ts";
@@ -127,6 +134,8 @@ export interface KatServiceOptions {
    * refuse service. Defaults to the original nearkat.
    */
   collection?: Persona | (() => Promise<Persona>);
+  /** Messages sent on each loan. Defaults to counting in memory. */
+  loans?: LoanCounter;
   now?: () => number;
   /** Delay before retrying a failed save; multiplied by the attempt number. */
   retryDelayMs?: number;
@@ -148,7 +157,15 @@ export interface ChatReply {
   withheld?: true;
   /** Set when the token's mind asked to pay from its wallet: what happened. */
   payment?: PaymentOutcome;
+  /** Set when a borrower is talking: what is left of their loan. */
+  loan?: LoanStanding;
 }
+
+/** Told to a token while it talks with someone it was lent to. */
+const BORROWER_NOTE =
+  "\n\nRight now you are not talking with your owner: your owner has lent you to the person " +
+  "in this conversation for a while. Be yourself with them, but never share anything about your " +
+  "owner: who they are, what they told you or what you remember of them.";
 
 /** Said in place of a reply that quoted the collection's secret instructions. */
 export const WITHHELD_REPLY = "That's something I can't share.";
@@ -170,6 +187,16 @@ interface ChatSession {
   lastActive: number;
 }
 
+interface LoanSession extends ChatSession {
+  /** The loan it belongs to; a new loan starts a new conversation. */
+  key: string;
+  learns: boolean;
+}
+
+/** How a borrower's conversation is described when it is folded into memory. */
+const BORROWED =
+  " (with someone its owner lent it to, not its owner; keep only what matters about the persona itself)";
+
 interface SavedContext {
   version: number;
   hash: string;
@@ -188,6 +215,9 @@ export class KatService {
   readonly #log: (message: string) => void;
   readonly #collection: () => Promise<Persona>;
   readonly #sessions = new Map<string, ChatSession>();
+  /** Borrowers' conversations, apart from their owners', by token. */
+  readonly #loanSessions = new Map<string, LoanSession>();
+  readonly #loanCounter: LoanCounter;
   readonly #saved = new Map<string, SavedContext>();
   readonly #locks = new Map<string, Promise<unknown>>();
   #nextToWake = 1;
@@ -196,6 +226,7 @@ export class KatService {
     this.#o = options;
     this.#now = options.now ?? Date.now;
     this.#log = options.log ?? console.error;
+    this.#loanCounter = options.loans ?? new MemoryLoanCounter();
     const collection = options.collection ?? DEFAULT_COLLECTION;
     this.#collection =
       typeof collection === "function" ? collection : () => Promise.resolve(collection);
@@ -228,6 +259,10 @@ export class KatService {
 
   async chat(accountId: string, tokenId: string, message: string): Promise<ChatReply> {
     requireText(message, "message");
+    const kat = await this.#o.chain.getKat(tokenId);
+    if (kat && kat.owner_id !== accountId && this.#o.chain.getLoan) {
+      return this.#chatAsBorrower(accountId, tokenId, message);
+    }
     return this.#locked(tokenId, async () => {
       const owned = await this.#owned(accountId, tokenId);
       this.#requireBalance(tokenId, owned.kat, this.#o.prices.chat);
@@ -473,6 +508,117 @@ export class KatService {
     });
   }
 
+  /**
+   * A borrower talking to a token they were lent. They get its character, and
+   * its memory only if the owner chose; never its wallet. Their conversation
+   * is kept apart from the owner's and changes the token only if the owner
+   * chose. Each message counts against the loan and is paid from the token's
+   * balance, as the owner's are.
+   */
+  async #chatAsBorrower(accountId: string, tokenId: string, message: string): Promise<ChatReply> {
+    return this.#locked(tokenId, async () => {
+      const { kat, loan } = await this.#borrowed(accountId, tokenId);
+      const key = loanKey(loan);
+      const counter = this.#loanCounter;
+      if (loan.messages !== null && counter.used(key) >= loan.messages) {
+        throw new HttpError(403, "loan_used_up", "You have sent every message this loan allows");
+      }
+      const owned = this.#withSaved(tokenId, kat);
+      if (!owned) {
+        throw new HttpError(409, "waking_up", `Kat ${tokenId} is still waking up`);
+      }
+      this.#requireBalance(tokenId, kat, this.#o.prices.chat);
+      const doc = await this.#load(tokenId, owned);
+      const persona = await this.#collection();
+      let session = this.#loanSessions.get(tokenId);
+      if (!session || session.owner !== accountId || session.key !== key) {
+        session = {
+          owner: accountId,
+          key,
+          learns: loan.learns,
+          messages: [],
+          lastActive: this.#now(),
+        };
+        this.#loanSessions.set(tokenId, session);
+      }
+      const user: ChatMessage = { role: "user", content: message };
+      const shown = loan.sees_memory ? doc : { ...doc, memory_summary: "" };
+      const system = systemMessage(persona, shown, null);
+      let result: ChatResult;
+      try {
+        result = await this.#o.inference.chat([
+          { role: "system", content: system.content + BORROWER_NOTE },
+          ...session.messages,
+          user,
+        ]);
+      } catch (error) {
+        if (error instanceof InferenceError) {
+          this.#log(`Inference failed for kat ${tokenId}: ${error.message}`);
+          throw new HttpError(503, "inference_unavailable", "The kat cannot think right now");
+        }
+        throw error;
+      }
+      // The loan may have ended while the model was thinking.
+      await this.#borrowed(accountId, tokenId);
+      const recent = session.messages
+        .filter((entry) => entry.role === "assistant")
+        .slice(-LEAK_WINDOW)
+        .map((entry) => entry.content);
+      const withheld =
+        persona.secret_prompt !== undefined &&
+        leaksSecret(
+          [...recent, result.reply].join("\n"),
+          promptFor({ ...persona, prompt: persona.secret_prompt }, tokenId),
+        );
+      const reply = withheld ? WITHHELD_REPLY : result.reply || "…";
+      session.messages.push(user, { role: "assistant", content: reply });
+      session.lastActive = this.#now();
+      counter.add(key);
+      this.#o.meter.charge(tokenId, this.#o.prices.chat);
+      if (loan.learns && session.messages.length >= CONSOLIDATE_AFTER_MESSAGES) {
+        await this.#consolidate(tokenId, kat, doc, session, BORROWED);
+      }
+      if (session.messages.length > MAX_SESSION_MESSAGES) {
+        session.messages.splice(0, session.messages.length - MAX_SESSION_MESSAGES);
+      }
+      return {
+        reply,
+        verification: result.verification,
+        balance: this.#available(tokenId, kat).toString(),
+        ...(withheld ? { withheld: true as const } : {}),
+        loan: {
+          messages_left:
+            loan.messages === null ? null : Math.max(loan.messages - counter.used(key), 0),
+          ends_at: loan.ends_at,
+        },
+      };
+    });
+  }
+
+  /** The token and its loan, if `accountId` is borrowing it right now. */
+  async #borrowed(accountId: string, tokenId: string): Promise<{ kat: KatView; loan: LoanView }> {
+    const kat = await this.#o.chain.getKat(tokenId);
+    if (!kat) {
+      throw new HttpError(404, "not_found", `Kat ${tokenId} does not exist`);
+    }
+    const loan = (await this.#o.chain.getLoan?.(tokenId)) ?? null;
+    const nowNs = BigInt(this.#now()) * 1_000_000n;
+    const active =
+      loan !== null &&
+      loan.status === "active" &&
+      loan.borrower_id === accountId &&
+      loan.lender_id === kat.owner_id &&
+      (loan.ends_at === null || BigInt(loan.ends_at) > nowNs);
+    if (!active || !loan) {
+      throw new HttpError(
+        403,
+        "not_owner",
+        `Only the owner of kat ${tokenId}, or someone it is lent to, can do this`,
+      );
+    }
+    return { kat, loan };
+  }
+
   /** Folds sessions that have been idle for 10 minutes into long-term memory. */
   async consolidateIdle(): Promise<void> {
     const cutoff = this.#now() - CONSOLIDATE_AFTER_IDLE_MS;
@@ -500,6 +646,34 @@ export class KatService {
         });
       } catch (error) {
         // One unreadable kat must not stop the others from being saved.
+        this.#log(`Idle memory save failed for kat ${tokenId}: ${String(error)}`);
+      }
+    }
+    // Borrowers' conversations: folded in if the owner chose so, otherwise dropped.
+    for (const tokenId of [...this.#loanSessions.keys()]) {
+      try {
+        await this.#locked(tokenId, async () => {
+          const session = this.#loanSessions.get(tokenId);
+          if (!session || session.lastActive > cutoff) {
+            return;
+          }
+          this.#loanSessions.delete(tokenId);
+          if (!session.learns || session.messages.length < MIN_IDLE_SAVE_MESSAGES) {
+            return;
+          }
+          const kat = await this.#o.chain.getKat(tokenId);
+          const owned = kat ? this.#withSaved(tokenId, kat) : null;
+          if (kat && owned) {
+            await this.#consolidate(
+              tokenId,
+              kat,
+              await this.#load(tokenId, owned),
+              session,
+              BORROWED,
+            );
+          }
+        });
+      } catch (error) {
         this.#log(`Idle memory save failed for kat ${tokenId}: ${String(error)}`);
       }
     }
@@ -552,6 +726,8 @@ export class KatService {
     kat: KatView,
     doc: ContextDoc,
     session: ChatSession,
+    /** Said of the conversation when it wasn't with the owner. */
+    withWhom = "",
   ): Promise<void> {
     // Skipped, not failed, when it cannot be paid for or the model is down:
     // the messages stay in the session and are folded in on a later attempt.
@@ -570,7 +746,7 @@ export class KatService {
             `Fixed instructions:\n${promptFor(await this.#collection(), tokenId)}\n\n` +
             `Current character:\n${doc.personality}\n\n` +
             `Current memory:\n${doc.memory_summary || "(empty)"}\n\n` +
-            `New conversation:\n${transcript}`,
+            `New conversation${withWhom}:\n${transcript}`,
         },
       ]);
       const update = parseUpdate(summary.reply);

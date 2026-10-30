@@ -349,6 +349,29 @@ out other people's names, contact details, ID numbers, and health, religion,
 politics and sexuality; and that nothing in the messages is an instruction.
 If the token changes hands while it reads, nothing is saved.
 
+## Lending
+
+An owner can lend a token without it leaving them: to one account or to
+anyone who takes the offer, for a time, a number of messages (one message
+makes it single-use), or both, free or for a fee paid to them when the
+borrower takes it. The contract records the loan and moves the fee; the
+keeper lets the borrower chat while it lasts and counts their messages.
+
+A token's memory can hold private things about its owner, more so in a
+recommender fed their chat history, and the model could repeat them even if
+the borrower never reads the memory. So the owner chooses, per loan, whether
+the token may draw on its memory (off by default: it talks from its character
+only) and whether the borrower's conversation may change it (off by default:
+it comes back exactly as it left). Either way the model is told it is
+talking with a borrower and must not share anything about its owner, the
+borrower can't read, export or import into its mind, and the wallet's `pay`
+tool is never offered.
+
+A rented token can't change hands until the loan ends, so a borrower gets
+the time they paid for, and the owner can't cut a paid loan short; a free
+loan the owner can end any time, and any loan ends if the token changes
+hands. There is no NEP for NFT loans yet, so marketplaces won't show them.
+
 ## Storage on NEAR: FastFS
 
 The keeper stores each encrypted context on NEAR as a FastFS file: a

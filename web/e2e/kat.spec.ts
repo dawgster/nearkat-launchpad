@@ -112,7 +112,9 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
 
   // The previous owner can still see that the kat exists, but not its mind.
   await page.goto(`${ALICE_URL}/kat/1`);
-  await expect(page.getByText("The connected wallet isn't the owner.")).toBeVisible();
+  await expect(
+    page.getByText("The connected wallet isn't either.", { exact: false }),
+  ).toBeVisible();
   await expect(page.getByRole("region", { name: "Character" })).toHaveCount(0);
 });
 
@@ -141,6 +143,61 @@ test("the new owner finds the kat with the character it grew into", async ({ pag
   await walletPanel.getByRole("button", { name: "Send from wallet" }).click();
   await expect(walletPanel).toContainText("Sent 0.2 NEAR", { timeout: 60_000 });
   await expect(walletPanel).toContainText(/0\.8\d* NEAR/);
+});
+
+test("an owner lends their kat for two messages, and gets it back unchanged", async ({
+  page,
+  browser,
+}) => {
+  // Bob, who owns it now, lends it to Alice: two messages, no memory, no learning.
+  await page.goto(`${BOB_URL}/kat/1`);
+  await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+  const lendPanel = page.getByRole("region", { name: "Lend it" });
+  await lendPanel.getByLabel("Account to lend it to").fill(process.env.E2E_ALICE_ID as string);
+  await lendPanel.getByLabel("Messages they may send").fill("2");
+  await lendPanel.getByRole("button", { name: "Lend it" }).click();
+  await expect(lendPanel.getByTestId("loan-status")).toContainText("Lent to", { timeout: 30_000 });
+  await expect(lendPanel).toContainText("2 messages, free");
+  await shot(page, "7-lend");
+
+  // Alice, on her own browser, finds it borrowed: she can talk, but not read its mind.
+  const alice = await browser.newPage();
+  await alice.goto(`${ALICE_URL}/kat/1`);
+  await alice.getByRole("button", { name: "Connect wallet", exact: true }).click();
+  const borrowed = alice.getByRole("region", { name: "Borrowed" });
+  await expect(borrowed).toContainText("lent you Nearkat #1", { timeout: 30_000 });
+  await expect(alice.getByRole("region", { name: "Character" })).toHaveCount(0);
+  await expect(alice.getByRole("region", { name: "Memory" })).toHaveCount(0);
+  const box = alice.getByLabel("Message to Nearkat #1");
+  await box.fill("hello, borrowed kat");
+  await alice.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(alice.getByText("Hmph. You said: hello, borrowed kat")).toBeVisible();
+  await expect(borrowed.getByTestId("messages-left")).toHaveText("1 message left");
+  await box.fill("one more");
+  await alice.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(alice.getByText("Hmph. You said: one more")).toBeVisible();
+  await expect(borrowed.getByTestId("messages-left")).toHaveText("0 messages left");
+  await shot(alice, "8-borrowed");
+  await box.fill("and another");
+  await alice.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(
+    alice.getByRole("alert").filter({ hasText: "every message this loan allows" }),
+  ).toBeVisible();
+
+  // She gives it back; it's Bob's alone again, its memory untouched.
+  await borrowed.getByRole("button", { name: "Give it back" }).click();
+  await expect(alice.getByText("Only its owner, or someone it's lent to")).toBeVisible({
+    timeout: 30_000,
+  });
+  await alice.close();
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Memory" })).toContainText(
+    "The owner kept saying hello.",
+    { timeout: 30_000 },
+  );
+  await expect(
+    page.getByRole("region", { name: "Lend it" }).getByRole("button", { name: "Lend it" }),
+  ).toBeVisible();
 });
 
 test("a creator launches a collection with its own prompt, and mints from it", async ({ page }) => {

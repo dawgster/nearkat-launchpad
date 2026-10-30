@@ -27,6 +27,39 @@ export const MINT_STORAGE_ALLOWANCE = 2n * 10n ** 22n;
 
 const yocto = (amount: bigint) => `${amount} yocto` as const;
 
+/** A token's loan, as `get_loan` shows it. Times are nanoseconds, amounts yoctoNEAR. */
+export interface LoanView {
+  token_id: string;
+  status: "offered" | "active" | "over";
+  lender_id: string;
+  /** Null: offered to anyone. */
+  borrower_id: string | null;
+  duration_s: string | null;
+  messages: number | null;
+  sees_memory: boolean;
+  learns: boolean;
+  fee: string;
+  started_at: string | null;
+  ends_at: string | null;
+}
+
+/** What an owner chooses when lending a token. */
+export interface LoanTerms {
+  /** Null: anyone may take it. */
+  borrowerId: string | null;
+  /** Null: until ended. */
+  durationSeconds: number | null;
+  /** Null: no limit. */
+  messages: number | null;
+  seesMemory: boolean;
+  learns: boolean;
+  /** yoctoNEAR; 0 for a free loan. */
+  fee: bigint;
+}
+
+/** Covers a loan record's storage; what isn't needed comes back. */
+export const LOAN_STORAGE_DEPOSIT = 10n ** 22n;
+
 /**
  * The value a contract method returned, taken from a transaction outcome.
  * Null when there is none or it cannot be read: wallets differ in what they
@@ -167,6 +200,56 @@ export class KatContract {
       "nft_transfer",
       { receiver_id: receiverId, token_id: tokenId },
       { gas: "30 Tgas", attachedDeposit: yocto(1n) },
+    );
+  }
+
+  /** The token's loan; null when it has none, or the contract predates lending. */
+  async getLoan(tokenId: string): Promise<LoanView | null> {
+    try {
+      return (await this.#view<LoanView | null>("get_loan", { token_id: tokenId })) ?? null;
+    } catch (error) {
+      if (/MethodNotFound|MethodResolveError|does not exist/i.test(String(error))) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Offers the token on loan, as its owner. */
+  async lend(tokenId: string, terms: LoanTerms): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "lend",
+      {
+        token_id: tokenId,
+        borrower_id: terms.borrowerId,
+        duration_s: terms.durationSeconds === null ? null : String(terms.durationSeconds),
+        messages: terms.messages,
+        sees_memory: terms.seesMemory,
+        learns: terms.learns,
+        fee: terms.fee.toString(),
+      },
+      { gas: "30 Tgas", attachedDeposit: yocto(LOAN_STORAGE_DEPOSIT), waitUntil: "FINAL" },
+    );
+  }
+
+  /** Takes a loan on offer, paying its fee (at least a yoctoNEAR). */
+  async borrow(tokenId: string, fee: bigint): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "borrow",
+      { token_id: tokenId },
+      { gas: "30 Tgas", attachedDeposit: yocto(fee > 0n ? fee : 1n), waitUntil: "FINAL" },
+    );
+  }
+
+  /** Ends a loan: the borrower giving it back, or the owner withdrawing or ending it. */
+  async endLoan(tokenId: string): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "end_loan",
+      { token_id: tokenId },
+      { gas: "30 Tgas", attachedDeposit: yocto(1n), waitUntil: "FINAL" },
     );
   }
 

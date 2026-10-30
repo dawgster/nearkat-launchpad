@@ -12,6 +12,7 @@ import { FastfsStore } from "./fastfs.ts";
 import { NearAiInference } from "./inference.ts";
 import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
+import { FileLoanCounter } from "./loans.ts";
 import { FileJournal, Meter } from "./meter.ts";
 import { type ContextStore, FileStore, MirroredStore } from "./store.ts";
 import { DstackAgent, keyProof, phalaCollateral, phalaRootSecret, reportDataFor } from "./tee.ts";
@@ -95,6 +96,7 @@ const collections = new Collections({
       meter,
       prices,
       collection: info,
+      loans: new FileLoanCounter(join(dirname(config.meterJournal), `loans-${contractId}.json`)),
     });
     return { meter, kats };
   },

@@ -302,7 +302,7 @@ impl Contract {
 }
 
 impl Contract {
-    fn owner_of(&self, token_id: &TokenId) -> AccountId {
+    pub(crate) fn owner_of(&self, token_id: &TokenId) -> AccountId {
         self.tokens
             .owner_by_id
             .get(token_id)

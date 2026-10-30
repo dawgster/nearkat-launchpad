@@ -90,6 +90,19 @@ they email you, or the conversations.json inside it).
 - Send it. A moment later the memory reads like it has known you for a year.
   Ask: "What should I read next?"
 
+## 4d. Lend it (1 minute)
+
+Under **Lend it**, lend the kat to the second profile (Bob) for two
+messages, with memory and learning left off.
+
+- In Bob's browser, the kat's page shows **Borrowed**: he can talk to it,
+  but its character, memory and wallet aren't there. After two messages it
+  says the loan is used up.
+- "It never left my wallet. It talked from its character only, so nothing it
+  remembers about me came up, and it comes back exactly as it left."
+- Try a fee instead: the offer becomes **For rent**, the fee comes straight
+  to you, and the kat can't be sold until the rental ends.
+
 ## 5. Verify (1 minute)
 
 Click **Verify this kat**.

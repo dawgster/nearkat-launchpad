@@ -898,3 +898,74 @@ async fn a_tokens_own_wallet_pays_under_its_owners_rules_and_goes_with_it_at_onc
     assert!(alice.is_err());
     Ok(())
 }
+
+async fn loan(env: &Env, token_id: &str) -> TestResult<Value> {
+    Ok(env
+        .contract
+        .call_function("get_loan", json!({ "token_id": token_id }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data)
+}
+
+#[tokio::test]
+async fn a_token_rented_out_pays_its_owner_and_comes_back_when_its_time_is_up() -> TestResult {
+    let env = setup().await?;
+    let id = mint(&env, &env.alice, NearToken::from_near(3)).await?;
+
+    // Alice offers it to anyone, for 1 NEAR, for a few seconds.
+    let offered = call(
+        &env,
+        &env.alice,
+        "lend",
+        json!({
+            "token_id": id, "duration_s": "4", "messages": 10,
+            "sees_memory": false, "learns": false, "fee": NearToken::from_near(1),
+        }),
+        NearToken::from_millinear(10),
+    )
+    .await??;
+    assert_eq!(offered["status"], "offered");
+
+    // Bob takes it, overpaying; the fee goes to Alice and the rest comes back.
+    let alice_before = balance(&env, env.alice.id.as_str()).await?;
+    let bob_before = balance(&env, env.bob.id.as_str()).await?;
+    let started = call(
+        &env,
+        &env.bob,
+        "borrow",
+        json!({ "token_id": id }),
+        NearToken::from_millinear(1500),
+    )
+    .await??;
+    assert_eq!(started["status"], "active");
+    assert_eq!(started["borrower_id"], env.bob.id.as_str());
+    assert_eq!(
+        balance(&env, env.alice.id.as_str()).await? - alice_before,
+        NearToken::from_near(1).as_yoctonear()
+    );
+    let bob_spent = bob_before - balance(&env, env.bob.id.as_str()).await?;
+    assert!(bob_spent >= NearToken::from_near(1).as_yoctonear());
+    assert!(bob_spent < NearToken::from_millinear(1010).as_yoctonear());
+
+    // While it's rented, Alice can't sell it or take it back.
+    let held = transfer(&env, &env.alice, &env.treasury, &id).await?;
+    assert!(held.unwrap_err().contains("rented out"));
+    let ended = call(
+        &env,
+        &env.alice,
+        "end_loan",
+        json!({ "token_id": id }),
+        YOCTO,
+    )
+    .await?;
+    assert!(ended.unwrap_err().contains("It's rented"));
+
+    // Once its time is up, it's hers to give away; the loan goes with that.
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    assert_eq!(loan(&env, &id).await?["status"], "over");
+    transfer(&env, &env.alice, &env.treasury, &id).await??;
+    assert_eq!(loan(&env, &id).await?, Value::Null);
+    Ok(())
+}

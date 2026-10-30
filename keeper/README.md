@@ -58,6 +58,19 @@ tool's result so its reply knows what happened, and reports the outcome to
 the owner (`payment` in the chat reply). A sent payment is charged like a
 save.
 
+**Borrowers.** When a token is lent (`get_loan`), its borrower may chat
+with it through the same `/chat` route while the loan is active by the
+contract's view and by the keeper's clock. The keeper counts their messages
+against the loan's limit (kept in `loans-<contract>.json` beside the meter
+journal; 403 `loan_used_up` when spent), charges them to the token's balance,
+keeps their conversation apart from the owner's, gives the model the
+character, the memory only if the owner allowed it, and a note not to share
+anything about the owner, and never offers the `pay` tool. If the owner
+allowed learning, a borrower's long or idle conversation is folded into
+memory like the owner's; otherwise it is dropped. Borrowers can't read,
+export or import into the mind. Replies to them carry `loan: { messages_left,
+ends_at }`.
+
 **Importing a chat history.** Where the collection's creator allowed it
 (`history_import`), an owner can hand their token what they wrote to
 ChatGPT or Claude; elsewhere the keeper answers 403 `import_off`. The web app opens the export in their browser, keeps

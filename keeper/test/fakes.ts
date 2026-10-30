@@ -12,6 +12,7 @@ import { appId, contextKeyPath, type KeySource, MpcKeyring } from "../src/ckd.ts
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference, Tool } from "../src/inference.ts";
+import type { LoanView } from "../src/loans.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
 import { PaymentRefused, type WalletView } from "../src/wallet.ts";
 
@@ -66,6 +67,34 @@ export class FakeChain implements Chain {
   ckdRequests = 0;
   /** FastFS uploads, by transaction hash. */
   readonly uploads = new Map<string, Uint8Array>();
+  /** Loans by token, as the contract shows them. */
+  readonly loans = new Map<string, LoanView>();
+
+  /** Lends a token as its owner would; the loan is active from now unless said otherwise. */
+  lend(tokenId: string, borrower: string, loan: Partial<LoanView> = {}): LoanView {
+    const kat = this.kats.get(tokenId);
+    const view: LoanView = {
+      token_id: tokenId,
+      status: "active",
+      lender_id: kat?.owner_id ?? "alice.near",
+      borrower_id: borrower,
+      duration_s: null,
+      messages: null,
+      sees_memory: false,
+      learns: false,
+      fee: "0",
+      started_at: "1",
+      ends_at: null,
+      ...loan,
+    };
+    this.loans.set(tokenId, view);
+    return view;
+  }
+
+  async getLoan(tokenId: string): Promise<LoanView | null> {
+    return this.loans.get(tokenId) ?? null;
+  }
+
   /** Token 1's wallet as the contract shows it; null without wallets. */
   wallet: WalletView | null = null;
   /** yoctoNEAR in the wallet's account; null while it isn't open. */

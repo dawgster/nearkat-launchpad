@@ -7,11 +7,14 @@ import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ImportPanel, type KeeperPrivacy } from "../components/ImportPanel.tsx";
+import { LendPanel } from "../components/LendPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
+import type { KatContract } from "../lib/contract.ts";
 import { formatNear, shorten } from "../lib/format.ts";
-import { KeeperError } from "../lib/keeper.ts";
+import { type ChatReply, KeeperError } from "../lib/keeper.ts";
+import { capitalized, describeTerms, loanEnd, who } from "../lib/loans.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
 import { IMPORT_INFO, sealPrompt } from "../lib/sealing.ts";
@@ -83,6 +86,9 @@ function Den({
       ),
   );
   const [attestation] = useAsync("keeper-attestation", () => keeper.attestation());
+  const [loan, reloadLoan] = useAsync(`loan/${scope.contractId}/${tokenId}`, () =>
+    contract.getLoan(tokenId),
+  );
   // Only where the collection's creator allowed it.
   const [collectionView] = useAsync(`collection/${scope.contractId}`, () =>
     contract.getCollection(),
@@ -334,6 +340,20 @@ function Den({
             setOutOfBalance(false);
           }}
         />
+        <LendPanel
+          name={name}
+          noun={scope.noun}
+          network={config.networkId}
+          loan={loan.status === "ready" ? loan.data : undefined}
+          lend={async (terms) => {
+            await signer.lend(tokenId, terms);
+            await reloadLoan();
+          }}
+          end={async () => {
+            await signer.endLoan(tokenId);
+            await reloadLoan();
+          }}
+        />
         <GiveAwayPanel
           noun={scope.noun}
           katName={name}
@@ -347,6 +367,149 @@ function Den({
         />
       </aside>
     </div>
+  );
+}
+
+/**
+ * Someone who doesn't own the token: they may have borrowed it, or be
+ * offered it; otherwise they see that only its owner can talk to it.
+ */
+function Visitor({ tokenId, version }: { tokenId: string; version: number }) {
+  const { keeper, session } = useServices();
+  const wallet = useWallet();
+  const scope = useScope();
+  const { contract, signer } = scope;
+  const name = `${scope.name} #${tokenId}`;
+  const [loan, reloadLoan] = useAsync(`loan/${scope.contractId}/${tokenId}`, () =>
+    contract.getLoan(tokenId),
+  );
+  const [standing, setStanding] = useState<ChatReply["loan"] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const me = wallet.accountId;
+  const current = loan.status === "ready" ? loan.data : null;
+  const mine = current?.status === "active" && current.borrower_id === me && me !== null;
+  const offered =
+    current?.status === "offered" && (current.borrower_id === null || current.borrower_id === me);
+
+  const act = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await action();
+      await reloadLoan();
+    } catch (error) {
+      setProblem(describeProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const alert = problem && (
+    <p role="alert" className="mt-3 flex items-start gap-2 text-sm text-alarm">
+      <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+      {problem}
+    </p>
+  );
+
+  if (loan.status === "loading") {
+    return null;
+  }
+  if (mine && current && session) {
+    const left = standing?.messages_left ?? current.messages;
+    return (
+      <div className="mt-8 grid items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:gap-6">
+        <div className="lg:sticky lg:top-5">
+          <Chat
+            katName={name}
+            chatPrice={scope.prices.chat}
+            avatar={
+              <TokenArt
+                contractId={scope.contractId}
+                tokenId={tokenId}
+                contextVersion={version || 1}
+                style={scope.art}
+                size={32}
+                decorative
+              />
+            }
+            send={(message) =>
+              session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
+            }
+            onReply={(reply) => setStanding(reply.loan ?? null)}
+            onOutOfBalance={() => undefined}
+            starters={scope.starters.fresh}
+          />
+        </div>
+        <aside className="min-w-0 space-y-5">
+          <section aria-labelledby="borrowed" className="card card-lit">
+            <h2 id="borrowed" className="card-title flex items-center gap-2">
+              <Icon name="clock" size={18} className="text-[var(--accent)]" />
+              Borrowed
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-mist">
+              {who(current.lender_id)} lent you {name}
+              {loanEnd(current) ? ` until ${loanEnd(current)}` : ""}.{" "}
+              {capitalized(describeTerms(current, scope.noun))}
+            </p>
+            {left !== null && (
+              <p className="mt-3 font-display text-2xl tracking-tight" data-testid="messages-left">
+                {left} message{left === 1 ? "" : "s"} left
+              </p>
+            )}
+            <button
+              type="button"
+              className="button button-quiet mt-4 w-full"
+              disabled={busy}
+              onClick={() => void act(() => (signer as KatContract).endLoan(tokenId))}
+            >
+              Give it back
+            </button>
+            {alert}
+          </section>
+        </aside>
+      </div>
+    );
+  }
+  if (offered && current) {
+    const fee = BigInt(current.fee);
+    return (
+      <section aria-labelledby="offer" className="card card-lit mt-8 max-w-2xl">
+        <h2 id="offer" className="card-title flex items-center gap-2">
+          <Icon name="clock" size={18} className="text-[var(--accent)]" />
+          {fee > 0n ? "For rent" : "On offer"}
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          {who(current.lender_id)} is lending {name} to{" "}
+          {current.borrower_id === null ? "anyone" : "you"}: {describeTerms(current, scope.noun)}{" "}
+          You talk to it; you can't read its mind, use its wallet or keep it.
+        </p>
+        {signer ? (
+          <button
+            type="button"
+            className="button mt-4"
+            disabled={busy}
+            onClick={() => void act(() => signer.borrow(tokenId, fee))}
+          >
+            {busy
+              ? "Borrowing…"
+              : fee > 0n
+                ? `Rent it for ${formatNear(fee, 6)} NEAR`
+                : "Borrow it"}
+          </button>
+        ) : (
+          <p className="mt-4 text-sm text-lamp">Connect your wallet to borrow it.</p>
+        )}
+        {alert}
+      </section>
+    );
+  }
+  return (
+    <p className="card mt-8 flex max-w-2xl items-start gap-3 text-mist">
+      <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-lamp" />
+      {wallet.status === "connected"
+        ? `Only its owner, or someone it's lent to, can talk to ${name}. The connected wallet isn't either.`
+        : `Only its owner, or someone it's lent to, can talk to ${name}. Connect your wallet.`}
+    </p>
   );
 }
 
@@ -497,12 +660,11 @@ export function Kat() {
                 onVersion={onVersion}
               />
             ) : (
-              <p className="card mt-8 flex max-w-2xl items-start gap-3 text-mist">
-                <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-lamp" />
-                {wallet.status === "connected"
-                  ? `Only its owner can talk to ${name} or read its mind. The connected wallet isn't the owner.`
-                  : `Only its owner can talk to ${name} or read its mind. Connect the wallet that owns it.`}
-              </p>
+              <Visitor
+                key={`${scope.contractId}/${id}/${wallet.accountId ?? ""}`}
+                tokenId={id}
+                version={version}
+              />
             )}
           </>
         )}

@@ -32,6 +32,8 @@ export interface ChatReply {
   withheld?: boolean;
   /** Set when the token's mind tried to pay from its wallet. */
   payment?: PaymentOutcome;
+  /** Set when a borrower is talking: what is left of their loan. `ends_at` is nanoseconds. */
+  loan?: { messages_left: number | null; ends_at: string | null };
 }
 
 /** A payment the token's mind asked for. Amounts are yoctoNEAR. */

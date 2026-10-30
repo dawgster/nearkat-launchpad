@@ -1513,3 +1513,232 @@ fn a_failed_payment_never_refunds_rules_set_since() {
         MILLI.saturating_mul(4)
     );
 }
+
+mod lending {
+    use super::*;
+    use crate::lending::LoanStatus;
+    use near_sdk::json_types::U64;
+
+    const SECOND: u64 = 1_000_000_000;
+    const STORAGE: NearToken = NearToken::from_millinear(10);
+
+    /// Token 1, owned by alice.
+    fn minted() -> Contract {
+        let mut c = deploy();
+        ctx("alice.near", NearToken::from_near(3));
+        c.mint();
+        c
+    }
+
+    fn lend(
+        c: &mut Contract,
+        borrower: Option<&str>,
+        seconds: Option<u64>,
+        fee: Option<NearToken>,
+    ) -> crate::lending::LoanView {
+        c.lend(
+            "1".to_string(),
+            borrower.map(acc),
+            seconds.map(U64),
+            Some(5),
+            false,
+            false,
+            fee,
+        )
+    }
+
+    #[test]
+    fn a_free_loan_to_someone_starts_at_once_and_ends_on_time() {
+        let mut c = minted();
+        ctx_at("alice.near", STORAGE, 10 * SECOND);
+        let loan = lend(&mut c, Some("bob.near"), Some(60), None);
+        assert_eq!(loan.status, LoanStatus::Active);
+        assert_eq!(loan.borrower_id, Some(acc("bob.near")));
+        assert_eq!(loan.ends_at, Some(U64(70 * SECOND)));
+        assert_eq!(loan.messages, Some(5));
+        assert!(!loan.sees_memory && !loan.learns);
+        ctx_at("bob.near", NearToken::from_yoctonear(0), 69 * SECOND);
+        assert_eq!(
+            c.get_loan("1".to_string()).unwrap().status,
+            LoanStatus::Active
+        );
+        ctx_at("bob.near", NearToken::from_yoctonear(0), 70 * SECOND);
+        assert_eq!(
+            c.get_loan("1".to_string()).unwrap().status,
+            LoanStatus::Over
+        );
+    }
+
+    #[test]
+    fn a_paid_offer_starts_when_someone_pays_for_it() {
+        let mut c = minted();
+        ctx_at("alice.near", STORAGE, SECOND);
+        let fee = NearToken::from_near(1);
+        let offer = lend(&mut c, None, Some(3600), Some(fee));
+        assert_eq!(offer.status, LoanStatus::Offered);
+        assert_eq!(offer.borrower_id, None);
+        ctx_at("bob.near", NearToken::from_near(2), 5 * SECOND);
+        let loan = c.borrow("1".to_string());
+        assert_eq!(loan.status, LoanStatus::Active);
+        assert_eq!(loan.borrower_id, Some(acc("bob.near")));
+        assert_eq!(loan.ends_at, Some(U64(3605 * SECOND)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach the fee")]
+    fn borrowing_needs_the_fee() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("bob.near", NearToken::from_millinear(500));
+        c.borrow("1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "offered to someone else")]
+    fn an_offer_to_someone_is_only_theirs() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(
+            &mut c,
+            Some("bob.near"),
+            Some(60),
+            Some(NearToken::from_near(1)),
+        );
+        ctx("carol.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "isn't on offer")]
+    fn a_loan_is_taken_once() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("bob.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+        ctx("carol.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "rented out")]
+    fn a_rented_token_cant_change_hands() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("bob.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+        ctx("alice.near", YOCTO);
+        c.nft_transfer(acc("carol.near"), "1".to_string(), None, None);
+    }
+
+    #[test]
+    fn giving_a_token_away_ends_a_free_loan() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("bob.near"), None, None);
+        ctx("alice.near", YOCTO);
+        c.nft_transfer(acc("carol.near"), "1".to_string(), None, None);
+        assert_eq!(c.get_loan("1".to_string()), None);
+    }
+
+    #[test]
+    fn once_its_time_is_up_a_rented_token_can_change_hands() {
+        let mut c = minted();
+        ctx_at("alice.near", STORAGE, SECOND);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx_at("bob.near", NearToken::from_near(1), SECOND);
+        c.borrow("1".to_string());
+        ctx_at("alice.near", YOCTO, 62 * SECOND);
+        c.nft_transfer(acc("carol.near"), "1".to_string(), None, None);
+        assert_eq!(
+            c.get_kat("1".to_string()).unwrap().owner_id,
+            acc("carol.near")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "It's rented")]
+    fn the_owner_cant_cut_a_paid_loan_short() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("bob.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+        ctx("alice.near", YOCTO);
+        c.end_loan("1".to_string());
+    }
+
+    #[test]
+    fn the_borrower_can_give_it_back_and_the_owner_can_end_a_free_loan() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("bob.near", NearToken::from_near(1));
+        c.borrow("1".to_string());
+        ctx("bob.near", YOCTO);
+        c.end_loan("1".to_string());
+        assert_eq!(c.get_loan("1".to_string()), None);
+
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("bob.near"), None, None);
+        ctx("alice.near", YOCTO);
+        c.end_loan("1".to_string());
+        assert_eq!(c.get_loan("1".to_string()), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the borrower or the owner")]
+    fn nobody_else_can_end_an_active_loan() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("bob.near"), Some(60), None);
+        ctx("carol.near", YOCTO);
+        c.end_loan("1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "already on loan")]
+    fn an_active_loan_isnt_replaced() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("bob.near"), Some(60), None);
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("carol.near"), Some(60), None);
+    }
+
+    #[test]
+    fn an_offer_can_be_changed_before_anyone_takes_it() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, None, Some(60), Some(NearToken::from_near(1)));
+        ctx("alice.near", STORAGE);
+        let offer = lend(&mut c, None, Some(60), Some(NearToken::from_near(2)));
+        assert_eq!(offer.fee, NearToken::from_near(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the token's owner")]
+    fn only_the_owner_lends() {
+        let mut c = minted();
+        ctx("bob.near", STORAGE);
+        lend(&mut c, Some("carol.near"), Some(60), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "for the loan's storage")]
+    fn lending_pays_for_its_storage() {
+        let mut c = minted();
+        ctx("alice.near", YOCTO);
+        lend(&mut c, Some("bob.near"), Some(60), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "from a second to a year")]
+    fn a_loan_has_a_sensible_length() {
+        let mut c = minted();
+        ctx("alice.near", STORAGE);
+        lend(&mut c, Some("bob.near"), Some(0), None);
+    }
+}

@@ -23,8 +23,10 @@ impl NonFungibleTokenCore for Contract {
         approval_id: Option<u64>,
         memo: Option<String>,
     ) {
+        self.assert_not_rented(&token_id);
         self.tokens
-            .nft_transfer(receiver_id, token_id, approval_id, memo);
+            .nft_transfer(receiver_id, token_id.clone(), approval_id, memo);
+        self.clear_loan(&token_id);
     }
 
     #[payable]
@@ -36,8 +38,12 @@ impl NonFungibleTokenCore for Contract {
         memo: Option<String>,
         msg: String,
     ) -> PromiseOrValue<bool> {
-        self.tokens
-            .nft_transfer_call(receiver_id, token_id, approval_id, memo, msg)
+        self.assert_not_rented(&token_id);
+        let transfer =
+            self.tokens
+                .nft_transfer_call(receiver_id, token_id.clone(), approval_id, memo, msg);
+        self.clear_loan(&token_id);
+        transfer
     }
 
     fn nft_token(&self, token_id: TokenId) -> Option<Token> {

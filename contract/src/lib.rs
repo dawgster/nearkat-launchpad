@@ -3,6 +3,7 @@ pub mod attestation;
 pub(crate) mod ckd;
 mod kat;
 mod keeper;
+pub mod lending;
 mod nft;
 mod payout;
 pub(crate) mod upgrade;

@@ -43,6 +43,23 @@ encrypted under, accepts only the current one, and records it on the token
 (`get_kat().key_epoch`). The keeper may request any epoch up to the current
 one, to read older contexts.
 
+**Lending.** `lend({ token_id, borrower_id?, duration_s?, messages?,
+sees_memory, learns, fee? })` (owner; attach about 0.01 NEAR for the record's
+storage, the rest comes back) offers the token on loan, to one account or to
+anyone, for a time, a number of messages, or both. A free loan to a named
+account starts at once; otherwise the borrower takes it with `borrow({ token_id })`,
+attaching the fee, which goes straight to the owner. `end_loan({ token_id })`
+(1 yocto): the borrower can give it back any time; the owner can withdraw an
+offer or end a free loan, not a paid one before its time; anyone can clear one
+that is over. `get_loan({ token_id })` shows it with its status (`offered`,
+`active`, `over`). A rented token (an active loan with a fee) can't change
+hands until the loan ends; any other loan ends when it does. The token never
+leaves its owner. The keeper enforces the rest: the borrower may chat, with or
+without the token's memory (`sees_memory`), changing it only if `learns`;
+never read its mind, use its wallet or import into it. Loans live under their
+own storage keys, so older collections need no migration. Events:
+`loan_offered`, `loan_started`, `loan_ended`.
+
 **History import.** `collection.history_import` (default false) lets owners
 teach their token from their ChatGPT or Claude history; the keeper refuses
 imports otherwise. It's fixed at deployment and kept under its own storage

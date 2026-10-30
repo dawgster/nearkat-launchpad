@@ -286,6 +286,7 @@ export default async function globalSetup() {
   await waitFor(ALICE_URL);
   await waitFor(BOB_URL);
   process.env.E2E_BOB_ID = names.bob;
+  process.env.E2E_ALICE_ID = names.alice;
   process.env.E2E_CONTRACT_ID = names.contract;
   process.env.E2E_LAUNCHPAD_ID = names.launchpad;
 

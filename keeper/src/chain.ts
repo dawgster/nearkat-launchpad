@@ -1,6 +1,7 @@
 import { FunctionCallError, type Near } from "near-kit";
 import type { KeySource } from "./ckd.ts";
 import type { CollectionInfo } from "./collection.ts";
+import type { LoanView } from "./loans.ts";
 import type { KatView } from "./types.ts";
 import { PaymentRefused, type WalletChain, type WalletView } from "./wallet.ts";
 
@@ -26,6 +27,8 @@ export interface TokenChain {
   debitBatch(seq: number, items: Array<[string, string]>): Promise<DebitResult>;
   /** Sequence number of the last applied batch. */
   getDebitSeq(): Promise<number>;
+  /** The token's loan; null when it has none, or the contract predates lending. */
+  getLoan?(tokenId: string): Promise<LoanView | null>;
 }
 
 export interface ContextSave {
@@ -125,6 +128,24 @@ export class NearChain implements Chain {
       { finality: this.#finality },
     );
     return kat ?? null;
+  }
+
+  async getLoan(tokenId: string): Promise<LoanView | null> {
+    try {
+      const loan = await this.#near.view<LoanView | null>(
+        this.#contractId,
+        "get_loan",
+        { token_id: tokenId },
+        { finality: this.#finality },
+      );
+      return loan ?? null;
+    } catch (error) {
+      // Collections from before lending have no such method: nothing is lent.
+      if (/MethodNotFound|MethodResolveError|not found|does not exist/i.test(String(error))) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async setContext(save: ContextSave): Promise<void> {
