@@ -1,11 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
+import { katForToken } from "../../art/kat/collection.ts";
+import { NATURES } from "../../art/kat/natures.ts";
 import { CharacterPanel } from "../src/components/CharacterPanel.tsx";
 import { Chat } from "../src/components/Chat.tsx";
 import { FundPanel } from "../src/components/FundPanel.tsx";
 import { GiveAwayPanel } from "../src/components/GiveAwayPanel.tsx";
 import { MintPanel } from "../src/components/MintPanel.tsx";
+import { NaturePanel } from "../src/components/NaturePanel.tsx";
 import { WalletPanel } from "../src/components/WalletPanel.tsx";
 import { type ChatReply, KeeperError } from "../src/lib/keeper.ts";
 import type { WalletView } from "../src/lib/wallet.ts";
@@ -479,5 +482,22 @@ describe("Chat payments", () => {
     expect(
       await screen.findByText("Paid 0.01 NEAR to bob.near from its wallet (a gift)."),
     ).toBeTruthy();
+  });
+});
+
+describe("NaturePanel", () => {
+  test("lists the kat's six traits with the nature each gives it", () => {
+    render(<NaturePanel tokenId="1" />);
+    const kat = katForToken("1");
+    const text = screen.getByRole("region", { name: "Nature" }).textContent ?? "";
+    for (const [layer, label] of [
+      ["sky", "Sky"],
+      ["paws", "Paws"],
+      ["headwear", "Headwear"],
+    ] as const) {
+      expect(text).toContain(label);
+      expect(text).toContain(kat[layer]);
+      expect(text).toContain(NATURES[layer][kat[layer]]);
+    }
   });
 });

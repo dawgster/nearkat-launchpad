@@ -1,7 +1,10 @@
 import { dirname, join } from "node:path";
 import { serve } from "@hono/node-server";
 import { Near, verifyNep413Signature } from "near-kit";
-import { katSvg, sigilSvg } from "../../art/svg.ts";
+import { katForToken } from "../../art/kat/collection.ts";
+import { natureOf } from "../../art/kat/natures.ts";
+import { renderKat } from "../../art/kat/render.ts";
+import { sigilSvg } from "../../art/svg.ts";
 import { stageOf } from "../../art/traits.ts";
 import { createApp } from "./app.ts";
 import { Auth } from "./auth.ts";
@@ -96,6 +99,9 @@ const collections = new Collections({
       meter,
       prices,
       collection: info,
+      // Kats have traits, and their traits are their nature; launched tokens don't.
+      nature:
+        contractId === config.contractId ? (tokenId) => natureOf(katForToken(tokenId)) : undefined,
       loans: new FileLoanCounter(join(dirname(config.meterJournal), `loans-${contractId}.json`)),
     });
     return { meter, kats };
@@ -172,11 +178,13 @@ const app = createApp({
     if (!served || !kat) {
       return null;
     }
-    // Drawn exactly as the web app draws it: kats for the home collection.
-    const draw = contractId === config.contractId ? katSvg : sigilSvg;
-    return draw(`${contractId}/${tokenId}`, stageOf(Number(kat.context_version) || 1), {
-      title: `${served.info.name} #${tokenId}`,
-    });
+    // Drawn exactly as the web app draws it: kats for the home collection,
+    // from their traits; sigils for launched ones.
+    const stage = stageOf(Number(kat.context_version) || 1);
+    const title = `${served.info.name} #${tokenId}`;
+    return contractId === config.contractId
+      ? renderKat(katForToken(tokenId), stage, { title })
+      : sigilSvg(`${contractId}/${tokenId}`, stage, { title });
   },
   attestation: async () =>
     appInfo && quote

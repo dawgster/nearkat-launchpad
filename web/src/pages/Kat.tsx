@@ -8,6 +8,7 @@ import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ImportPanel, type KeeperPrivacy } from "../components/ImportPanel.tsx";
 import { LendPanel } from "../components/LendPanel.tsx";
+import { NaturePanel } from "../components/NaturePanel.tsx";
 import { Savannah, type SavannahMood } from "../components/Savannah.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
@@ -242,6 +243,12 @@ function Den({
             <Icon name="sparkle" size={18} className="text-mist" />
             Its mind
           </p>
+          {scope.home && (
+            <>
+              <NaturePanel tokenId={tokenId} />
+              <div className="divider" />
+            </>
+          )}
           <CharacterPanel character={context.data.personality} noun={scope.noun} />
           <div className="divider" />
           <section aria-labelledby="memory">

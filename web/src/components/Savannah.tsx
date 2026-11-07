@@ -1,4 +1,5 @@
 import { type CSSProperties, memo, useEffect, useId, useRef, useState } from "react";
+import { SKULL } from "../../../art/kat/base.ts";
 import type { DayPhase } from "../lib/dayPhase.ts";
 
 /**
@@ -135,6 +136,11 @@ function Meerkat({ cameo }: { cameo: Cameo }) {
           <stop offset=".55" stopColor="#ffe88a" />
           <stop offset="1" stopColor="#bc7710" />
         </linearGradient>
+        <linearGradient id={`${id}-iris`} x1="0" y1="0" x2="0" y2="1">
+          <stop stopColor="#1f4a52" />
+          <stop offset=".55" stopColor="#4f97a2" />
+          <stop offset="1" stopColor="#a6e4e8" />
+        </linearGradient>
       </defs>
       <path
         d="M60 145C37 161 43 193 29 206C53 212 69 186 69 177"
@@ -158,7 +164,7 @@ function Meerkat({ cameo }: { cameo: Cameo }) {
         <ellipse cx="138" cy="66" rx="16" ry="22" fill="#ae885d" stroke="#39271d" strokeWidth="3" />
         <ellipse cx="138" cy="67" rx="9" ry="14" fill="#483328" />
         <path
-          d="M42 64C44 36 60 27 77 25L85 12L91 23L100 17L106 27C128 29 141 48 140 71C152 92 128 116 92 117C55 117 31 96 42 64Z"
+          d={SKULL}
           fill={`url(#${id}-fur)`}
           stroke="#39271d"
           strokeWidth="3"
@@ -175,19 +181,47 @@ function Meerkat({ cameo }: { cameo: Cameo }) {
         <g className="burrow-kat-eyes">
           <ellipse cx="69" cy="64" rx="13" ry="18" fill="#fff9eb" />
           <ellipse cx="114" cy="64" rx="13" ry="18" fill="#fff9eb" />
+          {/* The same glossy eye as the kat portraits (art/kat/layers/eyes.ts), at this size. */}
           <g className="burrow-kat-pupils">
-            <ellipse cx="72" cy="66" rx="8" ry="12" fill="#72aeb4" />
-            <ellipse cx="111" cy="66" rx="8" ry="12" fill="#72aeb4" />
-            <ellipse cx="73" cy="67" rx="5" ry="9" fill="#171a19" />
-            <ellipse cx="110" cy="67" rx="5" ry="9" fill="#171a19" />
-            <circle cx="70" cy="61" r="3" fill="white" />
-            <circle cx="107" cy="61" r="3" fill="white" />
+            {(
+              [
+                [69, 1],
+                [114, -1],
+              ] as const
+            ).map(([cx, inward]) => (
+              <g key={cx}>
+                <ellipse
+                  cx={cx + inward * 2.2}
+                  cy="66"
+                  rx="10.4"
+                  ry="14.3"
+                  fill={`url(#${id}-iris)`}
+                />
+                <ellipse cx={cx + inward * 2.6} cy="65.7" rx="5.2" ry="7.8" fill="#0f1d20" />
+                <ellipse cx={cx - inward * 1.7} cy="59.7" rx="3.9" ry="4.3" fill="white" />
+                <circle cx={cx + inward * 6.1} cy="70.5" r="2" fill="white" />
+              </g>
+            ))}
           </g>
+          {(
+            [
+              [69, 1],
+              [114, -1],
+            ] as const
+          ).map(([cx, i]) => (
+            <path
+              key={cx}
+              d={`M${cx - i * 13.9} 63.1C${cx - i * 13} 46.6 ${cx + i * 11.3} 42.3 ${cx + i * 14.3} 58.8C${cx + i * 10.4} 47.5 ${cx - i * 9.6} 49.2 ${cx - i * 13.9} 63.1ZM${cx - i * 12.2} 54.4L${cx - i * 18.3} 51L${cx - i * 13.9} 58.8Z`}
+              fill="#39271d"
+            />
+          ))}
         </g>
         <path
           d="M53 87C64 77 77 79 91 82C106 79 121 77 133 87C132 106 110 115 91 115C72 115 53 103 53 87Z"
           fill={`url(#${id}-belly)`}
         />
+        <ellipse cx="52" cy="93" rx="9" ry="5" fill="#ff8a7a" opacity="0.4" />
+        <ellipse cx="131" cy="93" rx="9" ry="5" fill="#ff8a7a" opacity="0.4" />
         <path d="M81 84Q91 77 101 84Q104 92 91 97Q79 92 81 84Z" fill="#271e18" />
         <path d="M85 85L91 83" stroke="#776354" strokeWidth="2" strokeLinecap="round" />
         <path

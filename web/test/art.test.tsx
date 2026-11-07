@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
+import { katForToken } from "../../art/kat/collection.ts";
 import { katSvg, sigilSvg } from "../../art/svg.ts";
 import { Growth } from "../src/components/Growth.tsx";
 import { KatPortrait } from "../src/components/KatPortrait.tsx";
@@ -58,10 +59,13 @@ describe("growth", () => {
 });
 
 describe("portraits", () => {
-  test("describes a kat for screen readers, accessory included once it is grown", () => {
-    render(<KatPortrait seed="nearkat.testnet/1" stage={2} />);
+  test("draws a kat's own traits, and names them for screen readers", () => {
+    render(<KatPortrait tokenId="1" stage={2} />);
+    const kat = katForToken("1");
     const name = screen.getByRole("img").textContent ?? "";
-    expect(name).toMatch(/^Sentry: .+ fur under a .+ sky, wearing a .+$/);
+    expect(name).toMatch(/^Sentry kat, /);
+    expect(name).toContain(`${kat.fur.toLowerCase()} fur`);
+    expect(name).toContain(`${kat.sky.toLowerCase()} sky`);
   });
 
   test("leaves decorative art out of the accessibility tree", () => {

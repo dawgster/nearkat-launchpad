@@ -24,12 +24,10 @@ export function TokenArt({
   label?: string;
   decorative?: boolean;
 }) {
-  const props = {
-    seed: `${contractId}/${tokenId}`,
-    stage: stageOf(contextVersion ?? 1),
-    size,
-    label,
-    decorative,
-  };
-  return style === "kat" ? <KatPortrait {...props} /> : <TokenSigil {...props} />;
+  const common = { stage: stageOf(contextVersion ?? 1), size, label, decorative };
+  return style === "kat" ? (
+    <KatPortrait tokenId={tokenId} {...common} />
+  ) : (
+    <TokenSigil seed={`${contractId}/${tokenId}`} {...common} />
+  );
 }
