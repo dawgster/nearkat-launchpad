@@ -26,18 +26,37 @@ show it next to the rest.
 All six layers are fixed at mint by the token's seed, as today, and the
 picture draws all of them from the start: what you mint is what you see, in
 the metadata and in the art. Growth never adds, removes or changes a trait.
-It changes the pose: a Hatchling peeks out of its burrow, a Pup sits on the
-rim, a Sentry stands up on watch and an Elder stands tall. A pose never hides
-a layer; the burrow's lip sits below the outfit even on a Hatchling.
 
-Today the accessory only appears from Sentry on: `kat()` in `art/svg.ts`
-and `describeKat` in `art/traits.ts` both gate it on stage. Those gates go,
-and the stage's sink into the burrow (`SINK` in `art/svg.ts`) has to stop
-short of covering the outfit.
+The art is a close-up bust, as BLACKDRAGONFOREVER draws its dragons: a big
+chibi head filling a square frame, headwear running off the top, the outfit
+cropped by the bottom edge, thick dark outlines and flat cel shading. Growth
+changes the framing: a Hatchling sits smaller and lower in the frame, a Pup a
+little less so, a Sentry fills it, and an Elder fills it with grey brows and
+a soft glow behind it. No stage hides a layer. The art lives in `art/kat/`
+(canvas and anchors, the base meerkat, one file per layer, and the renderer);
+`node art/scripts/sheet.ts <layer>` draws a contact sheet of a layer.
+
+This replaces today's kat portrait (`katSvg` in `art/svg.ts`), which hides
+its accessory until Sentry and sinks young kats into a burrow.
 
 The existing names carry over: the six furs, the sky names, and the three eye
 shapes are the commons below. The current `accessory` splits into Paws,
 Outfit and Headwear.
+
+## Nature
+
+Every trait value is also a line of personality, in `art/kat/natures.ts`. A
+kat's six lines are its nature: fixed at mint like its look, and given to the
+model in every conversation (before who it has become) and in every character
+update (as fixed, so the character it grows into stays true to it). Borrowers
+talk to the same nature. Launched collections' tokens have no traits and get
+none.
+
+Each layer shapes one part of who a kat is, so six random traits make one
+personality instead of six that argue: Sky its mood and energy, Fur how it is
+with others, Eyes how it sees things, Paws what it's into, Outfit how it
+carries itself, Headwear a signature quirk. Commons are mild; rares carry the
+strong flavours.
 
 ## Sky
 
