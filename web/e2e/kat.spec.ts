@@ -17,6 +17,10 @@ const shot = async (page: import("@playwright/test").Page, name: string) => {
   }
 };
 
+/** A kat's page keeps everything but the conversation in tabs; this opens one. */
+const openTab = (page: import("@playwright/test").Page, name: string) =>
+  page.getByRole("tab", { name, exact: true }).click();
+
 // One story, in order: the second half depends on what the first half did.
 test.describe.configure({ mode: "serial" });
 
@@ -56,6 +60,7 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   await shot(page, "2-burrow");
 
   // Its own wallet: open it, put NEAR in, let it spend a little, and it pays when asked.
+  await openTab(page, "Its wallet");
   const walletPanel = page.getByRole("region", { name: "Its wallet" });
   await expect(walletPanel).toContainText("It isn't open yet.");
   await expect(walletPanel).toContainText(`1.${process.env.E2E_CONTRACT_ID ?? ""}`);
@@ -104,6 +109,7 @@ test("an owner mints a kat, raises it by talking to it, and gives it away", asyn
   await shot(page, "3-verify");
 
   await page.getByRole("link", { name: "Back to Nearkat #1" }).click();
+  await openTab(page, "Give away");
   await page.getByLabel("Account to give Nearkat #1 to").fill(process.env.E2E_BOB_ID as string);
   await page.getByRole("button", { name: "Give Nearkat #1 away" }).click();
   await page.getByRole("button", { name: /^Yes, give Nearkat #1 to/ }).click();
@@ -132,6 +138,7 @@ test("the new owner finds the kat with the character it grew into", async ({ pag
   await expect(page.getByText("Hmph. You said: who are you?")).toBeVisible();
   // The wallet came with the kat, at once, with what was left in it. The
   // previous owner's rules didn't: it can't spend on its own until Bob says so.
+  await openTab(page, "Its wallet");
   const walletPanel = page.getByRole("region", { name: "Its wallet" });
   await expect(walletPanel).toContainText(/1\.0\d* NEAR/);
   await expect(walletPanel).toContainText("The kat can't spend from it on its own.");
@@ -152,6 +159,7 @@ test("an owner lends their kat for two messages, and gets it back unchanged", as
   // Bob, who owns it now, lends it to Alice: two messages, no memory, no learning.
   await page.goto(`${BOB_URL}/kat/1`);
   await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+  await openTab(page, "Lend it");
   const lendPanel = page.getByRole("region", { name: "Lend it" });
   await lendPanel.getByLabel("Account to lend it to").fill(process.env.E2E_ALICE_ID as string);
   await lendPanel.getByLabel("Messages they may send").fill("2");
@@ -195,6 +203,7 @@ test("an owner lends their kat for two messages, and gets it back unchanged", as
     "The owner kept saying hello.",
     { timeout: 30_000 },
   );
+  await openTab(page, "Lend it");
   await expect(
     page.getByRole("region", { name: "Lend it" }).getByRole("button", { name: "Lend it" }),
   ).toBeVisible();

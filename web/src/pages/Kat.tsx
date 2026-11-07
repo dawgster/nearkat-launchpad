@@ -8,10 +8,13 @@ import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ImportPanel, type KeeperPrivacy } from "../components/ImportPanel.tsx";
 import { LendPanel } from "../components/LendPanel.tsx";
+import { Savannah, type SavannahMood } from "../components/Savannah.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
+import { type Panel, TokenLayout } from "../components/TokenLayout.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
 import type { KatContract } from "../lib/contract.ts";
+import { DAY_PHASE_TITLES, useDayGreetings, useDayPhase } from "../lib/dayPhase.ts";
 import { formatNear, shorten } from "../lib/format.ts";
 import { type ChatReply, KeeperError } from "../lib/keeper.ts";
 import { capitalized, describeTerms, loanEnd, who } from "../lib/loans.ts";
@@ -56,6 +59,8 @@ function Den({
   chainBalance,
   recheckOwner,
   onVersion,
+  savannah,
+  onMood,
 }: {
   tokenId: string;
   ownerId: string;
@@ -64,6 +69,10 @@ function Den({
   recheckOwner: () => Promise<void>;
   /** Told the context version each time the mind is read, so the kat can be drawn grown. */
   onVersion: (version: number) => void;
+  /** Laid out on the savannah: one centred conversation, the rest in tabs. */
+  savannah: boolean;
+  /** Told when the kat starts and stops thinking, and when it pays. */
+  onMood: (mood: SavannahMood) => void;
 }) {
   const { config, keeper, session, reader } = useServices();
   const wallet = useWallet();
@@ -155,9 +164,10 @@ function Den({
   if (!session || !signer) {
     return null;
   }
+  const box = savannah ? "mx-auto max-w-2xl" : "";
   if (settling) {
     return (
-      <p className="card mt-8 flex items-center gap-3 text-lamp" role="status">
+      <p className={`card mt-8 flex items-center gap-3 text-lamp ${box}`} role="status">
         <span className="dots flex gap-1" aria-hidden="true">
           <span />
           <span />
@@ -171,7 +181,7 @@ function Den({
   }
   if (context.status === "loading") {
     return (
-      <p className="card mt-8 flex items-center gap-3 text-mist" role="status">
+      <p className={`card mt-8 flex items-center gap-3 text-mist ${box}`} role="status">
         <Icon name="key" size={18} className="shrink-0 text-lamp" />
         Opening {name}'s mind. Your wallet may ask you to approve a sign-in message.
       </p>
@@ -179,7 +189,7 @@ function Den({
   }
   if (context.status === "error") {
     return (
-      <div className="card mt-8" role="alert">
+      <div className={`card mt-8 ${box}`} role="alert">
         <p className="flex items-start gap-2 text-alarm">
           <Icon name="alert" size={18} className="mt-0.5 shrink-0" />
           {describeProblem(context.error)}
@@ -198,31 +208,35 @@ function Den({
     );
   }
 
-  return (
-    <div className="mt-8 grid items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:gap-6">
-      <div className="lg:sticky lg:top-5">
-        <Chat
-          katName={name}
-          avatar={avatar}
-          chatPrice={prices.chat}
-          send={(message) =>
-            session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
-          }
-          onReply={(reply) => {
-            setBalance(BigInt(reply.balance));
-            setOutOfBalance(false);
-            rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
-            // A long conversation may have just been folded into memory.
-            void reloadContext();
-            if (reply.payment) {
-              void reloadWallet();
-            }
-          }}
-          onOutOfBalance={() => setOutOfBalance(true)}
-          starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
-        />
-      </div>
-      <aside className="min-w-0 space-y-5">
+  const chat = (
+    <Chat
+      katName={name}
+      avatar={avatar}
+      chatPrice={prices.chat}
+      send={(message) =>
+        withMood(onMood, () =>
+          session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection)),
+        )
+      }
+      onReply={(reply) => {
+        setBalance(BigInt(reply.balance));
+        setOutOfBalance(false);
+        rememberProof(ownerId, proofId(scope, tokenId), reply.verification);
+        // A long conversation may have just been folded into memory.
+        void reloadContext();
+        if (reply.payment) {
+          void reloadWallet();
+        }
+      }}
+      onOutOfBalance={() => setOutOfBalance(true)}
+      starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
+    />
+  );
+  const panels: Panel[] = [
+    {
+      id: "mind",
+      label: "Its mind",
+      node: (
         <div className="card space-y-5">
           <p className="card-title flex items-center gap-2">
             <Icon name="sparkle" size={18} className="text-mist" />
@@ -248,82 +262,84 @@ function Den({
             </p>
           </section>
         </div>
-        {historyImport && (
-          <ImportPanel
-            name={name}
-            savePrice={prices.save}
-            privacy={privacy}
-            send={async (history) => {
-              const sealKey =
-                attestation.status === "ready" ? attestation.data.seal_public_key : undefined;
-              if (typeof sealKey !== "string") {
-                throw new Error("This keeper has no key to seal your history to.");
-              }
-              const sealed = await sealPrompt(sealKey, JSON.stringify(history), IMPORT_INFO);
-              const result = await session.call((token) =>
-                keeper.importHistory(token, tokenId, sealed, scope.keeperCollection),
-              );
-              setBalance(BigInt(result.balance));
-              await reloadContext();
-              return result;
-            }}
-          />
-        )}
-        {tokenWallet.status === "loading" && (
+      ),
+    },
+  ];
+  if (historyImport) {
+    panels.push({
+      id: "import",
+      label: "Teach it",
+      node: (
+        <ImportPanel
+          name={name}
+          savePrice={prices.save}
+          privacy={privacy}
+          send={async (history) => {
+            const sealKey =
+              attestation.status === "ready" ? attestation.data.seal_public_key : undefined;
+            if (typeof sealKey !== "string") {
+              throw new Error("This keeper has no key to seal your history to.");
+            }
+            const sealed = await sealPrompt(sealKey, JSON.stringify(history), IMPORT_INFO);
+            const result = await session.call((token) =>
+              keeper.importHistory(token, tokenId, sealed, scope.keeperCollection),
+            );
+            setBalance(BigInt(result.balance));
+            await reloadContext();
+            return result;
+          }}
+        />
+      ),
+    });
+  }
+  const near = wallet.near;
+  if (tokenWallet.status !== "ready" || (tokenWallet.data && near)) {
+    panels.push({
+      id: "wallet",
+      label: "Its wallet",
+      node:
+        tokenWallet.status === "loading" ? (
           <p className="card text-sm text-mist" role="status">
             Reading its wallet…
           </p>
-        )}
-        {tokenWallet.status === "error" && (
+        ) : tokenWallet.status === "error" ? (
           <p className="card text-sm text-mist" role="status">
             Its wallet can't be read right now. {describeProblem(tokenWallet.error)}
           </p>
-        )}
-        {tokenWallet.status === "ready" && tokenWallet.data && wallet.near && (
-          <WalletPanel
-            noun={scope.noun}
-            wallet={tokenWallet.data}
-            open={async (amount) => {
-              await wallets.open(wallet.near as NonNullable<typeof wallet.near>, tokenId, amount);
-              await reloadWallet();
-            }}
-            fund={async (amount) => {
-              await (wallet.near as NonNullable<typeof wallet.near>).send(
-                (tokenWallet.data as TokenWallet).address,
-                `${amount} yocto`,
-              );
-              await reloadWallet();
-            }}
-            setRules={async (daily, max) => {
-              await wallets.setRules(
-                wallet.near as NonNullable<typeof wallet.near>,
-                tokenId,
-                daily,
-                max,
-              );
-              await reloadWallet();
-            }}
-            send={async (receiverId, amount) => {
-              const hash = await wallets.send(
-                wallet.near as NonNullable<typeof wallet.near>,
-                tokenId,
-                receiverId,
-                amount,
-              );
-              await reloadWallet();
-              return hash;
-            }}
-          />
-        )}
-        <ExportPanel
-          noun={scope.noun}
-          download={async () => {
-            const mind = await session.call((token) =>
-              keeper.exportMind(token, tokenId, scope.keeperCollection),
-            );
-            saveJson(`${scope.contractId}-${tokenId}-mind.json`, mind);
-          }}
-        />
+        ) : (
+          tokenWallet.data &&
+          near && (
+            <WalletPanel
+              noun={scope.noun}
+              wallet={tokenWallet.data}
+              open={async (amount) => {
+                await wallets.open(near, tokenId, amount);
+                await reloadWallet();
+              }}
+              fund={async (amount) => {
+                await near.send((tokenWallet.data as TokenWallet).address, `${amount} yocto`);
+                await reloadWallet();
+              }}
+              setRules={async (daily, max) => {
+                await wallets.setRules(near, tokenId, daily, max);
+                await reloadWallet();
+              }}
+              send={async (receiverId, amount) => {
+                const hash = await wallets.send(near, tokenId, receiverId, amount);
+                await reloadWallet();
+                return hash;
+              }}
+            />
+          )
+        ),
+    });
+  }
+  panels.push(
+    {
+      id: "balance",
+      label: "Balance",
+      urgent: outOfBalance,
+      node: (
         <FundPanel
           noun={scope.noun}
           balance={balance}
@@ -340,6 +356,12 @@ function Den({
             setOutOfBalance(false);
           }}
         />
+      ),
+    },
+    {
+      id: "lend",
+      label: "Lend it",
+      node: (
         <LendPanel
           name={name}
           noun={scope.noun}
@@ -354,6 +376,27 @@ function Den({
             await reloadLoan();
           }}
         />
+      ),
+    },
+    {
+      id: "copy",
+      label: "Keep a copy",
+      node: (
+        <ExportPanel
+          noun={scope.noun}
+          download={async () => {
+            const mind = await session.call((token) =>
+              keeper.exportMind(token, tokenId, scope.keeperCollection),
+            );
+            saveJson(`${scope.contractId}-${tokenId}-mind.json`, mind);
+          }}
+        />
+      ),
+    },
+    {
+      id: "give",
+      label: "Give away",
+      node: (
         <GiveAwayPanel
           noun={scope.noun}
           katName={name}
@@ -365,16 +408,44 @@ function Den({
             navigate(scope.backPath);
           }}
         />
-      </aside>
-    </div>
+      ),
+    },
   );
+
+  return <TokenLayout savannah={savannah} chat={chat} panels={panels} />;
+}
+
+/** Runs a message past the keeper, telling the savannah while the kat thinks and when it pays. */
+async function withMood(
+  onMood: (mood: SavannahMood) => void,
+  ask: () => Promise<ChatReply>,
+): Promise<ChatReply> {
+  onMood("thinking");
+  try {
+    const reply = await ask();
+    onMood(reply.payment?.status === "sent" ? "paid" : "idle");
+    return reply;
+  } catch (error) {
+    onMood("idle");
+    throw error;
+  }
 }
 
 /**
  * Someone who doesn't own the token: they may have borrowed it, or be
  * offered it; otherwise they see that only its owner can talk to it.
  */
-function Visitor({ tokenId, version }: { tokenId: string; version: number }) {
+function Visitor({
+  tokenId,
+  version,
+  savannah,
+  onMood,
+}: {
+  tokenId: string;
+  version: number;
+  savannah: boolean;
+  onMood: (mood: SavannahMood) => void;
+}) {
   const { keeper, session } = useServices();
   const wallet = useWallet();
   const scope = useScope();
@@ -416,64 +487,72 @@ function Visitor({ tokenId, version }: { tokenId: string; version: number }) {
   }
   if (mine && current && session) {
     const left = standing?.messages_left ?? current.messages;
-    return (
-      <div className="mt-8 grid items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:gap-6">
-        <div className="lg:sticky lg:top-5">
-          <Chat
-            katName={name}
-            chatPrice={scope.prices.chat}
-            avatar={
-              <TokenArt
-                contractId={scope.contractId}
-                tokenId={tokenId}
-                contextVersion={version || 1}
-                style={scope.art}
-                size={32}
-                decorative
-              />
-            }
-            send={(message) =>
-              session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection))
-            }
-            onReply={(reply) => setStanding(reply.loan ?? null)}
-            onOutOfBalance={() => undefined}
-            starters={scope.starters.fresh}
+    const chat = (
+      <Chat
+        katName={name}
+        chatPrice={scope.prices.chat}
+        avatar={
+          <TokenArt
+            contractId={scope.contractId}
+            tokenId={tokenId}
+            contextVersion={version || 1}
+            style={scope.art}
+            size={32}
+            decorative
           />
-        </div>
-        <aside className="min-w-0 space-y-5">
-          <section aria-labelledby="borrowed" className="card card-lit">
-            <h2 id="borrowed" className="card-title flex items-center gap-2">
-              <Icon name="clock" size={18} className="text-[var(--accent)]" />
-              Borrowed
-            </h2>
-            <p className="mt-2 text-sm leading-relaxed text-mist">
-              {who(current.lender_id)} lent you {name}
-              {loanEnd(current) ? ` until ${loanEnd(current)}` : ""}.{" "}
-              {capitalized(describeTerms(current, scope.noun))}
-            </p>
-            {left !== null && (
-              <p className="mt-3 font-display text-2xl tracking-tight" data-testid="messages-left">
-                {left} message{left === 1 ? "" : "s"} left
-              </p>
-            )}
-            <button
-              type="button"
-              className="button button-quiet mt-4 w-full"
-              disabled={busy}
-              onClick={() => void act(() => (signer as KatContract).endLoan(tokenId))}
-            >
-              Give it back
-            </button>
-            {alert}
-          </section>
-        </aside>
-      </div>
+        }
+        send={(message) =>
+          withMood(onMood, () =>
+            session.call((token) => keeper.chat(token, tokenId, message, scope.keeperCollection)),
+          )
+        }
+        onReply={(reply) => setStanding(reply.loan ?? null)}
+        onOutOfBalance={() => undefined}
+        starters={scope.starters.fresh}
+      />
+    );
+    const borrowed = (
+      <section aria-labelledby="borrowed" className="card card-lit">
+        <h2 id="borrowed" className="card-title flex items-center gap-2">
+          <Icon name="clock" size={18} className="text-[var(--accent)]" />
+          Borrowed
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          {who(current.lender_id)} lent you {name}
+          {loanEnd(current) ? ` until ${loanEnd(current)}` : ""}.{" "}
+          {capitalized(describeTerms(current, scope.noun))}
+        </p>
+        {left !== null && (
+          <p className="mt-3 font-display text-2xl tracking-tight" data-testid="messages-left">
+            {left} message{left === 1 ? "" : "s"} left
+          </p>
+        )}
+        <button
+          type="button"
+          className="button button-quiet mt-4 w-full"
+          disabled={busy}
+          onClick={() => void act(() => (signer as KatContract).endLoan(tokenId))}
+        >
+          Give it back
+        </button>
+        {alert}
+      </section>
+    );
+    return (
+      <TokenLayout
+        savannah={savannah}
+        chat={chat}
+        panels={[{ id: "borrowed", label: "Borrowed", node: borrowed }]}
+      />
     );
   }
   if (offered && current) {
     const fee = BigInt(current.fee);
     return (
-      <section aria-labelledby="offer" className="card card-lit mt-8 max-w-2xl">
+      <section
+        aria-labelledby="offer"
+        className={`card card-lit mt-8 max-w-2xl ${savannah ? "mx-auto" : ""}`}
+      >
         <h2 id="offer" className="card-title flex items-center gap-2">
           <Icon name="clock" size={18} className="text-[var(--accent)]" />
           {fee > 0n ? "For rent" : "On offer"}
@@ -504,7 +583,9 @@ function Visitor({ tokenId, version }: { tokenId: string; version: number }) {
     );
   }
   return (
-    <p className="card mt-8 flex max-w-2xl items-start gap-3 text-mist">
+    <p
+      className={`card mt-8 flex max-w-2xl items-start gap-3 text-mist ${savannah ? "mx-auto" : ""}`}
+    >
       <Icon name="lock" size={18} className="mt-0.5 shrink-0 text-lamp" />
       {wallet.status === "connected"
         ? `Only its owner, or someone it's lent to, can talk to ${name}. The connected wallet isn't either.`
@@ -584,6 +665,118 @@ export function Kat() {
     kat.status === "ready" && kat.data
       ? Math.max(Number(kat.data.context_version), seenVersion)
       : seenVersion;
+  // Kats live on the savannah; tokens of launched collections keep the plain burrow.
+  const savannah = scope.home;
+  const phase = useDayPhase();
+  const greeting = useDayGreetings()[phase];
+  const [mood, setMood] = useState<SavannahMood>("idle");
+
+  const owner = kat.status === "ready" && kat.data ? kat.data.owner_id : null;
+  const conversation =
+    kat.status === "ready" && kat.data ? (
+      wallet.accountId === kat.data.owner_id ? (
+        <Den
+          key={`${scope.contractId}/${kat.data.owner_id}/${id}`}
+          tokenId={id}
+          ownerId={kat.data.owner_id}
+          chainBalance={BigInt(kat.data.balance)}
+          recheckOwner={reloadKat}
+          onVersion={onVersion}
+          savannah={savannah}
+          onMood={setMood}
+        />
+      ) : (
+        <Visitor
+          key={`${scope.contractId}/${id}/${wallet.accountId ?? ""}`}
+          tokenId={id}
+          version={version}
+          savannah={savannah}
+          onMood={setMood}
+        />
+      )
+    ) : null;
+  const ownerChips = owner && (
+    <p
+      className={`mt-3 flex flex-wrap items-center gap-2 text-sm text-mist ${
+        savannah ? "justify-center" : ""
+      }`}
+    >
+      <span className="chip text-mist">
+        Owned by{" "}
+        <span className="font-mono text-cream" title={owner}>
+          {shorten(owner, 12)}
+        </span>
+      </span>
+      <Link
+        to={`${scope.tokenPath(id)}/verify`}
+        className="chip chip-accent transition-colors hover:bg-lamp/20"
+      >
+        <Icon name="shield" size={14} />
+        Verify this {scope.noun}
+      </Link>
+    </p>
+  );
+  const status = (
+    <>
+      {kat.status === "loading" && <p className="mt-10 text-mist">Climbing down…</p>}
+      {kat.status === "error" && (
+        <p className="mt-10 text-alarm" role="alert">
+          Can't read this {scope.noun} from the contract. {describeProblem(kat.error)}
+        </p>
+      )}
+      {kat.status === "ready" && !kat.data && (
+        <div className="mt-10">
+          <h1 className="text-4xl">{scope.home ? "This burrow is empty" : "Nothing here yet"}</h1>
+          <p className="mt-3 text-mist">There is no {name}. It may not have been minted yet.</p>
+        </div>
+      )}
+    </>
+  );
+
+  if (savannah) {
+    return (
+      <Shell world="savannah" phase={phase} scene={<Savannah phase={phase} mood={mood} />}>
+        <div className="descend">
+          <div className="savannah-intro pt-2">
+            <Link to={scope.backPath} className="savannah-back">
+              ↖ {scope.backLabel}
+            </Link>
+            <p className="savannah-kicker mt-5">
+              <span />
+              {DAY_PHASE_TITLES[phase]} · {phase} / local time
+            </p>
+            <p className="savannah-greeting mt-4">{greeting.hello}</p>
+            <p className="savannah-note mt-3">{greeting.note}</p>
+            {status}
+            {owner && (
+              <header className="mt-7 flex flex-col items-center">
+                <div className="flex items-center gap-3">
+                  <div className="savannah-portrait overflow-hidden">
+                    <TokenArt
+                      contractId={scope.contractId}
+                      tokenId={id}
+                      contextVersion={version}
+                      style={scope.art}
+                      size={52}
+                      decorative
+                    />
+                  </div>
+                  <h1 className="savannah-name">{name}</h1>
+                </div>
+                {ownerChips}
+                {version > 0 && (
+                  <div className="mt-4 [&_ol]:justify-center">
+                    <Growth contextVersion={version} plain={!scope.home} />
+                  </div>
+                )}
+              </header>
+            )}
+          </div>
+          {conversation}
+        </div>
+      </Shell>
+    );
+  }
 
   return (
     <Shell world="burrow">
@@ -595,19 +788,8 @@ export function Kat() {
           <Icon name="arrowLeft" size={15} />
           {scope.backLabel}
         </Link>
-        {kat.status === "loading" && <p className="mt-10 text-mist">Climbing down…</p>}
-        {kat.status === "error" && (
-          <p className="mt-10 text-alarm" role="alert">
-            Can't read this {scope.noun} from the contract. {describeProblem(kat.error)}
-          </p>
-        )}
-        {kat.status === "ready" && !kat.data && (
-          <div className="mt-10">
-            <h1 className="text-4xl">{scope.home ? "This burrow is empty" : "Nothing here yet"}</h1>
-            <p className="mt-3 text-mist">There is no {name}. It may not have been minted yet.</p>
-          </div>
-        )}
-        {kat.status === "ready" && kat.data && (
+        {status}
+        {owner && (
           <>
             <header className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-7">
               <div className="relative w-fit shrink-0">
@@ -628,21 +810,7 @@ export function Kat() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-4xl sm:text-6xl">{name}</h1>
-                <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-mist">
-                  <span className="chip text-mist">
-                    Owned by{" "}
-                    <span className="font-mono text-cream" title={kat.data.owner_id}>
-                      {shorten(kat.data.owner_id, 12)}
-                    </span>
-                  </span>
-                  <Link
-                    to={`${scope.tokenPath(id)}/verify`}
-                    className="chip chip-accent transition-colors hover:bg-lamp/20"
-                  >
-                    <Icon name="shield" size={14} />
-                    Verify this {scope.noun}
-                  </Link>
-                </p>
+                {ownerChips}
                 {version > 0 && (
                   <div className="mt-4">
                     <Growth contextVersion={version} plain={!scope.home} />
@@ -650,22 +818,7 @@ export function Kat() {
                 )}
               </div>
             </header>
-            {wallet.accountId === kat.data.owner_id ? (
-              <Den
-                key={`${scope.contractId}/${kat.data.owner_id}/${id}`}
-                tokenId={id}
-                ownerId={kat.data.owner_id}
-                chainBalance={BigInt(kat.data.balance)}
-                recheckOwner={reloadKat}
-                onVersion={onVersion}
-              />
-            ) : (
-              <Visitor
-                key={`${scope.contractId}/${id}/${wallet.accountId ?? ""}`}
-                tokenId={id}
-                version={version}
-              />
-            )}
+            {conversation}
           </>
         )}
       </div>

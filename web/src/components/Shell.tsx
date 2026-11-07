@@ -1,5 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { Link, NavLink } from "react-router";
+import type { DayPhase } from "../lib/dayPhase.ts";
 import { shorten } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { useServices } from "../services.tsx";
@@ -72,29 +73,49 @@ const navLink = ({ isActive }: { isActive: boolean }) =>
     isActive ? "bg-cream/10 text-cream" : "text-mist hover:text-cream"
   }`;
 
-/** The frame around every page. `world` picks the surface or the burrow backdrop. */
-export function Shell({ world, children }: { world: "surface" | "burrow"; children: ReactNode }) {
+/**
+ * The frame around every page. `world` picks the backdrop: the night surface,
+ * the burrow, or the painted savannah, which brings its own `scene` and
+ * follows the local time through `phase`.
+ */
+export function Shell({
+  world,
+  scene,
+  phase,
+  children,
+}: {
+  world: "surface" | "burrow" | "savannah";
+  scene?: ReactNode;
+  phase?: DayPhase;
+  children: ReactNode;
+}) {
   const { launchpad } = useServices();
   return (
-    <div className={`${world} relative isolate flex min-h-dvh flex-col overflow-x-clip`}>
+    <div
+      className={`${world} relative isolate flex min-h-dvh flex-col overflow-x-clip`}
+      data-day-phase={phase}
+    >
       {world === "surface" && <Horizon />}
-      <header className="relative mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-4 sm:px-5 sm:py-5">
-        <nav className="flex items-center gap-2 sm:gap-4">
-          <Link
-            to="/"
-            className="flex items-center gap-2.5 font-display text-lg text-cream sm:text-xl"
-          >
-            <Mark />
-            Nearkat burrow
-          </Link>
-          {launchpad && (
-            <NavLink to="/launch" className={navLink}>
-              Launchpad
-            </NavLink>
-          )}
-        </nav>
-        <WalletButton />
-      </header>
+      {scene}
+      <div className="shell-bar">
+        <header className="relative mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-4 sm:px-5 sm:py-5">
+          <nav className="flex items-center gap-2 sm:gap-4">
+            <Link
+              to="/"
+              className="flex items-center gap-2.5 font-display text-lg text-cream sm:text-xl"
+            >
+              <Mark />
+              Nearkat burrow
+            </Link>
+            {launchpad && (
+              <NavLink to="/launch" className={navLink}>
+                Launchpad
+              </NavLink>
+            )}
+          </nav>
+          <WalletButton />
+        </header>
+      </div>
       <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 pb-16 sm:px-5 sm:pb-24">
         {children}
       </main>

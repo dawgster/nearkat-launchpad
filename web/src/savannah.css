@@ -1,0 +1,1010 @@
+/*
+ * The savannah: a kat's page set on the painted surface from the swap den.
+ * Sky and sand change with the local time (data-day-phase), a meerkat climbs
+ * out of a burrow now and then, and the conversation sits in a dark den card.
+ */
+
+.savannah {
+  --sand: #e9d5a8;
+  --sand-deep: #c9a46a;
+  --den: #14100c;
+  --ink: #1c120c;
+  --bone: #f3ead8;
+  --bone-dim: #f3ead8b8;
+  --green: #00ec97;
+  --green-ink: #063d2b;
+  --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+  --scene-sky: #79d5f4;
+  --scene-sand: #edc48d;
+  /* What the rest of the app reads: green accents, den-dark cards. */
+  --accent: var(--green);
+  --card-bg: var(--den);
+  --card-line: #00ec9738;
+  background: var(--scene-sand);
+}
+
+/* Edge colours sampled from the four paintings, so the page continues them. */
+.savannah[data-day-phase="dawn"] {
+  --scene-sky: #7d96dd;
+  --scene-sand: #895c50;
+}
+.savannah[data-day-phase="dusk"] {
+  --scene-sky: #7560a7;
+  --scene-sand: #a5502c;
+}
+.savannah[data-day-phase="night"] {
+  --scene-sky: #00133c;
+  --scene-sand: #3a4970;
+}
+
+.savannah > .shell-bar,
+.savannah > main,
+.savannah > footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- the scene ---------- */
+.savannah-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+.savannah-landscape {
+  --painted-width: clamp(960px, 100vw, 1800px);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    var(--scene-sky) 0%,
+    var(--scene-sky) calc(var(--painted-width) * 0.3),
+    var(--scene-sand) calc(var(--painted-width) * 0.59)
+  );
+}
+.painted-stage {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--painted-width);
+  aspect-ratio: 3 / 2;
+  transform: translateX(-50%);
+}
+.painted-burrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+@media (min-width: 1801px) {
+  .painted-stage > .painted-burrows:first-child {
+    mask-image: linear-gradient(to right, transparent, #000 3%, #000 97%, transparent);
+  }
+}
+.painted-actors {
+  isolation: isolate;
+}
+.painted-burrows foreignObject {
+  overflow: visible;
+}
+.savannah-details {
+  overflow: visible;
+  z-index: 1;
+}
+.savannah-sky {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: clamp(960px, 100vw, 1800px);
+  height: auto;
+  transform: translateX(-50%);
+  overflow: visible;
+  z-index: 1;
+}
+
+/* ---------- the sentries ---------- */
+.burrow-visitor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform: translateY(110%);
+  will-change: transform;
+  animation: burrow-visit var(--burrow-visit-duration) cubic-bezier(0.45, 0, 0.55, 1) both;
+}
+.burrow-kat {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.burrow-kat-head {
+  transform-origin: 91px 110px;
+  animation: burrow-curious var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-kat-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: burrow-blink var(--burrow-visit-duration) linear both;
+}
+.burrow-kat-pupils {
+  animation: burrow-glance var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-kat--coin .burrow-kat-paw {
+  transform-origin: 118px 135px;
+  animation: burrow-offer var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-secret {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-6deg);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--bone);
+  color: var(--green-ink);
+  font: 700 10px var(--mono);
+  white-space: nowrap;
+}
+.burrow-kat--sleepy .burrow-kat-eyes {
+  visibility: hidden;
+}
+.burrow-kat--sleepy .burrow-kat-head {
+  animation-name: burrow-sleepy;
+}
+.burrow-kat--curious .burrow-kat-head {
+  animation-name: burrow-keeping-watch;
+}
+.burrow-kat--celebrate .burrow-kat-paw {
+  transform-origin: 118px 135px;
+  animation: burrow-wave var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-kat--stargazer .burrow-kat-head {
+  animation-name: burrow-stargaze;
+}
+.burrow-kat--stargazer .burrow-kat-pupils {
+  animation-name: burrow-sky-glance;
+}
+.burrow-celebration {
+  transform-origin: 90px 110px;
+  animation: burrow-sparkles var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-coffee-steam {
+  animation: burrow-steam 3s ease-in-out infinite;
+}
+.burrow-visitor--bedtime {
+  animation-name: burrow-bedtime;
+}
+.burrow-kat--bedtime .burrow-kat-head {
+  animation-name: burrow-sleepy;
+}
+.burrow-kat--bedtime .burrow-kat-eyes {
+  animation: burrow-bedtime-eyes var(--burrow-visit-duration) linear both;
+}
+.burrow-kat--bedtime .burrow-sleepy-eyelids {
+  animation: burrow-bedtime-lids var(--burrow-visit-duration) linear both;
+}
+.burrow-kat--bedtime .burrow-kat-smile {
+  animation: burrow-bedtime-smile var(--burrow-visit-duration) linear both;
+}
+.burrow-kat--bedtime .burrow-sleeping-cap {
+  animation: burrow-cap var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-kat--bedtime .burrow-kat-paw {
+  transform-origin: 118px 135px;
+  animation: burrow-cap-paw var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-yawn {
+  transform-origin: 92px 104px;
+  animation: burrow-yawn var(--burrow-visit-duration) ease-in-out both;
+}
+.burrow-dream {
+  fill: #c5d8e4;
+  font: 16px var(--mono);
+  opacity: 0;
+  animation: burrow-dream var(--burrow-visit-duration) ease-out both;
+}
+
+/* A sentry standing still in a round patch of savannah, as on the landing's steps. */
+.meerkat-portrait {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(#79d5f4 0%, #b7e6f2 52%, #edc48d 53%, #d9a868 100%);
+  box-shadow:
+    0 0 0 2px #f3ead8,
+    0 0 0 4px #14784f;
+}
+.meerkat-portrait-hole {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 9%;
+  height: 16%;
+  border-radius: 50%;
+  background: #0b0806;
+  box-shadow: 0 -3px 0 #8e663a;
+}
+.meerkat-portrait-kat {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 8%;
+  bottom: 12%;
+  /* The hole's front lip hides the lower body, as in the burrows. */
+  clip-path: inset(0 0 0 0 round 0 0 40% 40%);
+}
+.meerkat-portrait .burrow-kat,
+.meerkat-portrait .burrow-kat * {
+  animation: none;
+}
+.meerkat-portrait .burrow-celebration {
+  opacity: 1;
+}
+
+/* ---------- sky and air ---------- */
+.savannah-stars,
+.savannah-fireflies,
+.savannah-day-flies,
+.savannah-night-firefly {
+  display: none;
+}
+[data-day-phase="dawn"] .savannah-day-flies,
+[data-day-phase="day"] .savannah-day-flies,
+[data-day-phase="dusk"] .savannah-fireflies,
+[data-day-phase="night"] .savannah-fireflies,
+[data-day-phase="night"] .savannah-stars,
+[data-day-phase="night"] .savannah-night-firefly {
+  display: block;
+}
+.savannah-day-fly {
+  opacity: 0.4;
+  animation: savannah-day-fly 14s ease-in-out infinite;
+}
+.savannah-star {
+  animation: savannah-twinkle 9s ease-in-out infinite alternate;
+}
+.savannah-firefly {
+  animation: savannah-firefly 15s ease-in-out infinite;
+}
+[data-day-phase="night"] .savannah-firefly {
+  animation-name: savannah-night-firefly;
+}
+.savannah-success-glow {
+  opacity: 0;
+  animation: savannah-success-glow var(--burrow-visit-duration) ease-in-out both;
+}
+.savannah-meteor {
+  opacity: 0;
+  animation: savannah-meteor 0.65s linear both;
+  animation-delay: calc(var(--burrow-visit-duration) * 0.47);
+}
+.savannah-shooting-star--arrival .savannah-meteor {
+  animation-delay: 4.8s;
+}
+
+/* A hidden tab or reduced motion: one lookout, standing still. */
+.savannah-scene[data-resting="true"] .burrow-visitor {
+  animation: none;
+  transform: translateY(36%);
+  will-change: auto;
+}
+.savannah-scene[data-resting="true"] .burrow-kat *,
+.savannah-scene[data-resting="true"] .savannah-details * {
+  animation-play-state: paused;
+}
+.savannah-scene[data-resting="true"] :is(.burrow-dreams, .savannah-sky) {
+  display: none;
+}
+
+/* ---------- the page over the scene ---------- */
+.savannah-intro,
+.savannah-ink {
+  /* Dark ink on the bright sky; the app's colour names follow, so its utilities do too. */
+  --color-cream: var(--ink);
+  --color-mist: #392c1f;
+  --color-lamp: #14784f;
+  --accent: #14784f;
+  color: var(--ink);
+}
+.savannah-intro {
+  text-align: center;
+}
+/* Dark cards inside an inked section go back to light type. */
+.savannah-ink .card {
+  --color-cream: #f4ecd9;
+  --color-mist: #9ca9a6;
+  --color-lamp: #f2bd35;
+  --accent: var(--green);
+  color: var(--color-cream);
+}
+/* The landing's pitch, under the greeting. */
+.savannah-pitch {
+  font-size: clamp(42px, 6vw, 84px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-shadow: 0 2px 0 #ffffff40;
+}
+/* Text that lands on the grass gets a frosted backing, so it stays readable. */
+.savannah-lede {
+  border-radius: 1.25rem;
+  padding: 0.75rem 1.25rem;
+  background: #f3ead8a6;
+  backdrop-filter: blur(6px);
+}
+.savannah[data-day-phase="night"] .savannah-lede {
+  background: #0e1a33a6;
+}
+.savannah-hello {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2vw, 26px);
+  letter-spacing: -0.02em;
+}
+/* The greeting is the headline, as in the swap den; the kat's name sits under it. */
+.savannah-greeting {
+  font-family: var(--font-display);
+  font-size: clamp(36px, 4vw, 54px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+  text-shadow: 0 2px 0 #ffffff40;
+}
+.savannah-note {
+  font-size: 14px;
+  color: #392c1f;
+}
+.savannah-name {
+  font-size: clamp(26px, 2.6vw, 34px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.savannah-back,
+.savannah-kicker {
+  font: 700 10px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #3f493c;
+}
+.savannah-back:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.savannah-kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  letter-spacing: 0.17em;
+}
+.savannah-kicker > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #14784f;
+  box-shadow: 0 0 10px #00ec9744;
+}
+.savannah-intro .chip {
+  border-color: #1c120c2e;
+  background: #f3ead866;
+}
+.savannah-intro .chip-accent {
+  border-color: #14784f66;
+  background: #f3ead899;
+  color: #0f5c3c;
+}
+.savannah-portrait {
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 3px var(--bone),
+    0 0 0 5px #14784f,
+    0 12px 30px #1c120c40;
+}
+
+/* The header: a pale bar on the sky, wallet controls as dark pills. */
+.savannah > .shell-bar {
+  border-bottom: 1px solid #1c120c20;
+  background: #f3ead83d;
+  backdrop-filter: blur(8px);
+}
+.savannah > .shell-bar {
+  --color-cream: var(--ink);
+  --color-mist: #3f493c;
+}
+.savannah > .shell-bar .chip,
+.savannah > .shell-bar .button-quiet {
+  --button-bg: var(--ink);
+  --button-ink: var(--bone);
+  border-color: #f3ead826;
+  background: var(--ink);
+  color: var(--bone);
+}
+.savannah > footer {
+  --color-mist: #624e36;
+}
+
+/* The den card: dark, with a green rim and a soft glow. */
+.savannah .card {
+  border-color: var(--card-line);
+  box-shadow:
+    inset 0 0 0 5px #f3ead806,
+    0 0 24px #00ec971a,
+    0 24px 70px #00000059;
+}
+.savannah .card-lit {
+  border-color: #00ec9799;
+  box-shadow:
+    inset 0 0 0 5px #f3ead806,
+    0 0 10px #00ec974d,
+    0 0 24px #00ec971f,
+    0 24px 70px #00000059;
+}
+.savannah .button-lamp {
+  --button-bg: var(--green);
+  --button-ink: var(--green-ink);
+  --button-shadow: 0 8px 24px -12px #00ec97b3;
+}
+
+/* Tabs for everything but the conversation, as the swap den's mode switch. */
+.savannah-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid #1c120c33;
+  border-radius: 1.25rem;
+  background: #f3ead899;
+  backdrop-filter: blur(6px);
+}
+.savannah-tabs button {
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3f493c;
+  transition:
+    background 150ms,
+    color 150ms;
+}
+.savannah-tabs button:hover {
+  color: var(--ink);
+  background: #f3ead8cc;
+}
+.savannah-tabs button[aria-selected="true"] {
+  background: var(--green);
+  color: var(--green-ink);
+}
+.savannah-tabs button[data-urgent="true"]:not([aria-selected="true"]) {
+  color: #8a2b18;
+  box-shadow: inset 0 0 0 1.5px #c8643a;
+}
+.savannah-tabs button:focus-visible {
+  outline: 2px solid var(--green-ink);
+  outline-offset: 2px;
+}
+
+/* ---------- dusk and night: light type on a dark sky ---------- */
+.savannah[data-day-phase="night"] :is(.savannah-intro, .savannah-ink) {
+  --color-cream: var(--bone);
+  --color-mist: #c5d1d8;
+  --color-lamp: #a4efbe;
+  --accent: #a4efbe;
+  color: var(--bone);
+}
+.savannah[data-day-phase="night"] :is(.savannah-greeting, .savannah-pitch) {
+  text-shadow: 0 2px 0 #0002;
+}
+.savannah[data-day-phase="night"] :is(.savannah-back, .savannah-kicker, .savannah-note) {
+  color: #c5d1d8;
+}
+.savannah[data-day-phase="night"] .savannah-kicker > span {
+  background: #a4efbe;
+}
+.savannah[data-day-phase="night"] .savannah-intro .chip {
+  border-color: #b1c9d533;
+  background: #17283caa;
+}
+.savannah[data-day-phase="night"] .savannah-intro .chip-accent {
+  color: #a4efbe;
+}
+.savannah[data-day-phase="night"] > .shell-bar {
+  border-color: #d4e7f020;
+  background: #14233866;
+}
+.savannah[data-day-phase="night"] > .shell-bar {
+  --color-cream: var(--bone);
+  --color-mist: #c5d1d8;
+}
+.savannah[data-day-phase="night"] .savannah-tabs {
+  border-color: #b1c9d533;
+  background: #17283ccc;
+}
+.savannah[data-day-phase="night"] .savannah-tabs button {
+  color: #d4e4de;
+}
+.savannah[data-day-phase="night"] .savannah-tabs button:hover {
+  background: #ffffff14;
+}
+.savannah[data-day-phase="night"] .savannah-tabs button[aria-selected="true"] {
+  background: var(--green);
+  color: var(--green-ink);
+}
+.savannah:is([data-day-phase="night"], [data-day-phase="dawn"], [data-day-phase="dusk"]) > footer {
+  --color-mist: #f3ead8;
+}
+.savannah[data-day-phase="dusk"] :is(.savannah-back, .savannah-kicker, .savannah-note) {
+  color: #261d29;
+}
+
+/* The sand is dark at dawn and dusk too, wherever the page runs past the painting. */
+.savannah:is([data-day-phase="dusk"], [data-day-phase="dawn"]) .savannah-ink {
+  --color-cream: var(--bone);
+  --color-mist: #f3ead8d9;
+  --color-lamp: #d0f2c5;
+  --accent: #d0f2c5;
+  color: var(--bone);
+}
+
+/* ---------- phones ---------- */
+@media (max-width: 760px) {
+  .savannah[data-day-phase="dawn"] {
+    --scene-sky: #6f8edc;
+    --scene-sand: #b36e51;
+  }
+  .savannah[data-day-phase="dusk"] {
+    --scene-sky: #7162ac;
+    --scene-sand: #9c4928;
+  }
+  .savannah[data-day-phase="night"] {
+    --scene-sky: #00123b;
+    --scene-sand: #3d4b6d;
+  }
+  .savannah-landscape {
+    --painted-width: max(100vw, 520px);
+    background: linear-gradient(
+      var(--scene-sky) calc(100% - 320px),
+      var(--scene-sand) calc(100% - 200px)
+    );
+  }
+  .savannah-sky {
+    width: 100%;
+  }
+  /* The phone painting has its one burrow below the card, at the foot of the page. */
+  .painted-stage--phone {
+    top: auto;
+    bottom: 100px;
+    aspect-ratio: 2 / 3;
+  }
+  .savannah > main {
+    padding-bottom: max(310px, 58vw);
+  }
+  .savannah-back {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+  }
+  .savannah-kicker {
+    font-size: 9px;
+  }
+  /* On a phone, dusk's sky is dark behind the intro too. */
+  .savannah[data-day-phase="dusk"] .savannah-intro {
+    --color-cream: var(--bone);
+    --color-mist: #f3ead8;
+    --color-lamp: #d0f2c5;
+    --accent: #d0f2c5;
+    color: var(--bone);
+  }
+  .savannah[data-day-phase="dusk"] :is(.savannah-back, .savannah-kicker, .savannah-note) {
+    color: #f3ead8;
+  }
+}
+
+/* ---------- motion ---------- */
+@keyframes burrow-visit {
+  /* A hidden beat first, so the visitor's layer settles before it moves. */
+  0%,
+  4% {
+    transform: translateY(110%);
+    animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  19%,
+  24% {
+    transform: translateY(36%);
+  }
+  40%,
+  78% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(110%);
+  }
+}
+@keyframes burrow-blink {
+  0%,
+  29%,
+  32%,
+  64%,
+  67%,
+  71%,
+  74%,
+  100% {
+    transform: scaleY(1);
+  }
+  30%,
+  65%,
+  72% {
+    transform: scaleY(0.06);
+  }
+}
+@keyframes burrow-curious {
+  0%,
+  24%,
+  84%,
+  100% {
+    transform: rotate(0);
+  }
+  42% {
+    transform: rotate(-6deg);
+  }
+  51% {
+    transform: rotate(-4deg);
+  }
+  65% {
+    transform: rotate(5deg);
+  }
+  73% {
+    transform: rotate(3deg);
+  }
+}
+@keyframes burrow-glance {
+  0%,
+  28%,
+  81%,
+  100% {
+    transform: translateX(0);
+  }
+  40%,
+  47% {
+    transform: translateX(-2.5px);
+  }
+  63%,
+  70% {
+    transform: translateX(2.5px);
+  }
+}
+@keyframes burrow-offer {
+  0%,
+  32%,
+  85%,
+  100% {
+    transform: rotate(0);
+  }
+  48% {
+    transform: rotate(-20deg);
+  }
+  58% {
+    transform: rotate(-16deg);
+  }
+  68% {
+    transform: rotate(-19deg);
+  }
+}
+@keyframes burrow-wave {
+  0%,
+  26%,
+  88%,
+  100% {
+    transform: rotate(0);
+  }
+  40%,
+  57%,
+  73% {
+    transform: rotate(-108deg);
+  }
+  49%,
+  65% {
+    transform: rotate(-135deg);
+  }
+}
+@keyframes burrow-sleepy {
+  0%,
+  30%,
+  90%,
+  100% {
+    transform: rotate(0);
+  }
+  55%,
+  72% {
+    transform: rotate(9deg) translateY(3px);
+  }
+}
+@keyframes burrow-keeping-watch {
+  0%,
+  25%,
+  85%,
+  100% {
+    transform: rotate(0);
+  }
+  42%,
+  55% {
+    transform: rotate(-9deg);
+  }
+  65%,
+  73% {
+    transform: rotate(7deg);
+  }
+}
+@keyframes burrow-sparkles {
+  0%,
+  36%,
+  85%,
+  100% {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  48%,
+  68% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  77% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+@keyframes burrow-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  40% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@keyframes burrow-bedtime {
+  0%,
+  4%,
+  80%,
+  100% {
+    transform: translateY(110%);
+  }
+  19%,
+  24% {
+    transform: translateY(36%);
+  }
+  36%,
+  65% {
+    transform: translateY(0);
+  }
+}
+@keyframes burrow-bedtime-eyes {
+  0%,
+  32% {
+    opacity: 1;
+  }
+  36%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes burrow-bedtime-lids {
+  0%,
+  32% {
+    opacity: 0;
+  }
+  36%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes burrow-bedtime-smile {
+  0%,
+  34%,
+  54%,
+  100% {
+    opacity: 1;
+  }
+  38%,
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes burrow-yawn {
+  0%,
+  34%,
+  54%,
+  100% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  40%,
+  48% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes burrow-cap {
+  0%,
+  49% {
+    opacity: 0;
+    transform: translateY(-20px) rotate(-12deg);
+  }
+  58%,
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+  }
+}
+@keyframes burrow-cap-paw {
+  0%,
+  47%,
+  64%,
+  100% {
+    transform: rotate(0);
+  }
+  54%,
+  58% {
+    transform: rotate(-145deg);
+  }
+}
+@keyframes burrow-dream {
+  0%,
+  79% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.75);
+  }
+  85% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(15px, -46px) scale(1.05);
+  }
+}
+@keyframes burrow-stargaze {
+  0%,
+  34%,
+  83%,
+  100% {
+    transform: rotate(0) translateY(0);
+  }
+  45%,
+  67% {
+    transform: rotate(-11deg) translateY(-4px);
+  }
+}
+@keyframes burrow-sky-glance {
+  0%,
+  34%,
+  83%,
+  100% {
+    transform: translate(0, 0);
+  }
+  44%,
+  67% {
+    transform: translate(-2px, -5px);
+  }
+}
+@keyframes savannah-success-glow {
+  0%,
+  28%,
+  88%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  44%,
+  62% {
+    opacity: 0.9;
+    transform: translate(5px, -16px);
+  }
+  76% {
+    opacity: 0.3;
+    transform: translate(-4px, -24px);
+  }
+}
+@keyframes savannah-day-fly {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translate(0, 0);
+  }
+  22% {
+    opacity: 0.65;
+    transform: translate(20px, -14px);
+  }
+  48% {
+    opacity: 0.85;
+    transform: translate(-12px, -35px);
+  }
+  72% {
+    opacity: 0.55;
+    transform: translate(-25px, -13px);
+  }
+}
+@keyframes savannah-twinkle {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 0.8;
+  }
+}
+@keyframes savannah-firefly {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  30% {
+    opacity: 0.7;
+    transform: translate(9px, -18px);
+  }
+  65% {
+    opacity: 0.15;
+    transform: translate(-8px, -30px);
+  }
+  80% {
+    opacity: 0.5;
+    transform: translate(-12px, -14px);
+  }
+}
+@keyframes savannah-night-firefly {
+  0%,
+  100% {
+    opacity: 0.06;
+    transform: translate(0, 0) scale(0.8);
+  }
+  25% {
+    opacity: 0.7;
+    transform: translate(var(--fly-x), var(--fly-y)) scale(1);
+  }
+  48% {
+    opacity: 0.25;
+    transform: translate(calc(var(--fly-x) * 0.3), calc(var(--fly-y) * 1.4)) scale(0.85);
+  }
+  70% {
+    opacity: 0.85;
+    transform: translate(calc(var(--fly-x) * -0.65), calc(var(--fly-y) * 0.6)) scale(1.08);
+  }
+  88% {
+    opacity: 0.15;
+    transform: translate(calc(var(--fly-x) * -0.35), calc(var(--fly-y) * 0.25)) scale(0.86);
+  }
+}
+@keyframes savannah-meteor {
+  0% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  12% {
+    opacity: 0.9;
+  }
+  65% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(360px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Two classes deep, and last, so it outranks every animation rule above. */
+  .savannah .savannah-scene * {
+    animation: none;
+  }
+  .savannah-scene .burrow-visitor {
+    transform: translateY(36%);
+    will-change: auto;
+  }
+  .savannah-tabs button {
+    transition: none;
+  }
+}

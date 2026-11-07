@@ -3,6 +3,8 @@
 @import "@fontsource/space-grotesk/latin-400.css";
 @import "@fontsource/space-grotesk/latin-500.css";
 @import "@fontsource/space-grotesk/latin-700.css";
+@import "@fontsource/space-mono/latin-700.css";
+@import "./savannah.css";
 
 /*
  * Two worlds. The surface (landing, minting) is the night sky from
