@@ -1,0 +1,10 @@
+# Keep build contexts small and secret-free.
+**/node_modules
+**/target
+**/dist
+**/test-results
+**/.env
+**/.env.*
+!**/.env.example
+keeper/data
+.git

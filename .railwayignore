@@ -1,0 +1,10 @@
+# What `railway up` leaves out: the same as the Docker build context.
+**/node_modules
+**/target
+**/dist
+**/test-results
+**/.env
+**/.env.*
+!**/.env.example
+keeper/data
+.git
