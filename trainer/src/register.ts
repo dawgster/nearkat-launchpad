@@ -1,4 +1,5 @@
 import type { KeyProof, TrainerChain } from "./chain.ts";
+import { RunFailure } from "./run.ts";
 
 export interface RegisterOptions {
   chain: Pick<TrainerChain, "getAppKey" | "registerAppKey">;
@@ -15,7 +16,8 @@ export interface RegisterOptions {
 /**
  * Makes sure a collection knows this trainer's key as its own app's. In phala
  * mode a missing key is registered with a TDX quote, in a transaction signed
- * by that same key (which proves its possession). In local mode there is no
+ * by that same key (which proves its possession). The two refusals are
+ * `RunFailure`s, so the renter is told why; anything else stays generic. In local mode there is no
  * quote, so the collection's admin has to trust the key.
  */
 export function ensureRegistered(o: RegisterOptions): (contract: string) => Promise<void> {
@@ -26,12 +28,12 @@ export function ensureRegistered(o: RegisterOptions): (contract: string) => Prom
     const existing = await o.chain.getAppKey(contract, o.publicKey);
     if (existing) {
       if (existing.app_id !== o.appId) {
-        throw new Error(`This trainer's key is registered to another app on ${contract}`);
+        throw new RunFailure(`This trainer's key is registered to another app on ${contract}`);
       }
       return;
     }
     if (o.mode !== "phala") {
-      throw new Error(
+      throw new RunFailure(
         `This trainer isn't trusted by ${contract}: its admin can trust key ${o.publicKey} with trust_app_key`,
       );
     }

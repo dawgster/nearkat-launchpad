@@ -44,7 +44,7 @@ export class NotFoundError extends HttpError {
 }
 
 /** A failure whose message is safe to show the renter. */
-class RunFailure extends Error {}
+export class RunFailure extends Error {}
 
 export const MAX_RUN_SAMPLES = 200;
 /** The most samples one `record_training` call takes. */
@@ -82,7 +82,7 @@ async function mapLimit<T, R>(
 }
 
 export interface RunsOptions {
-  /** The app id the contract knows this app by (its compose hash). */
+  /** The app id the contract knows this app by (the dstack app id from its event log). */
   appId: string;
   /** The NEAR key the app signs with. */
   appPublicKey: () => string;

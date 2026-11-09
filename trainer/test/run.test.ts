@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
+import { ensureRegistered } from "../src/register.ts";
 import { type RunState, Runs } from "../src/run.ts";
 import { APP_ID, CONTRACT, FakePython, FakeTrainerChain, jpegFor, RENTER } from "./fakes.ts";
 
@@ -336,5 +337,58 @@ describe("Runs memory bounds", () => {
     now += 2 * 3_600_000;
     expect(() => runs.model(done.id, RENTER)).toThrow(/no model/);
     expect(runs.get(done.id)?.stage).toBe("done");
+  });
+});
+
+describe("Runs and registration", () => {
+  function withRegistration(mode: "local" | "phala") {
+    const chain = new FakeTrainerChain();
+    const python = new FakePython();
+    const runs = new Runs({
+      appId: APP_ID,
+      appPublicKey: () => "ed25519:trainer",
+      chain,
+      python: python.run,
+      heldoutDir: "/heldout",
+      ensureRegistered: ensureRegistered({
+        chain,
+        mode,
+        appId: APP_ID,
+        publicKey: "ed25519:trainer",
+        label: "Hotdog CNN",
+        proof: async () => {
+          throw new Error("unexpected");
+        },
+      }),
+    });
+    return { chain, runs };
+  }
+
+  test("a local trainer on an untrusted collection says how to trust it", async () => {
+    const { chain, runs } = withRegistration("local");
+    await chain.addRentedSample("1", "cat");
+    const started = await runs.start(CONTRACT, RENTER, ["1"]);
+    const failed = await settle(runs, started.id);
+    expect(failed.stage).toBe("failed");
+    expect(failed.error).toBe(
+      `This trainer isn't trusted by ${CONTRACT}: its admin can trust key ed25519:trainer with trust_app_key`,
+    );
+  });
+
+  test("a key registered to another app is reported as such", async () => {
+    const { chain, runs } = withRegistration("phala");
+    chain.appKeys.set("ed25519:trainer", "b".repeat(64));
+    await chain.addRentedSample("1", "cat");
+    const started = await runs.start(CONTRACT, RENTER, ["1"]);
+    const failed = await settle(runs, started.id);
+    expect(failed.error).toBe(`This trainer's key is registered to another app on ${CONTRACT}`);
+  });
+
+  test("an unexpected registration error stays generic", async () => {
+    const { chain, runs } = withRegistration("phala");
+    vi.spyOn(chain, "getAppKey").mockRejectedValue(new Error("rpc at http://secret failed"));
+    await chain.addRentedSample("1", "cat");
+    const started = await runs.start(CONTRACT, RENTER, ["1"]);
+    expect((await settle(runs, started.id)).error).toBe("Could not get the samples' keys");
   });
 });
