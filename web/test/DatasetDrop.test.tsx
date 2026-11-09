@@ -91,3 +91,35 @@ test("revokes its thumbnails when it goes away", async () => {
   ]);
   revoke.mockRestore();
 });
+
+test("revokes a thumbnail that finishes after it went away", async () => {
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  let finish: (value: { label: string; jpeg: Uint8Array; thumb: string }) => void = () => undefined;
+  const prepare = () =>
+    new Promise<{ label: string; jpeg: Uint8Array; thumb: string }>((ok) => {
+      finish = ok;
+    });
+  const { unmount } = render(<DatasetDrop onChange={() => undefined} prepare={prepare} />);
+  await userEvent.upload(screen.getByLabelText("Choose a folder"), [picked("set/a/1.jpg")]);
+  await waitFor(() => expect(screen.getByLabelText("Classes")).toBeTruthy());
+  unmount();
+  finish({ label: "a", jpeg: new Uint8Array([1]), thumb: "blob:late" });
+  await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:late"));
+  revoke.mockRestore();
+});
+
+test("a class isn't flagged empty while its pictures are still shrinking", async () => {
+  let finish: (value: { label: string; jpeg: Uint8Array; thumb: string }) => void = () => undefined;
+  const prepare = () =>
+    new Promise<{ label: string; jpeg: Uint8Array; thumb: string }>((ok) => {
+      finish = ok;
+    });
+  render(<DatasetDrop onChange={() => undefined} prepare={prepare} />);
+  await userEvent.upload(screen.getByLabelText("Choose a folder"), [picked("set/a/1.jpg")]);
+  const counts = screen.getByRole("list", { name: "Samples per class" });
+  const item = await within(counts).findByText("a");
+  expect(item.parentElement?.className).not.toContain("text-alarm");
+  finish({ label: "a", jpeg: new Uint8Array([1]), thumb: "blob:a" });
+  await waitFor(() => expect(item.parentElement?.textContent).toContain("1"));
+  expect(item.parentElement?.className).not.toContain("text-alarm");
+});

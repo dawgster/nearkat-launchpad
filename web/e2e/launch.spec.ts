@@ -65,7 +65,8 @@ test("launches a dataset from a dropped folder", async ({ page }) => {
   });
 
   // Launching again finds it launched: nothing is paid, and every sample is already stored.
+  await expect(page.getByText("Nothing to pay")).toBeVisible();
+  await expect(page.getByText("You pay", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Launch collection" }).click();
   await expect(page.getByText("6 samples sealed")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("Storage for 6 samples")).toBeVisible();
 });

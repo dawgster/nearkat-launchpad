@@ -4,9 +4,9 @@ import { type Dataset, DatasetDrop } from "../components/DatasetDrop.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenSigil } from "../components/TokenSigil.tsx";
-import { KatContract } from "../lib/contract.ts";
+import { type LaunchProgress, launchDataset, sealKeyForApp } from "../lib/datasetLaunch.ts";
 import { formatNear, parseNear, shorten } from "../lib/format.ts";
-import { type Keeper, KeeperError } from "../lib/keeper.ts";
+import type { Keeper } from "../lib/keeper.ts";
 import {
   appIdProblem,
   Launchpad,
@@ -20,9 +20,9 @@ import {
   slugProblem,
 } from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
-import { datasetProblem, sealSample } from "../lib/samples.ts";
+import { datasetProblem } from "../lib/samples.ts";
 import { sealPrompt } from "../lib/sealing.ts";
-import { checkPhalaReport, type KeeperPrivacy, type PhalaReport, privacyOf } from "../lib/tdx.ts";
+import { type KeeperPrivacy, privacyOf } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
@@ -112,72 +112,11 @@ function percentToBps(text: string, max: number): number | null {
   return bps <= max * 100 ? bps : null;
 }
 
-/**
- * The sealing key of this app's keeper, after checking in the browser that
- * the keeper's quote binds that key and comes from the chosen Phala app. The
- * contract checks the same quote, Intel's signature included, when the
- * keeper registers. `what` names what is being sealed, for the error.
- */
-function sealKeyForApp(report: Record<string, unknown>, appId: string, what: string): string {
-  const phala = report as Partial<PhalaReport> & { mode?: string };
-  const check = phala.mode === "phala" ? checkPhalaReport(phala as PhalaReport) : null;
-  if (
-    check?.status !== "read" ||
-    !check.bindsKey ||
-    !check.logMatchesQuote ||
-    check.appId !== appId ||
-    !phala.seal_public_key
-  ) {
-    throw new Error(
-      `${what} are sealed to this app's keeper, and it isn't running as Phala app ${appId}, so there is no key inside that app to seal them to.`,
-    );
-  }
-  return phala.seal_public_key;
-}
-
 /** Seals secret instructions to the sealing key of this app's keeper; see `sealKeyForApp`. */
 async function sealForApp(keeper: Keeper, appId: string, secret: string): Promise<SealedPrompt> {
   const key = sealKeyForApp(await keeper.attestation(), appId, "Secret instructions");
   return { ciphertext: await sealPrompt(key, secret), sealed_to: key };
 }
-
-/** Samples handed to the keeper per request; its limit. */
-const SAMPLES_PER_CALL = 25;
-/** How long to wait for the keeper to find a new launch before giving up. */
-const FIND_WAIT_MS = 2000;
-const FIND_WAITS = 30;
-
-/** Runs a keeper call, waiting while the keeper hasn't found the collection yet. */
-async function untilFound<T>(run: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await run();
-    } catch (error) {
-      const finding =
-        error instanceof KeeperError &&
-        (error.code === "not_served" || error.code === "minting_unfinished");
-      if (!finding || attempt >= FIND_WAITS) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, FIND_WAIT_MS));
-    }
-  }
-}
-
-/** Whether `collection` is the same dataset, so a launch that stopped part way can go on. */
-function sameDataset(
-  collection: { kind?: unknown; class_counts?: string[] },
-  classes: string[],
-  counts: number[],
-): boolean {
-  const kind = collection.kind as { Dataset?: { classes?: string[] } } | undefined;
-  return (
-    JSON.stringify(kind?.Dataset?.classes) === JSON.stringify(classes) &&
-    JSON.stringify(collection.class_counts) === JSON.stringify(counts.map(String))
-  );
-}
-
-type Progress = { step: "sealing" | "launching" | "storing"; done: number; total: number };
 
 /** What a progress bar says for each step of a dataset launch. */
 const PROGRESS_LABELS = {
@@ -293,7 +232,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   /** The creator accepts sealing to a keeper this browser can't confirm runs in a TEE. */
   const [understood, setUnderstood] = useState(false);
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [progress, setProgress] = useState<LaunchProgress | null>(null);
   const [finished, setFinished] = useState<{ count: number; account: string } | null>(null);
   const [attestation] = useAsync(kind === "dataset" ? "keeper-attestation" : null, () =>
     keeper.attestation(),
@@ -383,6 +322,8 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const [touched, setTouched] = useState(false);
   const show = (p: string | null) => (touched ? p : null);
 
+  /** This address holds the creator's earlier launch of the dataset: only missing samples are stored. */
+  const resuming = isDataset && taken;
   const sampleCount = isDataset ? (dataset?.samples.length ?? 0) : 0;
   const sampleStorage = SAMPLE_STORAGE_DEPOSIT * BigInt(sampleCount);
   const cost =
@@ -390,104 +331,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
       ? BigInt(config.data.launch_fee) + BigInt(config.data.collection_funding) + sampleStorage
       : null;
 
-  /**
-   * Seals every picture in this browser, launches with one wallet
-   * confirmation, then hands the sealed samples to the keeper in batches.
-   * A dataset already launched to this address by this creator is not
-   * launched again: only the samples it is missing are stored.
-   */
-  async function launchDataset(chosen: Dataset, deposit: bigint) {
-    if (!wallet.near || !session) {
-      throw new Error("Connect your wallet first.");
-    }
-    const account = launchpad.accountFor(effectiveSlug);
-    const counts = chosen.classes.map((c) => chosen.samples.filter((s) => s.label === c).length);
-    const report = await keeper.attestation();
-    const sealKey = private_
-      ? sealKeyForApp(report, appId, "Samples")
-      : typeof report.seal_public_key === "string"
-        ? report.seal_public_key
-        : null;
-    if (!sealKey) {
-      throw new Error("This keeper has no sealing key, so the pictures can't be sealed to it.");
-    }
-    if (!private_ && privacyOf(report).kind !== "tee" && !understood) {
-      throw new Error("Confirm that this keeper may see the pictures.");
-    }
-
-    const total = chosen.samples.length;
-    const sealed: string[] = [];
-    for (const sample of chosen.samples) {
-      setProgress({ step: "sealing", done: sealed.length, total });
-      sealed.push(await sealSample(sealKey, sample.label, sample.jpeg));
-    }
-
-    // Signing in first, so the wallet's one transaction is the last thing it is asked for.
-    await session.call(async () => undefined);
-    setProgress({ step: "launching", done: 0, total: 1 });
-    if (await launchpad.isTaken(effectiveSlug)) {
-      const existing = new KatContract(reader, account);
-      const [collection, contractConfig] = await Promise.all([
-        existing.getCollection(),
-        existing.getConfig(),
-      ]);
-      if (
-        contractConfig.admin_id !== wallet.accountId ||
-        !sameDataset(collection, chosen.classes, counts)
-      ) {
-        throw new Error("That address is taken.");
-      }
-    } else {
-      await new Launchpad(wallet.near, launchpad.id).launch(
-        {
-          slug: effectiveSlug,
-          name: name.trim(),
-          symbol,
-          mintPrice: 0n,
-          prompt: "",
-          starter: "",
-          maxSupply: null,
-          phalaAppId: private_ ? appId : null,
-          keeperId: private_ && keeperId.trim() ? keeperId.trim() : null,
-          images: ownImages
-            ? { baseUri: imageBase, extension: imageExtension }
-            : { baseUri: `${app.keeperUrl}/art/${account}/`, extension: "svg" },
-          terms: {
-            royaltyBps: royaltyBps ?? 0,
-            creatorShareBps: 0,
-            chatPrice: null,
-            savePrice: null,
-          },
-          sealedPrompt: null,
-          historyImport: false,
-          dataset: { classes: chosen.classes, classCounts: counts },
-        },
-        deposit,
-      );
-      if (!(await launchpad.isTaken(effectiveSlug))) {
-        throw new Error("The launch did not go through. Your deposit was refunded.");
-      }
-    }
-
-    let stored = 0;
-    setProgress({ step: "storing", done: 0, total });
-    for (let start = 0; start < total; start += SAMPLES_PER_CALL) {
-      const batch = sealed
-        .slice(start, start + SAMPLES_PER_CALL)
-        .map((text, i) => ({ token_id: String(start + i + 1), sealed: text }));
-      const result = await untilFound(() =>
-        session.call((token) => keeper.sealSamples(token, account, batch)),
-      );
-      stored += result.sealed.length + result.skipped.length;
-      setProgress({ step: "storing", done: stored, total });
-    }
-    setFinished({ count: stored, account });
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
     setTouched(true);
-    if (!valid || cost === null || mintPrice === null || !wallet.near) {
+    // A dataset has no mint price: the field is hidden, so a bad one must not block it.
+    if (!valid || cost === null || (!isDataset && mintPrice === null) || !wallet.near) {
       return;
     }
     setBusy(true);
@@ -495,7 +343,34 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     setFinished(null);
     if (isDataset && dataset) {
       try {
-        await launchDataset(dataset, cost);
+        if (!wallet.accountId || !session) {
+          throw new Error("Connect your wallet first.");
+        }
+        const done = await launchDataset(
+          {
+            launchpad,
+            launcher: new Launchpad(wallet.near, launchpad.id),
+            keeper,
+            session,
+            reader,
+            accountId: wallet.accountId,
+            keeperUrl: app.keeperUrl,
+          },
+          dataset,
+          {
+            slug: effectiveSlug,
+            name: name.trim(),
+            symbol,
+            royaltyBps: royaltyBps ?? 0,
+            app: private_ ? { appId, keeperId } : null,
+            ownImages: ownImages ? { baseUri: imageBase, extension: imageExtension } : null,
+            understood,
+            deposit: cost,
+            onProgress: setProgress,
+          },
+        );
+        setFinished(done);
+        setTaken(true);
       } catch (error) {
         setProblem(describeProblem(error));
       } finally {
@@ -512,7 +387,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           slug: effectiveSlug,
           name: name.trim(),
           symbol,
-          mintPrice,
+          mintPrice: mintPrice ?? 0n,
           prompt,
           starter,
           maxSupply,
@@ -989,26 +864,32 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           <div className="card card-lit">
             {config.status === "ready" ? (
               <dl className="space-y-2 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-mist">Launch fee</dt>
-                  <dd>{formatNear(config.data.launch_fee)} NEAR</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-mist">The collection's own storage</dt>
-                  <dd>{formatNear(config.data.collection_funding)} NEAR</dd>
-                </div>
-                {isDataset && (
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-mist">
-                      Storage for {sampleCount} sample{sampleCount === 1 ? "" : "s"}
-                    </dt>
-                    <dd>{formatNear(sampleStorage)} NEAR</dd>
-                  </div>
+                {!resuming && (
+                  <>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-mist">Launch fee</dt>
+                      <dd>{formatNear(config.data.launch_fee)} NEAR</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-mist">The collection's own storage</dt>
+                      <dd>{formatNear(config.data.collection_funding)} NEAR</dd>
+                    </div>
+                    {isDataset && (
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-mist">
+                          Storage for {sampleCount} sample{sampleCount === 1 ? "" : "s"}
+                        </dt>
+                        <dd>{formatNear(sampleStorage)} NEAR</dd>
+                      </div>
+                    )}
+                  </>
                 )}
-                <div className="flex items-baseline justify-between gap-4 border-t border-[var(--card-line)] pt-3">
-                  <dt className="text-mist">You pay</dt>
+                <div
+                  className={`flex items-baseline justify-between gap-4 ${resuming ? "" : "border-t border-[var(--card-line)] pt-3"}`}
+                >
+                  <dt className="text-mist">{resuming ? "Already launched" : "You pay"}</dt>
                   <dd className="font-display text-2xl tracking-tight">
-                    {formatNear(cost ?? 0n)} NEAR
+                    {resuming ? "Nothing to pay" : `${formatNear(cost ?? 0n)} NEAR`}
                   </dd>
                 </div>
               </dl>

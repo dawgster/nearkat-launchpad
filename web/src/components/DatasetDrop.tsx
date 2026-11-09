@@ -61,6 +61,8 @@ export function DatasetDrop({
   const [dragging, setDragging] = useState(false);
   /** Every thumbnail made, so all are revoked, even those of an earlier drop. */
   const thumbs = useRef(new Set<string>());
+  /** Set once the drop zone is gone, so a picture finishing late is revoked at once. */
+  const gone = useRef(false);
 
   useEffect(() => {
     // Not a React prop: set here so the picker picks folders.
@@ -68,7 +70,9 @@ export function DatasetDrop({
   }, []);
   useEffect(() => {
     const made = thumbs.current;
+    gone.current = false;
     return () => {
+      gone.current = true;
       for (const url of made) {
         URL.revokeObjectURL(url);
       }
@@ -87,6 +91,10 @@ export function DatasetDrop({
     if (next) {
       prepare(next).then(
         ({ jpeg, thumb }) => {
+          if (gone.current) {
+            URL.revokeObjectURL(thumb);
+            return;
+          }
           thumbs.current.add(thumb);
           if (current) {
             setPrepared((map) => new Map(map).set(next.path, { jpeg, thumb }));
@@ -128,8 +136,16 @@ export function DatasetDrop({
       return done && "failed" in done ? [{ path, reason: done.failed }] : [];
     }),
   ];
+  // Counted as pictures finish, so a class doesn't read 0 while its pictures are still shrinking.
   const counts = classes.map(
-    (name) => [name, dataset?.samples.filter((s) => s.label === name).length ?? 0] as const,
+    (name) =>
+      [
+        name,
+        classified.samples.filter((s) => {
+          const done = prepared.get(s.path);
+          return s.label === name && done !== undefined && "jpeg" in done;
+        }).length,
+      ] as const,
   );
 
   function take(dropped: Array<{ path: string; file: File }>) {
@@ -254,7 +270,7 @@ export function DatasetDrop({
 
           <ul aria-label="Samples per class" className="flex flex-wrap gap-2">
             {counts.map(([name, count]) => (
-              <li key={name} className={`chip ${count === 0 ? "text-alarm" : ""}`}>
+              <li key={name} className={`chip ${count === 0 && waiting === 0 ? "text-alarm" : ""}`}>
                 <span className="font-mono">{name}</span>
                 <span className="font-bold">{count}</span>
               </li>
