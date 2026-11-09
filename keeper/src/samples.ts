@@ -22,13 +22,13 @@ export function sealSample(key: Uint8Array, doc: SampleDoc): Buffer {
 
 /** Throws if the blob was not sealed with this key, or is another token's sample. */
 export function openSample(key: Uint8Array, blob: Uint8Array, tokenId: string): SampleDoc {
-  let doc: SampleDoc;
+  let doc: SampleDoc | null;
   try {
-    doc = JSON.parse(open(key, blob).toString("utf8")) as SampleDoc;
+    doc = JSON.parse(open(key, blob).toString("utf8")) as SampleDoc | null;
   } catch {
     throw new Error(`Sample ${tokenId} cannot be decrypted`);
   }
-  if (doc.v !== 1 || doc.token_id !== tokenId) {
+  if (typeof doc !== "object" || doc === null || doc.v !== 1 || doc.token_id !== tokenId) {
     throw new Error(`The blob is not sample ${tokenId}`);
   }
   return doc;

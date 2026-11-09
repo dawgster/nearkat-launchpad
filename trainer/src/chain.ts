@@ -1,5 +1,10 @@
 import { type CallOptions, FunctionCallError, type Near } from "near-kit";
-import type { KeyProof, SampleView } from "../../keeper/src/chain.ts";
+import {
+  type KeyProof,
+  mpcAnswerIn,
+  type SampleView,
+  sampleKeyAnswers,
+} from "../../keeper/src/chain.ts";
 import type { KeySource } from "../../keeper/src/ckd.ts";
 import type { CollectionKind } from "../../keeper/src/collection.ts";
 import { FastfsStore } from "../../keeper/src/fastfs.ts";
@@ -146,20 +151,8 @@ export class NearTrainerChain implements TrainerChain {
       "request_sample_keys",
       { token_ids: ids, app_public_key: appPublicKey },
       { gas: "300 Tgas" },
-    )) as { status?: { SuccessValue?: string } };
-    const value = outcome.status?.SuccessValue;
-    if (!value) {
-      throw new Error("The MPC network gave no sample keys");
-    }
-    const answer = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
-    if (!Array.isArray(answer) || answer.length !== ids.length) {
-      throw new Error("The MPC network's answer is malformed");
-    }
-    return answer.map((item: { big_y?: unknown; big_c?: unknown } | null) =>
-      item && typeof item.big_y === "string" && typeof item.big_c === "string"
-        ? { big_y: item.big_y, big_c: item.big_c }
-        : null,
-    );
+    )) as unknown;
+    return sampleKeyAnswers(mpcAnswerIn(outcome, "sample keys"), ids.length);
   }
 
   async recordTraining(contract: string, run: TrainingRecord): Promise<string | null> {

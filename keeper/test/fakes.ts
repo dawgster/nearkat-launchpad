@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
 import { base58 } from "@scure/base";
 import {
   type Chain,
@@ -9,13 +8,14 @@ import {
   type KeyProof,
   type SampleView,
 } from "../src/chain.ts";
-import { appId, contextKeyPath, type KeySource, MpcKeyring, sampleKeyPath } from "../src/ckd.ts";
+import { contextKeyPath, type KeySource, MpcKeyring, sampleKeyPath } from "../src/ckd.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference, Tool } from "../src/inference.ts";
 import type { LoanView } from "../src/loans.ts";
 import type { ChatMessage, KatView } from "../src/types.ts";
 import { PaymentRefused, type WalletView } from "../src/wallet.ts";
+import { mpcAnswer, mpcPublicKeyOf } from "./mpc.ts";
 
 export const NEAR = 10n ** 24n;
 
@@ -241,24 +241,11 @@ export class FakeChain implements Chain {
       throw new Error(`key_epoch must be at most ${this.collection.key_epoch}`);
     }
     // What the MPC network computes: K = msk·H(pk ‖ app_id), ElGamal-encrypted to the app key.
-    const G1 = bls.G1.Point;
-    const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
-    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
-    const hashed = bls.G1.hashToCurve(
-      new Uint8Array([...pk, ...appId(this.contractId, contextKeyPath(keyEpoch))]),
-      { DST: "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_" },
-    ) as unknown as InstanceType<typeof G1>;
-    const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
-    const encode = (point: InstanceType<typeof G1>) =>
-      `bls12381g1:${base58.encode(point.toBytes(true))}`;
-    return {
-      big_y: encode(G1.BASE.multiply(y)),
-      big_c: encode(hashed.multiply(this.mpcSecret).add(app.multiply(y))),
-    };
+    return mpcAnswer(this.mpcSecret, this.contractId, contextKeyPath(keyEpoch), appPublicKey);
   }
 
   async mpcPublicKey(_source: KeySource): Promise<string> {
-    return `bls12381g2:${base58.encode(bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true))}`;
+    return mpcPublicKeyOf(this.mpcSecret);
   }
 
   /** Samples as `set_samples` recorded them. */
@@ -272,19 +259,7 @@ export class FakeChain implements Chain {
   adminId = "admin.near";
 
   #mpcAnswer(path: string, appPublicKey: string): { big_y: string; big_c: string } {
-    const G1 = bls.G1.Point;
-    const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
-    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
-    const hashed = bls.G1.hashToCurve(new Uint8Array([...pk, ...appId(this.contractId, path)]), {
-      DST: "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_",
-    }) as unknown as InstanceType<typeof G1>;
-    const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
-    const encode = (point: InstanceType<typeof G1>) =>
-      `bls12381g1:${base58.encode(point.toBytes(true))}`;
-    return {
-      big_y: encode(G1.BASE.multiply(y)),
-      big_c: encode(hashed.multiply(this.mpcSecret).add(app.multiply(y))),
-    };
+    return mpcAnswer(this.mpcSecret, this.contractId, path, appPublicKey);
   }
 
   async requestIngestKeys(

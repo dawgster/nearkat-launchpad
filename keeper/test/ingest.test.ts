@@ -60,7 +60,6 @@ function setup(
     chain,
     store,
     sealing,
-    keySource: KEY_SOURCE,
     mpcPublicKey: () => chain.mpcPublicKey(KEY_SOURCE),
   });
   return { chain, store, ingest };
@@ -81,7 +80,6 @@ describe("Ingest", () => {
     const mpc = await chain.mpcPublicKey(KEY_SOURCE);
     const keyMap = await fetchSampleKeys(
       chain.contractId,
-      KEY_SOURCE,
       (ids, app) => chain.requestSampleKeys(ids, app),
       mpc,
       ["1"],

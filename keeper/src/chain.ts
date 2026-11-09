@@ -377,16 +377,12 @@ export class NearChain implements Chain {
       "request_context_key",
       { app_public_key: appPublicKey, key_epoch: keyEpoch },
       { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
-    )) as unknown as { status?: { SuccessValue?: string } };
-    const value = outcome.status?.SuccessValue;
-    if (!value) {
-      throw new Error(`The MPC network gave no context key: ${JSON.stringify(outcome.status)}`);
-    }
-    const answer = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as {
+    )) as unknown;
+    const answer = mpcAnswerIn(outcome, "context key") as {
       big_y?: string;
       big_c?: string;
-    };
-    if (typeof answer.big_y !== "string" || typeof answer.big_c !== "string") {
+    } | null;
+    if (typeof answer?.big_y !== "string" || typeof answer.big_c !== "string") {
       throw new Error("The MPC network's answer is malformed");
     }
     return { big_y: answer.big_y, big_c: answer.big_c };
@@ -452,20 +448,8 @@ export class NearChain implements Chain {
       method,
       { token_ids: tokenIds, app_public_key: appPublicKey },
       { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
-    )) as unknown as { status?: { SuccessValue?: string } };
-    const value = outcome.status?.SuccessValue;
-    if (!value) {
-      throw new Error(`The MPC network gave no sample keys: ${JSON.stringify(outcome.status)}`);
-    }
-    const answer = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
-    if (!Array.isArray(answer) || answer.length !== tokenIds.length) {
-      throw new Error("The MPC network's answer is malformed");
-    }
-    return answer.map((item: { big_y?: unknown; big_c?: unknown } | null) =>
-      item && typeof item.big_y === "string" && typeof item.big_c === "string"
-        ? { big_y: item.big_y, big_c: item.big_c }
-        : null,
-    );
+    )) as unknown;
+    return sampleKeyAnswers(mpcAnswerIn(outcome, "sample keys"), tokenIds.length);
   }
 
   async setSamples(items: Array<[string, string, string]>): Promise<void> {
@@ -561,4 +545,39 @@ export function transactionArgsFrom(rpcUrl: string, fetchImpl: typeof fetch = fe
     }
     return args;
   };
+}
+
+/**
+ * The MPC network's answer to a call that waited on it: the JSON the
+ * transaction finally returned. Says so plainly when there is none, as when
+ * the call failed or its outcome ended at a receipt rather than a value.
+ */
+export function mpcAnswerIn(outcome: unknown, what: string): unknown {
+  const status = (outcome as { status?: { SuccessValue?: unknown } } | null)?.status;
+  const value = status?.SuccessValue;
+  if (typeof value !== "string" || value === "") {
+    throw new Error(
+      `The MPC network gave no ${what}: the call returned ${JSON.stringify(status ?? null)}`,
+    );
+  }
+  try {
+    return JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+  } catch {
+    throw new Error(`The MPC network's answer is malformed: the call did not return JSON`);
+  }
+}
+
+/** One answer per asked-for sample, in order; null where the network gave none. */
+export function sampleKeyAnswers(
+  answer: unknown,
+  count: number,
+): Array<{ big_y: string; big_c: string } | null> {
+  if (!Array.isArray(answer) || answer.length !== count) {
+    throw new Error("The MPC network's answer is malformed");
+  }
+  return answer.map((item: { big_y?: unknown; big_c?: unknown } | null) =>
+    item && typeof item.big_y === "string" && typeof item.big_c === "string"
+      ? { big_y: item.big_y, big_c: item.big_c }
+      : null,
+  );
 }

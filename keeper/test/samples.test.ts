@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { appId, fetchSampleKeys, openResponse, sampleKey, sampleKeyPath } from "../src/ckd.ts";
+import { seal } from "../src/crypto.ts";
 import { openSample, type SampleDoc, sealSample } from "../src/samples.ts";
 import { FakeChain, KEY_SOURCE } from "./fakes.ts";
 
@@ -29,6 +30,25 @@ describe("samples", () => {
     expect(() => openSample(key, blob, "2")).toThrow(/not sample 2/);
   });
 
+  test("refuses a blob whose JSON is not a sample", () => {
+    for (const text of ["null", "7", '"x"', "[]"]) {
+      expect(() => openSample(key, seal(key, Buffer.from(text)), "1"), text).toThrow(
+        /not sample 1/,
+      );
+    }
+  });
+
+  test("a sample key is HKDF-SHA256 of the derived key, salted, with the token's path", () => {
+    // Worked out separately with Python's hmac: HKDF(salt "near-mpc-ckd-hkdf-v1", info "nearkat/samples/v1/1").
+    const derived = Buffer.from(
+      "80cf1eb6d3ac851fd67a879ae4216434e9b009bd4cb1c5d98e98f6e03b7f1460f57e1e4f7483065c18400d6dbe509c8d",
+      "hex",
+    );
+    expect(sampleKey(derived, "1").toString("hex")).toBe(
+      "d3c0cba41f2d77fcfefdda2bbf97ddd8dd129b899809206b65788163753545da",
+    );
+  });
+
   test("sample keys come from the MPC answer for that token's path", () => {
     expect(sampleKeyPath("1")).toBe(vector.path);
     const derived = openResponse(
@@ -36,6 +56,9 @@ describe("samples", () => {
       BigInt(vector.app_secret as string),
       vector.mpc_public_key as string,
       appId(vector.caller as string, sampleKeyPath("1")),
+    );
+    expect(Buffer.from(derived).toString("hex")).toBe(
+      "80cf1eb6d3ac851fd67a879ae4216434e9b009bd4cb1c5d98e98f6e03b7f1460f57e1e4f7483065c18400d6dbe509c8d",
     );
     const k = sampleKey(derived, "1");
     expect(k).toHaveLength(32);
@@ -57,7 +80,6 @@ describe("samples", () => {
     const sizes: number[] = [];
     const keys = await fetchSampleKeys(
       chain.contractId,
-      KEY_SOURCE,
       async (tokenIds, appPublicKey) => {
         sizes.push(tokenIds.length);
         return chain.requestIngestKeys(tokenIds, appPublicKey);
@@ -76,7 +98,6 @@ describe("samples", () => {
     const sizes: number[] = [];
     const keys = await fetchSampleKeys(
       chain.contractId,
-      KEY_SOURCE,
       async (tokenIds, appPublicKey) => {
         sizes.push(tokenIds.length);
         return chain.requestIngestKeys(tokenIds, appPublicKey);
@@ -96,7 +117,6 @@ describe("samples", () => {
     let most = 0;
     const keys = await fetchSampleKeys(
       chain.contractId,
-      KEY_SOURCE,
       async (tokenIds, appPublicKey) => {
         running += 1;
         most = Math.max(most, running);
@@ -119,7 +139,6 @@ describe("samples", () => {
       await expect(
         fetchSampleKeys(
           chain.contractId,
-          KEY_SOURCE,
           async () => [],
           await chain.mpcPublicKey(KEY_SOURCE),
           ["1"],
@@ -129,12 +148,24 @@ describe("samples", () => {
     }
   });
 
+  test("fetchSampleKeys refuses another token's answer in a token's place", async () => {
+    const chain = new FakeChain();
+    await expect(
+      fetchSampleKeys(
+        chain.contractId,
+        // Answers for 2 and 1, given for 1 and 2.
+        async (ids, appPublicKey) => chain.requestIngestKeys([...ids].reverse(), appPublicKey),
+        await chain.mpcPublicKey(KEY_SOURCE),
+        ["1", "2"],
+      ),
+    ).rejects.toThrow("No key for sample 1");
+  });
+
   test("a missing answer names the sample", async () => {
     const chain = new FakeChain();
     await expect(
       fetchSampleKeys(
         chain.contractId,
-        KEY_SOURCE,
         async (ids) => ids.map(() => null),
         await chain.mpcPublicKey(KEY_SOURCE),
         ["7"],

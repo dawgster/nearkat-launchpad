@@ -334,7 +334,6 @@ export class Runs {
       const mpcPublicKey = await chain.mpcPublicKey(checked.keySource);
       const keys = await fetchSampleKeys(
         contract,
-        checked.keySource,
         (ids, appPublicKey) => chain.requestSampleKeys(contract, ids, appPublicKey),
         mpcPublicKey,
         tokenIds,

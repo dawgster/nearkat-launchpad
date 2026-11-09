@@ -122,7 +122,6 @@ export const MAX_SAMPLE_KEYS_PER_CALL = 10;
  */
 export async function fetchSampleKeys(
   collectionId: string,
-  _source: KeySource,
   request: (
     tokenIds: string[],
     appPublicKey: string,

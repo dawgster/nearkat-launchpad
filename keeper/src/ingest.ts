@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Chain } from "./chain.ts";
-import { fetchSampleKeys, type KeySource } from "./ckd.ts";
+import { fetchSampleKeys } from "./ckd.ts";
 import { HttpError } from "./errors.ts";
 import type { FastfsStore } from "./fastfs.ts";
 import { SAMPLE_INFO, sealSample } from "./samples.ts";
@@ -21,7 +21,6 @@ export interface IngestOptions {
   chain: Chain;
   store: FastfsStore | ContextStore;
   sealing: SealingKey;
-  keySource: KeySource;
   mpcPublicKey: () => Promise<string>;
   /** Sample keys asked for per call, 1 to 10. Defaults to 10. */
   keysPerCall?: number;
@@ -96,7 +95,6 @@ export class Ingest {
 
     const keys = await fetchSampleKeys(
       this.#o.contractId,
-      this.#o.keySource,
       (ids, appPublicKey) => chain.requestIngestKeys(ids, appPublicKey),
       await this.#o.mpcPublicKey(),
       todo.map((t) => t.tokenId),

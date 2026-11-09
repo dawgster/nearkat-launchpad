@@ -1,11 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { bls12_381 as bls } from "@noble/curves/bls12-381.js";
 import { base58 } from "@scure/base";
 import type { KeyProof, SampleView } from "../../keeper/src/chain.ts";
-import { appId, type KeySource, sampleKey, sampleKeyPath } from "../../keeper/src/ckd.ts";
+import { type KeySource, sampleKey, sampleKeyPath } from "../../keeper/src/ckd.ts";
 import { FastfsStore } from "../../keeper/src/fastfs.ts";
 import type { LoanView } from "../../keeper/src/loans.ts";
 import { sealSample } from "../../keeper/src/samples.ts";
+import { mpcAnswer, mpcDerivedKey, mpcPublicKeyOf } from "../../keeper/test/mpc.ts";
 import {
   ContractRefusal,
   type LoanTraining,
@@ -19,11 +19,6 @@ export const CONTRACT = "cats-vs-dogs.launch.near";
 export const APP_ID = "a".repeat(64);
 export const RENTER = "renter.near";
 export const LAUNCHPAD = "launch.near";
-
-const G1 = bls.G1.Point;
-const DST = "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_";
-const encode = (point: InstanceType<typeof G1>) =>
-  `bls12381g1:${base58.encode(point.toBytes(true))}`;
 
 /** A JPEG stand-in: the pipeline never looks inside. */
 export const jpegFor = (tokenId: string) => Buffer.from(`jpeg of sample ${tokenId}`);
@@ -72,12 +67,7 @@ export class FakeTrainerChain implements TrainerChain {
 
   /** The key the MPC network derives for a sample, as the keeper would have sealed it with. */
   #sampleKey(tokenId: string): Buffer {
-    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
-    const hashed = bls.G1.hashToCurve(
-      new Uint8Array([...pk, ...appId(CONTRACT, sampleKeyPath(tokenId))]),
-      { DST },
-    ) as unknown as InstanceType<typeof G1>;
-    return sampleKey(hashed.multiply(this.mpcSecret).toBytes(true), tokenId);
+    return sampleKey(mpcDerivedKey(this.mpcSecret, CONTRACT, sampleKeyPath(tokenId)), tokenId);
   }
 
   /** Seals a sample into FastFS and rents it to `renter` for the app. */
@@ -140,22 +130,12 @@ export class FakeTrainerChain implements TrainerChain {
     if (ids.length > 10) {
       throw new Error("At most 10 keys per call");
     }
-    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
-    const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
     return ids.map((id) => {
       const training = this.training.get(id);
       if (!training || training.spent) {
         return null;
       }
-      const hashed = bls.G1.hashToCurve(
-        new Uint8Array([...pk, ...appId(CONTRACT, sampleKeyPath(id))]),
-        { DST },
-      ) as unknown as InstanceType<typeof G1>;
-      const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
-      return {
-        big_y: encode(G1.BASE.multiply(y)),
-        big_c: encode(hashed.multiply(this.mpcSecret).add(app.multiply(y))),
-      };
+      return mpcAnswer(this.mpcSecret, CONTRACT, sampleKeyPath(id), appPublicKey);
     });
   }
 
@@ -199,7 +179,7 @@ export class FakeTrainerChain implements TrainerChain {
   }
 
   async mpcPublicKey(_source: KeySource) {
-    return `bls12381g2:${base58.encode(bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true))}`;
+    return mpcPublicKeyOf(this.mpcSecret);
   }
 
   fastfsStore(_contract: string) {

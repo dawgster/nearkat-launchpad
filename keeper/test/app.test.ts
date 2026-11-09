@@ -607,7 +607,6 @@ describe("dataset collections", () => {
       chain,
       store: new MemoryStore(),
       sealing: keys.sealing(),
-      keySource: KEY_SOURCE,
       mpcPublicKey: () => chain.mpcPublicKey(KEY_SOURCE),
     });
     const auth = new Auth({
