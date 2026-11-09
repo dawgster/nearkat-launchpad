@@ -1080,6 +1080,42 @@ async fn call_gas(
     })
 }
 
+/// Calls with 300 Tgas; the value, and the gas the call's own receipt used
+/// (in Tgas, rounded up), which is what its action must be given.
+async fn call_burnt(
+    env: &Env,
+    who: &User,
+    method: &str,
+    args: Value,
+    deposit: NearToken,
+) -> TestResult<(Value, u64)> {
+    let outcome = env
+        .contract
+        .call_function(method, args)
+        .transaction()
+        .deposit(deposit)
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(who.id.clone(), who.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    let full = outcome
+        .into_full()
+        .ok_or_else(|| format!("{method} is still pending"))?;
+    let receipt = full
+        .receipt_outcomes()
+        .iter()
+        .find(|r| r.executor_id == env.contract.0)
+        .map(|r| r.gas_burnt.as_gas())
+        .unwrap_or(0);
+    let tgas = receipt.div_ceil(1_000_000_000_000);
+    let value = full
+        .into_result()
+        .map_err(|failure| format!("{method} failed: {failure:?}"))?
+        .json()
+        .unwrap_or(Value::Null);
+    Ok((value, tgas))
+}
+
 async fn storage_usage(env: &Env, account: &str) -> TestResult<u64> {
     let view = rpc(
         env,
@@ -1377,7 +1413,10 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     for id in &batch {
         transfer(&env, &env.admin, &env.alice, id).await??;
     }
-    let offered = call(
+    // The web sends up to three 50-sample calls as actions of one
+    // transaction (`LEND_MANY_GAS`, `BORROW_MANY_GAS` in web/src/lib/contract.ts),
+    // so each must use well under a third of 300 Tgas.
+    let (offered, lend_gas) = call_burnt(
         &env,
         &env.alice,
         "lend_many",
@@ -1387,17 +1426,20 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
         }),
         NearToken::from_near(1),
     )
-    .await??;
+    .await?;
     assert_eq!(offered, json!(50));
-    let rented = call(
+    let (rented, borrow_gas) = call_burnt(
         &env,
         &env.bob,
         "borrow_many",
         json!({ "token_ids": batch, "app_id": "app-a" }),
         NearToken::from_millinear(100),
     )
-    .await??;
+    .await?;
     assert_eq!(rented, json!(50));
+    eprintln!("lend_many(50) used {lend_gas} Tgas, borrow_many(50) {borrow_gas} Tgas");
+    assert!(lend_gas <= 60, "lend_many(50) used {lend_gas} Tgas");
+    assert!(borrow_gas <= 60, "borrow_many(50) used {borrow_gas} Tgas");
 
     Ok(())
 }

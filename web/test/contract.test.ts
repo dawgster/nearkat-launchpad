@@ -68,43 +68,93 @@ describe("pickRentable", () => {
   });
 });
 
-describe("chunked transactions", () => {
-  const tokens = Array.from({ length: 120 }, (_, i) => String(i + 1));
+describe("batched transactions", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => String(i + 1));
+  type Action = {
+    method: string;
+    args: { token_ids: string[] };
+    gas: string;
+    deposit: string;
+  };
   const recorder = () => {
-    const calls: Array<{ method: string; args: { token_ids: string[] }; deposit: string }> = [];
+    const transactions: Array<{ signer: string; receiver: string; actions: Action[] }> = [];
     const near = {
-      call: async (
-        _id: string,
-        method: string,
-        args: { token_ids: string[] },
-        options: { attachedDeposit: string },
-      ) => {
-        calls.push({ method, args, deposit: options.attachedDeposit });
-        return {};
+      transaction(signer: string) {
+        const tx = { signer, receiver: "", actions: [] as Action[] };
+        const builder = {
+          functionCall(
+            receiver: string,
+            method: string,
+            args: { token_ids: string[] },
+            options: { gas: string; attachedDeposit: string },
+          ) {
+            tx.receiver = receiver;
+            tx.actions.push({ method, args, gas: options.gas, deposit: options.attachedDeposit });
+            return builder;
+          },
+          async send(_options: { waitUntil: string }) {
+            transactions.push(tx);
+            return {};
+          },
+        };
+        return builder;
       },
     };
-    return { calls, contract: new KatContract(near as never, "set.near") };
+    return { transactions, contract: new KatContract(near as never, "set.near") };
   };
+  const tgas = (gas: string) => Number(gas.replace(" Tgas", ""));
 
-  test("lendMany splits 120 samples into 50/50/20 with matching storage deposits", async () => {
-    const { calls, contract } = recorder();
-    const listed = await contract.lendMany(tokens, { durationS: null, fee: 1n, apps: ["a"] });
-    expect(listed).toBe(120);
-    expect(calls.map((c) => c.args.token_ids.length)).toEqual([50, 50, 20]);
-    expect(calls.map((c) => c.deposit)).toEqual(
-      [50n, 50n, 20n].map((n) => `${LOAN_STORAGE_DEPOSIT * n} yocto`),
-    );
+  test("rents 150 samples in one transaction: three borrow_many actions of 50", async () => {
+    const { transactions, contract } = recorder();
+    const feeOf = (id: string) => BigInt(Number(id) * 7 + 3);
+    const rented = await contract.borrowMany("me.near", ids(150), "a", feeOf);
+    expect(rented).toBe(150);
+    expect(transactions).toHaveLength(1);
+    const [tx] = transactions;
+    expect(tx?.signer).toBe("me.near");
+    expect(tx?.receiver).toBe("set.near");
+    expect(tx?.actions.map((a) => a.method)).toEqual(Array(3).fill("borrow_many"));
+    expect(tx?.actions.map((a) => a.args.token_ids.length)).toEqual([50, 50, 50]);
+    for (const action of tx?.actions ?? []) {
+      const sum = action.args.token_ids.reduce((acc, id) => acc + feeOf(id), 0n);
+      expect(action.deposit).toBe(`${sum} yocto`);
+      expect(action).toMatchObject({ args: { app_id: "a" } });
+    }
+    // The gas of all its actions fits what one transaction may attach.
+    expect(tx?.actions.reduce((sum, a) => sum + tgas(a.gas), 0)).toBeLessThanOrEqual(300);
   });
 
-  test("borrowMany attaches each chunk's own fees", async () => {
-    const { calls, contract } = recorder();
-    const feeOf = (id: string) => BigInt(Number(id) * 7 + 3);
-    await contract.borrowMany(tokens, "a", feeOf);
-    expect(calls.map((c) => c.args.token_ids.length)).toEqual([50, 50, 20]);
-    for (const call of calls) {
-      const sum = call.args.token_ids.reduce((acc, id) => acc + feeOf(id), 0n);
-      expect(call.deposit).toBe(`${sum} yocto`);
-    }
+  test("past three batches, a second transaction carries the rest", async () => {
+    const { transactions, contract } = recorder();
+    await contract.borrowMany("me.near", ids(200), "a", () => 1n);
+    expect(transactions.map((tx) => tx.actions.map((a) => a.args.token_ids.length))).toEqual([
+      [50, 50, 50],
+      [50],
+    ]);
+  });
+
+  test("lists 120 samples in one transaction, each action with its own storage", async () => {
+    const { transactions, contract } = recorder();
+    const listed = await contract.lendMany("me.near", ids(120), {
+      durationS: null,
+      fee: 1n,
+      apps: ["a"],
+    });
+    expect(listed).toBe(120);
+    expect(transactions).toHaveLength(1);
+    const actions = transactions[0]?.actions ?? [];
+    expect(actions.map((a) => a.method)).toEqual(Array(3).fill("lend_many"));
+    expect(actions.map((a) => a.args.token_ids.length)).toEqual([50, 50, 20]);
+    expect(actions.map((a) => a.deposit)).toEqual(
+      [50n, 50n, 20n].map((n) => `${LOAN_STORAGE_DEPOSIT * n} yocto`),
+    );
+    expect(actions.reduce((sum, a) => sum + tgas(a.gas), 0)).toBeLessThanOrEqual(300);
+  });
+
+  test("a rental with no fee still attaches a yoctoNEAR", async () => {
+    const { transactions, contract } = recorder();
+    await contract.borrowMany("me.near", ids(2), "a", () => 0n);
+    expect(transactions[0]?.actions[0]?.deposit).toBe("1 yocto");
   });
 });
 

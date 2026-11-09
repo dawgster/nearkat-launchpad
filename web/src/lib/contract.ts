@@ -63,6 +63,15 @@ export const LOAN_STORAGE_DEPOSIT = 10n ** 22n;
 /** What `lend_many` and `borrow_many` take at most per call. */
 export const MAX_SAMPLES_PER_CALL = 50;
 
+/**
+ * Gas for one `lend_many` or `borrow_many` action of up to 50 samples. The
+ * sandbox measures 25 and 30 Tgas for 50 (one lender); paying up to 50
+ * lenders adds a transfer each, so 90 leaves a wide margin.
+ */
+export const BATCH_ACTION_GAS = "90 Tgas";
+/** Actions per transaction: 3 × 90 Tgas fits the 300 Tgas one transaction may attach. */
+export const ACTIONS_PER_TRANSACTION = 3;
+
 /** What an owner chooses when listing samples for rent to training apps. */
 export interface SampleTerms {
   /** Null: until it is used. */
@@ -341,57 +350,75 @@ export class KatContract {
   }
 
   /**
-   * Lists samples for rent to training apps, in transactions of at most 50.
-   * Returns how many were listed.
+   * Lists samples for rent to training apps: one `lend_many` action per 50,
+   * up to three actions a transaction (one wallet prompt for 150). Each
+   * action attaches its own samples' storage. Returns how many were listed.
    */
-  async lendMany(tokenIds: string[], terms: SampleTerms): Promise<number> {
-    let listed = 0;
-    for (const chunk of chunked(tokenIds, MAX_SAMPLES_PER_CALL)) {
-      const outcome = await this.#near.call(
-        this.#contractId,
-        "lend_many",
-        {
+  async lendMany(signerId: string, tokenIds: string[], terms: SampleTerms): Promise<number> {
+    return this.#batches(
+      signerId,
+      "lend_many",
+      chunked(tokenIds, MAX_SAMPLES_PER_CALL).map((chunk) => ({
+        args: {
           token_ids: chunk,
           duration_s: terms.durationS === null ? null : String(terms.durationS),
           fee: terms.fee.toString(),
           apps: terms.apps,
         },
-        {
-          gas: "300 Tgas",
-          attachedDeposit: yocto(LOAN_STORAGE_DEPOSIT * BigInt(chunk.length)),
-          waitUntil: "FINAL",
-        },
-      );
-      listed += returnValue<number>(outcome) ?? chunk.length;
-    }
-    return listed;
+        count: chunk.length,
+        deposit: LOAN_STORAGE_DEPOSIT * BigInt(chunk.length),
+      })),
+    );
   }
 
   /**
-   * Rents samples for an app, in transactions of at most 50. Each transaction
-   * attaches exactly its own samples' fees (`feeOf`). Returns how many were rented.
+   * Rents samples for an app: one `borrow_many` action per 50, up to three
+   * actions a transaction (one wallet prompt for 150). Each action attaches
+   * exactly its own samples' fees (`feeOf`). Returns how many were rented.
    */
   async borrowMany(
+    signerId: string,
     tokenIds: string[],
     appId: string,
     feeOf: (tokenId: string) => bigint,
   ): Promise<number> {
-    let rented = 0;
-    for (const chunk of chunked(tokenIds, MAX_SAMPLES_PER_CALL)) {
-      const fee = chunk.reduce((sum, id) => sum + feeOf(id), 0n);
-      const outcome = await this.#near.call(
-        this.#contractId,
-        "borrow_many",
-        { token_ids: chunk, app_id: appId },
-        {
-          gas: "300 Tgas",
-          attachedDeposit: yocto(fee > 0n ? fee : 1n),
-          waitUntil: "FINAL",
-        },
-      );
-      rented += returnValue<number>(outcome) ?? chunk.length;
+    return this.#batches(
+      signerId,
+      "borrow_many",
+      chunked(tokenIds, MAX_SAMPLES_PER_CALL).map((chunk) => {
+        const fee = chunk.reduce((sum, id) => sum + feeOf(id), 0n);
+        return {
+          args: { token_ids: chunk, app_id: appId },
+          count: chunk.length,
+          deposit: fee > 0n ? fee : 1n,
+        };
+      }),
+    );
+  }
+
+  /**
+   * Sends calls of one method as the actions of as few transactions as fit
+   * the gas a transaction may attach. A transaction's actions succeed or
+   * fail together.
+   */
+  async #batches(
+    signerId: string,
+    method: string,
+    calls: Array<{ args: object; count: number; deposit: bigint }>,
+  ): Promise<number> {
+    let done = 0;
+    for (const group of chunked(calls, ACTIONS_PER_TRANSACTION)) {
+      let tx = this.#near.transaction(signerId);
+      for (const call of group) {
+        tx = tx.functionCall(this.#contractId, method, call.args, {
+          gas: BATCH_ACTION_GAS,
+          attachedDeposit: yocto(call.deposit),
+        });
+      }
+      await tx.send({ waitUntil: "FINAL" });
+      done += group.reduce((sum, call) => sum + call.count, 0);
     }
-    return rented;
+    return done;
   }
 
   async getLoanTraining(tokenId: string): Promise<LoanTraining | null> {

@@ -700,7 +700,7 @@ function DatasetSection({
     },
   );
   const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
-  const signer = wallet.near ? new KatContract(wallet.near, contractId) : null;
+  const signer = wallet.near && accountId ? new KatContract(wallet.near, contractId) : null;
   const rentable =
     offers.status === "ready" ? offers.data.filter((offer) => offer.lender !== accountId) : [];
 
@@ -742,7 +742,7 @@ function DatasetSection({
           available={mine.data}
           apps={apps.data}
           list={async (ids, terms) => {
-            const listed = await signer.lendMany(ids, terms);
+            const listed = await signer.lendMany(accountId as string, ids, terms);
             void reloadOffers();
             void reloadMine();
             return listed;
@@ -755,7 +755,12 @@ function DatasetSection({
           labels={labels}
           borrow={async (ids, appId) => {
             const byId = new Map(rentable.map((offer) => [offer.tokenId, offer.fee]));
-            const rented = await signer.borrowMany(ids, appId, (id) => byId.get(id) ?? 0n);
+            const rented = await signer.borrowMany(
+              accountId as string,
+              ids,
+              appId,
+              (id) => byId.get(id) ?? 0n,
+            );
             void reloadOffers();
             void reloadRentals();
             return rented;
