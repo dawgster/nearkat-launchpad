@@ -3,7 +3,7 @@
 //! which app id the key belongs to. A collection without a TEE requirement
 //! (dev and local mode) lets its admin trust a key by hand instead.
 
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::{env, near, require, NearToken, Promise, PublicKey};
 
 use crate::attestation::{check_app_registration, verify_quote};
