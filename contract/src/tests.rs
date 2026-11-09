@@ -1832,3 +1832,100 @@ fn a_character_collection_reads_as_character() {
     assert_eq!(view.kind, crate::CollectionKind::Character);
     assert!(view.class_counts.is_empty());
 }
+
+fn sample_dataset() -> Contract {
+    deploy_with(dataset(&["a", "b"], &[3, 2], 5))
+}
+
+fn ids(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn sample_key_paths_name_the_token() {
+    assert_eq!(crate::ckd::sample_key_path("17"), "nearkat/samples/v1/17");
+}
+
+#[test]
+fn the_keeper_requests_ingest_keys_for_unsealed_samples() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["1", "2", "3"]), APP_KEY.to_string());
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    let ckd: Vec<_> = receipts
+        .iter()
+        .filter(|r| r.receiver_id == acc("v1.signer"))
+        .collect();
+    assert_eq!(ckd.len(), 3, "{receipts:?}");
+    let callbacks = receipts
+        .iter()
+        .filter(|r| {
+            r.actions.iter().any(|a| {
+                matches!(a,
+                near_sdk::mock::MockAction::FunctionCallWeight { method_name, args, .. }
+                if method_name == b"on_sample_keys" && args == br#"{"token_ids":["1","2","3"]}"#)
+            })
+        })
+        .count();
+    assert_eq!(callbacks, 1, "{receipts:?}");
+}
+
+#[test]
+#[should_panic(expected = "Sample 1 is already sealed")]
+fn no_ingest_key_once_a_sample_is_sealed() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
+    let _ = c.request_ingest_keys(ids(&["2", "1"]), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "Only the keeper can call this method")]
+fn only_the_keeper_requests_ingest_keys() {
+    let mut c = sample_dataset();
+    ctx("alice.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["1"]), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "At most 10 keys per call")]
+fn ingest_keys_are_limited_per_call() {
+    let mut c = deploy_with(dataset(&["a", "b"], &[6, 6], 12));
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let all: Vec<String> = (1..=11).map(|i| i.to_string()).collect();
+    let _ = c.request_ingest_keys(all, APP_KEY.to_string());
+}
+
+#[test]
+fn set_samples_seals_each_sample_once() {
+    let mut c = sample_dataset();
+    assert_eq!(c.get_sample("1".to_string()).unwrap().sample_hash, None);
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![
+        ("1".to_string(), hash(1), "ref1".to_string()),
+        ("2".to_string(), hash(2), "ref2".to_string()),
+    ]);
+    let s = c.get_sample("1".to_string()).unwrap();
+    assert_eq!(s.owner_id, acc("admin.near"));
+    assert_eq!(s.sample_hash, Some(hash(1)));
+    assert_eq!(s.sample_ref.as_deref(), Some("ref1"));
+    assert_eq!(c.get_sample("3".to_string()).unwrap().sample_ref, None);
+    assert!(c.get_sample("99".to_string()).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Sample 1 is already sealed")]
+fn set_samples_refuses_a_second_seal() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "ref1".to_string())]);
+    c.set_samples(vec![("1".to_string(), hash(2), "ref2".to_string())]);
+}
+
+#[test]
+#[should_panic(expected = "This is not a dataset collection")]
+fn character_collections_have_no_samples() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
+}

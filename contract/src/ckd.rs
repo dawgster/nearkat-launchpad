@@ -26,6 +26,14 @@ pub const CONTEXT_KEY_PATH: &str = "nearkat/contexts/v1";
 /// whatever gas the keeper attached beyond what this call uses.
 const GAS_FOR_CKD: Gas = Gas::from_tgas(15);
 
+/// The derivation path prefix of the keys that encrypt training samples; the
+/// token id follows it.
+pub const SAMPLE_KEY_PATH: &str = "nearkat/samples/v1";
+
+pub fn sample_key_path(token_id: &str) -> String {
+    format!("{SAMPLE_KEY_PATH}/{token_id}")
+}
+
 pub fn context_key_path(epoch: u32) -> String {
     if epoch == 0 {
         CONTEXT_KEY_PATH.to_string()
@@ -52,21 +60,7 @@ impl Contract {
             epoch <= self.key_epoch,
             format!("key_epoch must be at most {}", self.key_epoch)
         );
-        let args = near_sdk::serde_json::json!({
-            "request": {
-                "derivation_path": context_key_path(epoch),
-                "app_public_key": { "AppPublicKey": app_public_key },
-                "domain_id": self.key_source.domain_id,
-            }
-        });
-        // The MPC contract asks a deposit of 1 yoctoNEAR per request.
-        Promise::new(self.key_source.mpc_contract_id.clone()).function_call_weight(
-            "request_app_private_key",
-            args.to_string().into_bytes(),
-            NearToken::from_yoctonear(1),
-            GAS_FOR_CKD,
-            GasWeight(1),
-        )
+        self.ckd_request(context_key_path(epoch), &app_public_key)
     }
 
     /// Moves to a new key epoch. Admin only.
@@ -91,6 +85,25 @@ impl Contract {
 }
 
 impl Contract {
+    /// The MPC request for the key at `path`, encrypted to `app_public_key`.
+    pub(crate) fn ckd_request(&self, path: String, app_public_key: &str) -> Promise {
+        let args = near_sdk::serde_json::json!({
+            "request": {
+                "derivation_path": path,
+                "app_public_key": { "AppPublicKey": app_public_key },
+                "domain_id": self.key_source.domain_id,
+            }
+        });
+        // The MPC contract asks a deposit of 1 yoctoNEAR per request.
+        Promise::new(self.key_source.mpc_contract_id.clone()).function_call_weight(
+            "request_app_private_key",
+            args.to_string().into_bytes(),
+            NearToken::from_yoctonear(1),
+            GAS_FOR_CKD,
+            GasWeight(1),
+        )
+    }
+
     pub(crate) fn rotate_key_epoch(&mut self) {
         self.key_epoch += 1;
         env::log_str(&format!("key_epoch {}", self.key_epoch));

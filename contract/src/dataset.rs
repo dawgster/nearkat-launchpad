@@ -3,10 +3,12 @@
 
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
+use near_contract_standards::non_fungible_token::TokenId;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::U64;
-use near_sdk::{env, near, require, Gas, GasWeight, NearToken, Promise};
+use near_sdk::json_types::{Base64VecU8, U64};
+use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, Promise};
 
+use crate::ckd::sample_key_path;
 use crate::kat::{CollectionKind, Kat};
 use crate::{Contract, ContractExt};
 
@@ -16,6 +18,15 @@ pub(crate) const DATASET_KEY: &[u8] = b"dataset";
 
 /// How many samples one call mints, to stay within gas.
 pub(crate) const SAMPLE_MINT_BATCH: u64 = 50;
+
+/// Keys per `request_ingest_keys` call, to stay within gas.
+const MAX_INGEST_KEYS: usize = 10;
+/// Samples sealed per `set_samples` call.
+const MAX_SEAL_BATCH: usize = 50;
+/// Gas for `on_sample_keys`, which only reads the results.
+const GAS_FOR_SAMPLE_KEYS: Gas = Gas::from_tgas(10);
+/// An MPC response ({big_y, big_c}) is far below this.
+const MAX_KEY_RESPONSE_LEN: usize = 1024;
 
 pub(crate) const MAX_CLASSES: usize = 16;
 pub(crate) const MAX_CLASS_NAME_LEN: usize = 32;
@@ -80,8 +91,107 @@ pub(crate) fn validate(
     }
 }
 
+#[near(serializers = [json])]
+#[derive(Debug, PartialEq)]
+pub struct SampleView {
+    pub owner_id: AccountId,
+    pub sample_hash: Option<Base64VecU8>,
+    pub sample_ref: Option<String>,
+}
+
 #[near]
 impl Contract {
+    /// Has the MPC network derive a key for each listed sample, encrypted to
+    /// `app_public_key`, so the keeper can seal the samples. Keeper only;
+    /// dataset only; only samples not sealed yet. Resolves to
+    /// `on_sample_keys`' answer. Attach plenty of gas: each request gets a
+    /// share of what is left.
+    pub fn request_ingest_keys(
+        &mut self,
+        token_ids: Vec<TokenId>,
+        app_public_key: String,
+    ) -> Promise {
+        self.assert_keeper();
+        self.require_dataset();
+        require!(
+            (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
+            format!("At most {MAX_INGEST_KEYS} keys per call")
+        );
+        for (i, token_id) in token_ids.iter().enumerate() {
+            require!(
+                !token_ids[..i].contains(token_id),
+                format!("Sample {token_id} is listed twice")
+            );
+            self.require_unsealed(token_id);
+        }
+        let mut requests = token_ids
+            .iter()
+            .map(|token_id| self.ckd_request(sample_key_path(token_id), &app_public_key));
+        let first = requests
+            .next()
+            .unwrap_or_else(|| env::panic_str("No samples"));
+        let all = requests.fold(first, |all, next| all.and(next));
+        all.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_SAMPLE_KEYS)
+                .on_sample_keys(token_ids),
+        )
+    }
+
+    /// One entry per token, in order: the MPC response, or None if that
+    /// request failed.
+    #[private]
+    pub fn on_sample_keys(
+        &self,
+        token_ids: Vec<TokenId>,
+    ) -> Vec<Option<near_sdk::serde_json::Value>> {
+        (0..token_ids.len() as u64)
+            .map(
+                |i| match env::promise_result_checked(i, MAX_KEY_RESPONSE_LEN) {
+                    Ok(bytes) => near_sdk::serde_json::from_slice(&bytes).ok(),
+                    Err(_) => None,
+                },
+            )
+            .collect()
+    }
+
+    /// Records each sample's encrypted blob: its sha256 and FastFS ref. A
+    /// sample is sealed once. Keeper only; dataset only.
+    pub fn set_samples(&mut self, items: Vec<(TokenId, Base64VecU8, String)>) {
+        self.assert_keeper();
+        self.require_dataset();
+        require!(
+            (1..=MAX_SEAL_BATCH).contains(&items.len()),
+            format!("1 to {MAX_SEAL_BATCH} samples per call")
+        );
+        for (token_id, sample_hash, sample_ref) in items {
+            let hash: [u8; 32] = sample_hash
+                .0
+                .try_into()
+                .unwrap_or_else(|_| env::panic_str("sample hash must be 32 bytes"));
+            require!(
+                !sample_ref.is_empty() && sample_ref.len() <= 256,
+                "sample ref must be 1 to 256 bytes"
+            );
+            self.require_unsealed(&token_id);
+            let kat = self.kat_mut(&token_id);
+            kat.context_hash = Some(hash);
+            kat.context_ref = Some(sample_ref);
+            kat.context_version = 1;
+            self.kat_epochs.insert(token_id, 0);
+        }
+    }
+
+    pub fn get_sample(&self, token_id: TokenId) -> Option<SampleView> {
+        let kat = self.kats.get(&token_id)?;
+        let owner_id = self.tokens.owner_by_id.get(&token_id)?;
+        Some(SampleView {
+            owner_id,
+            sample_hash: kat.context_hash.map(|h| h.to_vec().into()),
+            sample_ref: kat.context_ref.clone(),
+        })
+    }
+
     /// Mints up to a batch of the samples still to come, then schedules the
     /// rest. Only the collection itself calls this.
     #[private]
@@ -91,6 +201,24 @@ impl Contract {
 }
 
 impl Contract {
+    fn require_dataset(&self) {
+        require!(
+            self.dataset_classes().is_some(),
+            "This is not a dataset collection"
+        );
+    }
+
+    fn require_unsealed(&self, token_id: &TokenId) {
+        let kat = self
+            .kats
+            .get(token_id)
+            .unwrap_or_else(|| env::panic_str("Kat not found"));
+        require!(
+            kat.context_version == 0,
+            format!("Sample {token_id} is already sealed")
+        );
+    }
+
     /// The classes of a dataset collection, None for a character collection.
     pub(crate) fn dataset_classes(&self) -> Option<Vec<String>> {
         self.dataset_info().map(|info| info.classes)
