@@ -192,6 +192,26 @@ at the launchpad (redeploy the keeper CVM if it changed; its identity then
 changes) and the web app's `VITE_CONTRACT_ID`, `VITE_KEEPER_URL`,
 `VITE_FACTORY_ID`, `VITE_AUTH_RECIPIENT` at the new deployment.
 
+The web app also needs the training app, or there is no Train button. Its
+image (`deploy/web.Dockerfile`) takes it as a build arg, and fetches the
+held-out images into `/heldout` in a build stage, so TryModel can score a
+model in the browser:
+
+```bash
+docker build -f deploy/web.Dockerfile -t <web-image> \
+  --build-arg VITE_NEAR_NETWORK=testnet \
+  --build-arg VITE_CONTRACT_ID=<home-contract> \
+  --build-arg VITE_KEEPER_URL=<keeper-url> \
+  --build-arg VITE_FACTORY_ID=<launchpad> \
+  --build-arg VITE_AUTH_RECIPIENT=<auth-recipient> \
+  --build-arg VITE_NEAR_RPC_URL=<rpc-url> \
+  --build-arg 'VITE_TRAINER_URLS={"<trainer-app-id>":{"url":"<trainer-url>","recipient":"<trainer-auth-recipient>"}}' .
+```
+
+On a host that builds from the Dockerfile (Railway), set the same names as
+build variables. After deploying, check `<web-url>/heldout/manifest.json`
+lists 50 files and the collection page shows the Train panel.
+
 ## 6. Launch the hotdog collection (step 5)
 
 ```bash

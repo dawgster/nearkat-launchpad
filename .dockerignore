@@ -8,3 +8,7 @@
 !**/.env.example
 keeper/data
 .git
+# Fetched in the images' own build stages, never from the working tree.
+data
+trainer/heldout
+web/public/heldout
