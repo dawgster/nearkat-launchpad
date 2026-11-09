@@ -44,13 +44,19 @@ non-secret values in an env file kept out of git, e.g. `.phala-keeper.env`:
 KEEPER_IMAGE=<registry>/<keeper-image>@sha256:<digest>
 NEAR_RPC_URL=https://rpc.testnet.near.org           # or the chosen provider
 NEAR_ARCHIVAL_RPC_URL=https://archival-rpc.testnet.fastnear.com
-CONTRACT_ID=nft2.pals-c0b7a5.testnet
 LAUNCHPAD_ID=<launchpad>
-KEEPER_ACCOUNT_ID=<keeper-account>                  # e.g. pals-keeper.testnet
+KEEPER_ACCOUNT_ID=dkeeper.pals-c0b7a5.testnet      # its own, new account (step 3)
 WEB_ORIGINS=<web-url>
 AUTH_RECIPIENT=<auth-recipient>                     # must equal the web app's VITE_AUTH_RECIPIENT
 NEAR_AI_API_KEY=<secret, encrypted at deploy>
 ```
+
+There is no `CONTRACT_ID`: this keeper has no home collection and serves only
+the launchpad's launches that name `dkeeper.pals-c0b7a5.testnet` as their
+keeper (the hotdog dataset). It must never serve `nft2.pals-c0b7a5.testnet`:
+the kats keep their own keeper on Railway, under its own account, and two
+keepers on one collection would race each other's debit batches and context
+saves. Do not reuse that keeper's account or its `CONTRACT_ID`.
 
 and `.phala-trainer.env` with `TRAINER_IMAGE`, `NEAR_RPC_URL`,
 `NEAR_ARCHIVAL_RPC_URL`, `TRAINER_ACCOUNT_ID=<trainer-account>`,
@@ -91,7 +97,7 @@ Both services print the NEAR public key their account must hold on start
 
 ```bash
 # Neutral names, created under the admin account.
-near account create-account fund-myself keeper.pals-c0b7a5.testnet '10 NEAR' \
+near account create-account fund-myself dkeeper.pals-c0b7a5.testnet '10 NEAR' \
   autogenerate-new-keypair save-to-keychain sign-as pals-c0b7a5.testnet \
   network-config testnet sign-with-keychain send
 near account create-account fund-myself trainer.pals-c0b7a5.testnet '10 NEAR' \
@@ -99,8 +105,9 @@ near account create-account fund-myself trainer.pals-c0b7a5.testnet '10 NEAR' \
   network-config testnet sign-with-keychain send
 ```
 
-(any other `pals-*.testnet` names are fine; use them in `KEEPER_ACCOUNT_ID` and
-`TRAINER_ACCOUNT_ID`.) Then add each derived key as **full-access**; the
+(any other new `pals-*.testnet` names are fine; use them in `KEEPER_ACCOUNT_ID`
+and `TRAINER_ACCOUNT_ID`. Never `keeper.pals-c0b7a5.testnet` or any other
+account an existing keeper runs as.) Then add each derived key as **full-access**; the
 trainer needs it because `record_training` takes a deposit and
 `register_app_key` must be signed by the key it registers:
 
@@ -192,8 +199,9 @@ scripts/fetch-hotdog.sh        # fills data/hotdog/train (200 images)
 ```
 
 In the web app, sign in as the creator, open Launch, pick Dataset with the
-keeper's app as the TEE, drop `data/hotdog/train`, confirm. Expect "200 samples
-sealed".
+keeper's app as the TEE, and set **Keeper account** to
+`dkeeper.pals-c0b7a5.testnet` (the launchpad's own keeper is the kats' one).
+Drop `data/hotdog/train`, confirm. Expect "200 samples sealed".
 
 ## 7. Run the demo (step 6)
 
@@ -223,7 +231,7 @@ post anything until the user says so.
 | --- | --- |
 | Keeper app id | `<keeper-app-id>` |
 | Keeper URL | `<keeper-url>` |
-| Keeper account | `<keeper-account>` |
+| Keeper account | `dkeeper.pals-c0b7a5.testnet` (or the new name chosen) |
 | Trainer app id | `<trainer-app-id>` |
 | Trainer URL | `<trainer-url>` |
 | Trainer account | `<trainer-account>` |

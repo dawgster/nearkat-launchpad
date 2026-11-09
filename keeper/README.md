@@ -6,7 +6,9 @@ updated memory. Design: `../docs/superpowers/specs/2026-10-13-nearkat-ai-nft-des
 
 It serves many collections: its home one (`CONTRACT_ID`), any listed in
 `CONTRACT_IDS`, and every launch on `LAUNCHPAD_ID` whose contract names this
-keeper's account. Each collection's public prompt and starter context are
+keeper's account. With `LAUNCHPAD_ID` set, `CONTRACT_ID` may be left out: the
+keeper then has no home collection and serves only those launches (the
+dataset keeper runs this way, under its own account). Each collection's public prompt and starter context are
 read from its contract (`get_collection`), so the same keeper serves a
 meerkat, a tutor or a game master. Each has its own meter and journal, and
 its own context keys from NEAR's MPC network.

@@ -126,7 +126,9 @@ const collections = new Collections({
 
 /** The collections to serve: the configured ones, and launches that name this keeper. */
 async function discover(): Promise<void> {
-  const ids = new Set([config.contractId, ...config.extraContractIds]);
+  const ids = new Set(
+    [config.contractId, ...config.extraContractIds].filter((id): id is string => !!id),
+  );
   if (config.launchpadId) {
     for (let from = 0; ; from += 100) {
       const page =
@@ -176,7 +178,7 @@ const app = createApp({
   isDataset: (contractId) => collections.get(contractId)?.ingest !== undefined,
   ingest: (contractId) => collections.get(contractId)?.ingest,
   collections: () => ({
-    home: config.contractId,
+    home: config.contractId ?? null,
     served: collections.all().map(({ contractId, info, prices }) => ({
       contract_id: contractId,
       name: info.name,
@@ -284,7 +286,9 @@ every(FLUSH_EVERY_MS, "flush", async () => {
 every(DISCOVER_EVERY_MS, "discover", discover);
 
 const server = serve({ fetch: app.fetch, port: config.port });
-console.log(`Keeper listening on :${config.port} for ${config.contractId} (${config.network})`);
+console.log(
+  `Keeper listening on :${config.port} for ${config.contractId ?? `launches of ${config.launchpadId}`} (${config.network})`,
+);
 console.log(
   config.storage === "fastfs"
     ? `Contexts are stored on NEAR with FastFS, cached in ${config.storeDir}`

@@ -1,4 +1,6 @@
-# Keeper for dataset (and character) collections, as a Phala Cloud (dstack) app.
+# Keeper for launched dataset collections, as a Phala Cloud (dstack) app. It has
+# no home collection (no CONTRACT_ID): it serves only the launchpad's launches
+# that name its own account as their keeper, never the kats' collection.
 # ${...} values are filled from the encrypted env file given at deploy time
 # (see docs/demo/phala.md); nothing secret belongs in this file. The compose
 # hash is part of the app's attested identity, so change it only on purpose.
@@ -19,7 +21,6 @@ services:
       NEAR_NETWORK: testnet
       NEAR_RPC_URL: ${NEAR_RPC_URL}
       NEAR_ARCHIVAL_RPC_URL: ${NEAR_ARCHIVAL_RPC_URL}
-      CONTRACT_ID: ${CONTRACT_ID}
       LAUNCHPAD_ID: ${LAUNCHPAD_ID}
       KEEPER_ACCOUNT_ID: ${KEEPER_ACCOUNT_ID}
       STORAGE: fastfs

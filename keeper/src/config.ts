@@ -6,8 +6,11 @@ export interface Config {
   network: "testnet" | "mainnet" | "sandbox";
   /** Overrides the network's default RPC endpoint. Required for a sandbox. */
   rpcUrl: string | undefined;
-  /** The home collection, served at /kats. */
-  contractId: string;
+  /**
+   * The home collection, served at /kats. Optional when `launchpadId` is set:
+   * a keeper for launched collections only (such as datasets) has none.
+   */
+  contractId: string | undefined;
   /** More collections to serve, by contract id. */
   extraContractIds: string[];
   /** A launchpad whose collections naming this keeper are served too. */
@@ -83,6 +86,13 @@ function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
   return value;
 }
 
+function homeContract(env: NodeJS.ProcessEnv): string | undefined {
+  if (!env.CONTRACT_ID && !env.LAUNCHPAD_ID) {
+    throw new Error("CONTRACT_ID is required unless LAUNCHPAD_ID is set");
+  }
+  return env.CONTRACT_ID || undefined;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const network = env.NEAR_NETWORK ?? "testnet";
   if (network !== "testnet" && network !== "mainnet" && network !== "sandbox") {
@@ -116,7 +126,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     dstackEndpoint: env.DSTACK_ENDPOINT || undefined,
     network,
     rpcUrl: env.NEAR_RPC_URL || undefined,
-    contractId: required(env, "CONTRACT_ID"),
+    contractId: homeContract(env),
     extraContractIds: (env.CONTRACT_IDS ?? "")
       .split(",")
       .map((id) => id.trim())

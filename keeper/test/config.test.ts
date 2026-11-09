@@ -80,6 +80,16 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, [name]: "" })).toThrow(name);
   });
 
+  test("serves only a launchpad's launches when there is no home collection", () => {
+    // A keeper for launched collections alone, e.g. datasets, need not serve a home one.
+    const config = loadConfig({ ...base, CONTRACT_ID: "", LAUNCHPAD_ID: "launch.near" });
+    expect(config.contractId).toBeUndefined();
+    expect(config.launchpadId).toBe("launch.near");
+    expect(() => loadConfig({ ...base, CONTRACT_ID: "" })).toThrow(
+      "CONTRACT_ID is required unless LAUNCHPAD_ID is set",
+    );
+  });
+
   test.each([
     ["NEAR_NETWORK", "devnet"],
     ["PORT", "0"],
