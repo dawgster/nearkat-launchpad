@@ -10,9 +10,37 @@ export interface AppConfig {
   factoryId: string | null;
   /** Development only: sign with this key instead of a browser wallet. */
   devWallet: { accountId: string; privateKey: string } | null;
+  /** Training apps' base URLs by app id. An app missing here can't be trained with from this app. */
+  trainerUrls: Record<string, string>;
 }
 
 type Env = Record<string, string | undefined>;
+
+function trainerUrls(value: string | undefined): Record<string, string> {
+  if (!value) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    parsed = null;
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !Object.values(parsed).every((url) => typeof url === "string" && url)
+  ) {
+    throw new Error("VITE_TRAINER_URLS must be a JSON object of app id to URL");
+  }
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, string>).map(([id, url]) => [
+      id,
+      url.replace(/\/+$/, ""),
+    ]),
+  );
+}
 
 export function loadConfig(env: Env, options: { production?: boolean } = {}): AppConfig {
   const contractId = env.VITE_CONTRACT_ID;
@@ -47,6 +75,7 @@ export function loadConfig(env: Env, options: { production?: boolean } = {}): Ap
     authRecipient: env.VITE_AUTH_RECIPIENT ?? "nearkat.xyz",
     factoryId: env.VITE_FACTORY_ID || null,
     devWallet,
+    trainerUrls: trainerUrls(env.VITE_TRAINER_URLS),
   };
 }
 

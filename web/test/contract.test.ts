@@ -107,3 +107,51 @@ describe("chunked transactions", () => {
     }
   });
 });
+
+describe("rentalsOf", () => {
+  test("finds the account's unspent rentals, grouped by training app", async () => {
+    const tokens = ["1", "2", "3", "4", "5", "6"].map((id) => ({
+      token_id: id,
+      owner_id: "lender",
+    }));
+    const loans: Record<string, object> = {
+      "1": { status: "active", borrower_id: "me.near" },
+      "2": { status: "active", borrower_id: "me.near" },
+      "3": { status: "active", borrower_id: "me.near" }, // spent
+      "4": { status: "active", borrower_id: "other.near" },
+      "5": { status: "offered", borrower_id: null },
+      "6": { status: "active", borrower_id: "me.near" },
+    };
+    const training: Record<string, object> = {
+      "1": { apps: ["a", "b"], app_id: "a", spent: false },
+      "2": { apps: ["a"], app_id: "a", spent: false },
+      "3": { apps: ["a"], app_id: "a", spent: true },
+      "4": { apps: ["a"], app_id: "a", spent: false },
+      "5": { apps: ["a"], app_id: null, spent: false },
+      "6": { apps: ["b"], app_id: "b", spent: false },
+    };
+    const near = {
+      view: async (
+        _id: string,
+        method: string,
+        args: { token_id?: string; from_index?: string },
+      ) => {
+        if (method === "nft_tokens") {
+          return args.from_index === "0" ? tokens : [];
+        }
+        if (method === "get_loan") {
+          return loans[args.token_id as string] ?? null;
+        }
+        if (method === "get_loan_training") {
+          return training[args.token_id as string] ?? null;
+        }
+        throw new Error(method);
+      },
+    };
+    const contract = new KatContract(near as never, "set.near");
+    expect(await contract.rentalsOf("me.near")).toEqual([
+      { appId: "a", tokenIds: ["1", "2"] },
+      { appId: "b", tokenIds: ["6"] },
+    ]);
+  });
+});

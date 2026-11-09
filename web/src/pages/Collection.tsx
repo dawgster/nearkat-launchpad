@@ -6,6 +6,7 @@ import { MintPanel } from "../components/MintPanel.tsx";
 import { RentPanel } from "../components/RentPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
+import { type TrainerAccess, TrainPanel } from "../components/TrainPanel.tsx";
 import { PLAIN_STAGE_NAMES, STAGE_NAMES, stageOf } from "../lib/art.ts";
 import { KatContract } from "../lib/contract.ts";
 import { formatNear, shorten } from "../lib/format.ts";
@@ -16,8 +17,10 @@ import {
   type TeeRequirement,
 } from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { KeeperSession } from "../lib/session.ts";
+import { createTrainer } from "../lib/trainer.ts";
 import { useAsync } from "../lib/useAsync.ts";
-import { useServices } from "../services.tsx";
+import { SIGN_IN_MESSAGE, useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
 function Privacy({ tee }: { tee: TeeRequirement | null }) {
@@ -654,7 +657,37 @@ function DatasetSection({
   accountId: string | null;
 }) {
   const wallet = useWallet();
+  const { config } = useServices();
   const [apps] = useAsync(`training-apps/${contractId}`, () => reader.trainingApps());
+  const [rentals, reloadRentals] = useAsync(
+    accountId ? `rentals/${contractId}/${accountId}` : null,
+    () => reader.rentalsOf(accountId as string),
+  );
+  const { signMessage } = wallet;
+  // One sign-in per training app, kept for the tab apart from the keeper's.
+  const trainers = useMemo(() => {
+    if (!accountId || !signMessage) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(config.trainerUrls).map(([appId, url]): [string, TrainerAccess] => {
+        const trainer = createTrainer(url);
+        const session = new KeeperSession({
+          keeper: trainer,
+          accountId,
+          signMessage,
+          expect: { message: SIGN_IN_MESSAGE, recipient: config.authRecipient },
+          callbackUrl: window.location.origin,
+          scope: `trainer.${appId}`,
+        });
+        return [appId, { trainer, session }];
+      }),
+    );
+  }, [config, accountId, signMessage]);
+  const explorer =
+    config.networkId === "sandbox"
+      ? null
+      : `https://${config.networkId === "testnet" ? "testnet." : ""}nearblocks.io/txns/`;
   const [offers, reloadOffers] = useAsync(`offers/${contractId}`, () => reader.sampleOffers());
   const [mine, reloadMine] = useAsync(
     accountId ? `my-samples/${contractId}/${accountId}` : null,
@@ -724,7 +757,24 @@ function DatasetSection({
             const byId = new Map(rentable.map((offer) => [offer.tokenId, offer.fee]));
             const rented = await signer.borrowMany(ids, appId, (id) => byId.get(id) ?? 0n);
             void reloadOffers();
+            void reloadRentals();
             return rented;
+          }}
+        />
+      )}
+      {signer && rentals.status === "ready" && (
+        <TrainPanel
+          contractId={contractId}
+          classes={classes}
+          rentals={rentals.data}
+          labels={labels}
+          trainers={trainers}
+          getRun={(runId) => reader.getRun(runId)}
+          getAppKey={(publicKey) => reader.getAppKey(publicKey)}
+          txUrl={(hash) => (explorer ? `${explorer}${hash}` : null)}
+          onFinished={() => {
+            void reloadRentals();
+            void reloadOffers();
           }}
         />
       )}

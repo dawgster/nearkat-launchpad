@@ -1,0 +1,9 @@
+{
+  "classes": ["hotdog", "not_hotdog"],
+  "files": [
+    { "path": "hotdog/a.jpg", "label": "hotdog" },
+    { "path": "hotdog/b.jpg", "label": "hotdog" },
+    { "path": "not_hotdog/c.jpg", "label": "not_hotdog" },
+    { "path": "not_hotdog/d.jpg", "label": "not_hotdog" }
+  ]
+}

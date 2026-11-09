@@ -9,6 +9,7 @@ import { generateKey, Near, type PrivateKey } from "near-kit";
 import { Sandbox } from "near-kit/sandbox";
 
 const KEEPER_DIR = resolve(process.env.KEEPER_DIR ?? "../keeper");
+const TRAINER_DIR = resolve(process.env.TRAINER_DIR ?? "../trainer");
 const WASM = resolve(process.env.CONTRACT_WASM ?? "../contract/target/near/nearkat_nft.wasm");
 const MOCK_MPC_WASM = resolve(
   process.env.MOCK_MPC_WASM ?? "../mock-mpc/target/near/nearkat_mock_mpc.wasm",
@@ -21,9 +22,13 @@ const LAUNCHPAD_WASM = resolve(
 );
 const KEEPER_PORT = 8788;
 const MODEL_PORT = 8789;
+const TRAINER_PORT = 8790;
 export const ALICE_URL = "http://localhost:3000";
 export const BOB_URL = "http://localhost:3001";
 export const KEEPER_URL = `http://127.0.0.1:${KEEPER_PORT}`;
+export const TRAINER_URL = `http://127.0.0.1:${TRAINER_PORT}`;
+/** The id the local trainer goes by; the collection's admin trusts its key under it. */
+export const TRAINER_APP_ID = "local-trainer";
 
 const children: ChildProcess[] = [];
 
@@ -130,7 +135,12 @@ export default async function globalSetup() {
       throw new Error(`Build the contracts first: ${wasm} is missing`);
     }
   }
-  for (const url of [ALICE_URL, BOB_URL, `http://127.0.0.1:${KEEPER_PORT}/attestation`]) {
+  for (const url of [
+    ALICE_URL,
+    BOB_URL,
+    `http://127.0.0.1:${KEEPER_PORT}/attestation`,
+    `${TRAINER_URL}/attestation`,
+  ]) {
     await requireFree(url);
   }
   const sandbox = await Sandbox.start();
@@ -144,6 +154,7 @@ export default async function globalSetup() {
     alice: `alice-${stamp}.${root}`,
     bob: `bob-${stamp}.${root}`,
     mpc: `mpc-${stamp}.${root}`,
+    trainer: `trainer-${stamp}.${root}`,
   };
   const model = startFakeModel();
 
@@ -172,6 +183,23 @@ export default async function globalSetup() {
   });
   const attestation = await (await waitFor(`http://127.0.0.1:${KEEPER_PORT}/attestation`)).json();
 
+  // The training app, in local mode: its key derives from a throwaway secret and must be
+  // a full-access key of its account. A dataset's admin trusts it with trust_app_key.
+  start("node", ["src/main.ts"], TRAINER_DIR, {
+    TRAINER_MODE: "local",
+    NEAR_NETWORK: "sandbox",
+    NEAR_RPC_URL: sandbox.rpcUrl,
+    TRAINER_ACCOUNT_ID: names.trainer,
+    TRAINER_ROOT_SECRET: "09".repeat(32),
+    TRAINER_APP_ID,
+    HELDOUT_DIR: resolve("e2e/fixtures/heldout"),
+    SAMPLE_KEYS_PER_CALL: "1",
+    TRAINER_EPOCHS: "3",
+    PORT: String(TRAINER_PORT),
+    WEB_ORIGINS: `${ALICE_URL},${BOB_URL}`,
+  });
+  const trainer = await (await waitFor(`${TRAINER_URL}/attestation`)).json();
+
   const account = async (id: string, publicKey: string) => {
     await rootNear
       .transaction(root)
@@ -189,6 +217,7 @@ export default async function globalSetup() {
   await account(names.contract, owner.publicKey.toString());
   await account(names.launchpad, owner.publicKey.toString());
   await account(names.mpc, owner.publicKey.toString());
+  await account(names.trainer, trainer.public_key as string);
 
   // A stand-in for NEAR's MPC network, doing its real key derivation maths.
   const keySource = { mpc_contract_id: names.mpc, domain_id: 2 };
@@ -286,6 +315,7 @@ export default async function globalSetup() {
         VITE_FACTORY_ID: names.launchpad,
         VITE_DEV_WALLET_ID: id,
         VITE_DEV_WALLET_KEY: key,
+        VITE_TRAINER_URLS: JSON.stringify({ [TRAINER_APP_ID]: TRAINER_URL }),
       },
     );
   web(3000, names.alice, alice.secretKey);
@@ -297,6 +327,9 @@ export default async function globalSetup() {
   process.env.E2E_CONTRACT_ID = names.contract;
   process.env.E2E_LAUNCHPAD_ID = names.launchpad;
   process.env.E2E_RPC_URL = sandbox.rpcUrl;
+  // A dataset's admin signs trust_app_key in the test, for the trainer's key.
+  process.env.E2E_ALICE_KEY = alice.secretKey;
+  process.env.E2E_TRAINER_KEY = trainer.public_key as string;
 
   return async () => {
     for (const child of children) {

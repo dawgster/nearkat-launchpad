@@ -26,6 +26,9 @@ export default defineConfig({
   plugins: [refuseDevWalletInBuild(), react(), tailwindcss()],
   // The art module lives beside the app, shared with the keeper.
   server: { port: 3000, strictPort: true, fs: { allow: [".."] } },
+  // onnxruntime-web finds its wasm beside its own module (new URL(..., import.meta.url)):
+  // pre-bundling would move the module away from it, so Vite serves the package as is.
+  optimizeDeps: { exclude: ["onnxruntime-web"] },
   test: {
     environment: "happy-dom",
     include: ["test/**/*.test.{ts,tsx}"],

@@ -8,7 +8,7 @@ import { KeeperSession } from "./lib/session.ts";
 import { useWallet } from "./wallet/WalletProvider.tsx";
 
 /** The only sign-in message this app will ask a wallet to sign. */
-const SIGN_IN_MESSAGE = "Sign in to Nearkat";
+export const SIGN_IN_MESSAGE = "Sign in to Nearkat";
 
 export interface Prices {
   /** yoctoNEAR per chat message. */

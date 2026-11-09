@@ -88,6 +88,12 @@ export interface LoanTraining {
   spent: boolean;
 }
 
+/** Samples an account has rented for one training app and not yet used. */
+export interface Rental {
+  appId: string;
+  tokenIds: string[];
+}
+
 export interface SampleView {
   owner_id: string;
   sample_hash: string | null;
@@ -420,18 +426,7 @@ export class KatContract {
    * those of them on offer to training apps.
    */
   async sampleOffers(max = 200): Promise<Offer[]> {
-    const tokens: Array<{ token_id: string; owner_id: string }> = [];
-    while (tokens.length < max) {
-      const page =
-        (await this.#view<Array<{ token_id: string; owner_id: string }>>("nft_tokens", {
-          from_index: String(tokens.length),
-          limit: Math.min(100, max - tokens.length),
-        })) ?? [];
-      tokens.push(...page);
-      if (page.length < 100) {
-        break;
-      }
-    }
+    const tokens = await this.#tokens(max);
     const offers: Offer[] = [];
     for (const batch of chunked(tokens, 25)) {
       const found = await Promise.all(
@@ -455,6 +450,52 @@ export class KatContract {
       offers.push(...found.filter((offer): offer is Offer => offer !== null));
     }
     return offers;
+  }
+
+  /**
+   * The account's rentals that a training app may still use, by app, among
+   * the first `max` samples: active, borrowed by the account and not spent.
+   */
+  async rentalsOf(accountId: string, max = 200): Promise<Rental[]> {
+    const tokens = await this.#tokens(max);
+    const byApp = new Map<string, string[]>();
+    for (const batch of chunked(tokens, 25)) {
+      const found = await Promise.all(
+        batch.map(async (token) => {
+          const loan = await this.getLoan(token.token_id);
+          if (loan?.status !== "active" || loan.borrower_id !== accountId) {
+            return null;
+          }
+          const training = await this.getLoanTraining(token.token_id);
+          return training?.app_id && !training.spent
+            ? { appId: training.app_id, tokenId: token.token_id }
+            : null;
+        }),
+      );
+      for (const rental of found) {
+        if (rental) {
+          byApp.set(rental.appId, [...(byApp.get(rental.appId) ?? []), rental.tokenId]);
+        }
+      }
+    }
+    return [...byApp].map(([appId, tokenIds]) => ({ appId, tokenIds }));
+  }
+
+  /** The first `max` tokens with their owners, in pages. */
+  async #tokens(max: number): Promise<Array<{ token_id: string; owner_id: string }>> {
+    const tokens: Array<{ token_id: string; owner_id: string }> = [];
+    while (tokens.length < max) {
+      const page =
+        (await this.#view<Array<{ token_id: string; owner_id: string }>>("nft_tokens", {
+          from_index: String(tokens.length),
+          limit: Math.min(100, max - tokens.length),
+        })) ?? [];
+      tokens.push(...page);
+      if (page.length < 100) {
+        break;
+      }
+    }
+    return tokens;
   }
 
   /** Ends a loan: the borrower giving it back, or the owner withdrawing or ending it. */

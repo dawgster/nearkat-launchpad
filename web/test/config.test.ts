@@ -13,7 +13,22 @@ describe("loadConfig", () => {
       authRecipient: "nearkat.xyz",
       factoryId: null,
       devWallet: null,
+      trainerUrls: {},
     });
+  });
+
+  test("reads the training apps' addresses by app id", () => {
+    expect(
+      loadConfig({
+        ...base,
+        VITE_TRAINER_URLS: '{"local-trainer":"http://localhost:8790/","app-2":"https://t.example"}',
+      }).trainerUrls,
+    ).toEqual({ "local-trainer": "http://localhost:8790", "app-2": "https://t.example" });
+    for (const bad of ["not json", "[]", '{"a":1}', '"x"']) {
+      expect(() => loadConfig({ ...base, VITE_TRAINER_URLS: bad }), bad).toThrow(
+        /VITE_TRAINER_URLS/,
+      );
+    }
   });
 
   test("strips trailing slashes from the keeper URL", () => {

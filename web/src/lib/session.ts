@@ -43,17 +43,19 @@ export function forgetSessions(storage: Storage = sessionStorage): void {
  * when it has expired or the keeper rejects it.
  */
 export class KeeperSession {
-  readonly #keeper: Keeper;
+  readonly #keeper: Pick<Keeper, "challenge" | "createSession">;
   readonly #accountId: string;
   readonly #signMessage: SignMessage;
   readonly #expect: { message: string; recipient: string };
   readonly #callbackUrl: string | undefined;
   readonly #storage: Store;
   readonly #now: () => number;
+  readonly #scope: string;
   #signingIn: Promise<string> | null = null;
 
   constructor(options: {
-    keeper: Keeper;
+    /** Anything that signs in the keeper's way: the keeper, or a training app. */
+    keeper: Pick<Keeper, "challenge" | "createSession">;
     accountId: string;
     signMessage: SignMessage;
     /**
@@ -65,6 +67,8 @@ export class KeeperSession {
     callbackUrl?: string;
     storage?: Store;
     now?: () => number;
+    /** Names the service when it isn't the keeper, so each keeps its own token. */
+    scope?: string;
   }) {
     this.#keeper = options.keeper;
     this.#accountId = options.accountId;
@@ -73,6 +77,7 @@ export class KeeperSession {
     this.#callbackUrl = options.callbackUrl;
     this.#storage = options.storage ?? sessionStorage;
     this.#now = options.now ?? Date.now;
+    this.#scope = options.scope ? `${options.scope}.` : "";
   }
 
   /** Runs a keeper call with a valid token, signing in first if needed. */
@@ -92,7 +97,7 @@ export class KeeperSession {
   }
 
   get #key(): string {
-    return `${SESSION_PREFIX}${this.#accountId}`;
+    return `${SESSION_PREFIX}${this.#scope}${this.#accountId}`;
   }
 
   async #token(): Promise<string> {
@@ -123,7 +128,7 @@ export class KeeperSession {
       challenge.message !== this.#expect.message ||
       challenge.recipient !== this.#expect.recipient
     ) {
-      throw new Error("The keeper sent an unexpected sign-in request, so it was not signed.");
+      throw new Error("Got an unexpected sign-in request, so it was not signed.");
     }
     const nonce = Uint8Array.from(atob(challenge.nonce), (char) => char.charCodeAt(0));
     const signed = await this.#signMessage({

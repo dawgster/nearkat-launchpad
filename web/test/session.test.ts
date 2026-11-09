@@ -39,6 +39,26 @@ function setup() {
 }
 
 describe("KeeperSession", () => {
+  test("keeps another service's session apart from the keeper's", async () => {
+    const { session, signMessage, keeper } = setup();
+    const trainer = new KeeperSession({
+      keeper,
+      accountId: "alice.near",
+      signMessage,
+      expect: { message: "Sign in", recipient: "r" },
+      now: () => 1_000_000,
+      scope: "trainer:local-trainer",
+    });
+    expect(await session.call(async (token) => token)).toBe("token-1");
+    expect(await trainer.call(async (token) => token)).toBe("token-2");
+    // Each keeps its own token: neither overwrote the other's.
+    expect(await session.call(async (token) => token)).toBe("token-1");
+    expect(await trainer.call(async (token) => token)).toBe("token-2");
+    expect(signMessage).toHaveBeenCalledTimes(2);
+    forgetSessions();
+    expect(sessionStorage.length).toBe(0);
+  });
+
   test("signs the keeper's challenge and passes the token to the call", async () => {
     const { session, signMessage, keeper } = setup();
     expect(await session.call(async (token) => `used ${token}`)).toBe("used token-1");
