@@ -3,7 +3,11 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { TrainPanel, type TrainPanelProps } from "../src/components/TrainPanel.tsx";
+import {
+  RentalsUnavailable,
+  TrainPanel,
+  type TrainPanelProps,
+} from "../src/components/TrainPanel.tsx";
 import type { AppKeyView, RunView } from "../src/lib/contract.ts";
 import { KeeperError } from "../src/lib/keeper.ts";
 import type { RunState, TokenSession, Trainer } from "../src/lib/trainer.ts";
@@ -172,4 +176,75 @@ test("says when this app has no address for an app's trainer", () => {
   setup(fakeTrainer([]), { trainers: {} });
   expect(screen.queryByRole("button", { name: /Train on/ })).toBeNull();
   expect(screen.getByText(/no address for this training app/i)).toBeTruthy();
+});
+
+const finished = (): Partial<RunState> => ({
+  stage: "done",
+  accuracy: 0.75,
+  modelSha256: SHA,
+  recordedTokens: 4,
+});
+
+test("reads the record again until the chain shows it, then offers the try-out", async () => {
+  const trainer = fakeTrainer([finished()]);
+  const record = {
+    run_id: "run-1",
+    app_id: "local-trainer",
+    renter_id: "me.test",
+    model_sha256: SHA,
+    accuracy_bps: 7500,
+    token_count: 4,
+    recorded_at: "1",
+  };
+  const getRun = vi
+    .fn<TrainPanelProps["getRun"]>()
+    .mockRejectedValueOnce(new Error("rpc busy"))
+    .mockResolvedValueOnce(null)
+    .mockResolvedValue(record);
+  const { props } = setup(trainer, { getRun, retryMs: 1 });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  expect(await screen.findByRole("region", { name: "On-chain record" })).toBeTruthy();
+  expect(getRun).toHaveBeenCalledTimes(3);
+  expect(props.load).toHaveBeenCalledWith(MODEL, SHA);
+});
+
+test("says why the record can't be read after three tries", async () => {
+  const trainer = fakeTrainer([finished()]);
+  const getRun = vi.fn(async () => {
+    throw new Error("rpc down");
+  });
+  setup(trainer, { getRun, retryMs: 1 });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  expect((await screen.findByRole("alert")).textContent).toMatch(/rpc down|can't|couldn't/i);
+  expect(getRun).toHaveBeenCalledTimes(3);
+});
+
+test("refuses to save a model whose hash isn't the one recorded on-chain", async () => {
+  const trainer = fakeTrainer([finished()]);
+  const other = "0".repeat(64);
+  const { props } = setup(trainer, {
+    getRun: vi.fn(async () => ({
+      run_id: "run-1",
+      app_id: "local-trainer",
+      renter_id: "me.test",
+      model_sha256: other,
+      accuracy_bps: 7500,
+      token_count: 4,
+      recorded_at: "1",
+    })),
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Download model" }));
+  expect(props.save).not.toHaveBeenCalled();
+  expect((await screen.findAllByRole("alert")).map((a) => a.textContent).join(" ")).toMatch(
+    /doesn't match the hash recorded on-chain/,
+  );
+});
+
+test("when the rentals can't be read, says so and reads them again on Retry", async () => {
+  const retry = vi.fn();
+  render(<RentalsUnavailable error={new Error("Too many requests")} onRetry={retry} />);
+  expect((await screen.findByRole("alert")).textContent).toMatch(/can't read your rentals/i);
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledTimes(1);
 });

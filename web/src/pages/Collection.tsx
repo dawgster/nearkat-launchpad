@@ -6,7 +6,7 @@ import { MintPanel } from "../components/MintPanel.tsx";
 import { RentPanel } from "../components/RentPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
-import { type TrainerAccess, TrainPanel } from "../components/TrainPanel.tsx";
+import { RentalsUnavailable, type TrainerAccess, TrainPanel } from "../components/TrainPanel.tsx";
 import { PLAIN_STAGE_NAMES, STAGE_NAMES, stageOf } from "../lib/art.ts";
 import { KatContract } from "../lib/contract.ts";
 import { formatNear, shorten } from "../lib/format.ts";
@@ -780,6 +780,15 @@ function DatasetSection({
             void reloadOffers();
             void reloadRentals();
             return rented;
+          }}
+        />
+      )}
+      {signer && rentals.status === "error" && (
+        <RentalsUnavailable
+          error={rentals.error}
+          onRetry={() => {
+            reader.forget();
+            void reloadRentals();
           }}
         />
       )}

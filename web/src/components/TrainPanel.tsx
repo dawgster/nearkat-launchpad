@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { useEffect, useState } from "react";
 import type { AppKeyView, Rental, RunView } from "../lib/contract.ts";
 import { KeeperError } from "../lib/keeper.ts";
@@ -27,6 +29,8 @@ export interface TrainPanelProps {
   /** A link to a transaction in an explorer, where one covers this network. */
   txUrl?: (hash: string) => string | null;
   pollMs?: number;
+  /** The first wait before reading the run's record again; doubled each time. */
+  retryMs?: number;
   save?: (bytes: Uint8Array, name: string) => void;
   /** Called when a run has finished, so the rentals can be read again. */
   onFinished?: () => void;
@@ -46,6 +50,35 @@ const STEPS: Array<[Exclude<Stage, "failed">, string]> = [
 
 /** Gives up on a run after this many failed status checks in a row. */
 const MAX_POLL_FAILURES = 10;
+/** Tries at reading the run's record and the app's key before giving up. */
+const READ_TRIES = 3;
+
+/**
+ * Reads up to three times, waiting `waitMs` then twice that between tries:
+ * the RPC node may not show a just-recorded run yet. A null answer counts as
+ * not there yet. Throws the last error if every try failed.
+ */
+async function readWithRetry<T>(read: () => Promise<T | null>, waitMs: number): Promise<T | null> {
+  let failure: { error: unknown } | null = null;
+  for (let attempt = 0; attempt < READ_TRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs * 2 ** (attempt - 1)));
+    }
+    try {
+      const value = await read();
+      if (value !== null) {
+        return value;
+      }
+      failure = null;
+    } catch (error) {
+      failure = { error };
+    }
+  }
+  if (failure) {
+    throw failure.error;
+  }
+  return null;
+}
 
 const percent = (share: number) => `${Math.round(share * 100)}%`;
 const plural = (count: number, one: string) => `${count} ${one}${count === 1 ? "" : "s"}`;
@@ -100,6 +133,7 @@ export function TrainPanel({
   getAppKey,
   txUrl,
   pollMs = 1000,
+  retryMs = 1000,
   save = saveFile,
   onFinished,
   load,
@@ -110,6 +144,7 @@ export function TrainPanel({
   const [proof, setProof] = useState<Proof | null>(null);
   const [model, setModel] = useState<Uint8Array | null>(null);
   const [modelProblem, setModelProblem] = useState<string | null>(null);
+  const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const busy = job?.phase === "starting" || job?.phase === "running";
   const access = job ? trainers[job.appId] : undefined;
 
@@ -122,6 +157,7 @@ export function TrainPanel({
     setProof(null);
     setModel(null);
     setModelProblem(null);
+    setSaveProblem(null);
     try {
       const run = await chosen.trainer.train(chosen.session, contractId, tokenIds);
       setJob({ appId, phase: "running", run, lastStage: run.stage, failures: 0 });
@@ -187,11 +223,14 @@ export function TrainPanel({
     }
     let current = true;
     Promise.all([
-      getRun(doneId),
-      access.trainer.attestation().then(async (attestation) => ({
-        publicKey: attestation.public_key,
-        appKey: await getAppKey(attestation.public_key),
-      })),
+      readWithRetry(() => getRun(doneId), retryMs),
+      readWithRetry(() => access.trainer.attestation(), retryMs).then(async (attestation) => {
+        if (!attestation) {
+          throw new Error("The training app gave no attestation");
+        }
+        const publicKey = attestation.public_key;
+        return { publicKey, appKey: await readWithRetry(() => getAppKey(publicKey), retryMs) };
+      }),
     ]).then(
       ([record, { publicKey, appKey }]) =>
         current && setProof({ record, publicKey, appKey, problem: null }),
@@ -285,11 +324,31 @@ export function TrainPanel({
             <button
               type="button"
               className="button button-quiet w-full"
-              onClick={() => save(model, `${contractId}-${job.run.id}.onnx`)}
+              onClick={() => {
+                // Only the model the chain recorded is saved.
+                const recorded = proof?.record?.model_sha256.toLowerCase();
+                if (!recorded) {
+                  setSaveProblem(
+                    "The run's record on-chain can't be read, so the model can't be checked. It wasn't saved.",
+                  );
+                } else if (bytesToHex(sha256(model)) !== recorded) {
+                  setSaveProblem(
+                    "This model doesn't match the hash recorded on-chain, so it wasn't saved.",
+                  );
+                } else {
+                  setSaveProblem(null);
+                  save(model, `${contractId}-${job.run.id}.onnx`);
+                }
+              }}
             >
               <Icon name="download" size={16} />
               Download model
             </button>
+          )}
+          {saveProblem && (
+            <p role="alert" className="text-sm text-alarm">
+              {saveProblem}
+            </p>
           )}
           {model && proof?.record && (
             <TryModel
@@ -303,6 +362,24 @@ export function TrainPanel({
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+/** In place of the Train panel when the rentals couldn't be read: why, and a retry. */
+export function RentalsUnavailable({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  return (
+    <section aria-labelledby="train" className="card">
+      <h2 id="train" className="card-title flex items-center gap-2">
+        <Icon name="sparkle" size={18} className="text-mist" />
+        Train a model
+      </h2>
+      <p role="alert" className="mt-2 text-sm text-alarm">
+        Can't read your rentals right now. {describeProblem(error)}
+      </p>
+      <button type="button" className="button button-quiet mt-3" onClick={onRetry}>
+        Retry
+      </button>
     </section>
   );
 }
@@ -374,7 +451,9 @@ function Record({
   if (proof.problem || !proof.record) {
     return (
       <p role="alert" className="text-sm text-alarm">
-        {proof.problem ?? "This run isn't recorded on-chain, so the model can't be checked."}
+        {proof.problem
+          ? `Couldn't read the run's record on-chain: ${proof.problem}`
+          : "This run isn't recorded on-chain, so the model can't be checked."}
       </p>
     );
   }
