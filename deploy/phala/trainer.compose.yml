@@ -11,8 +11,8 @@ services:
     ports:
       - "8790:8790"
     volumes:
-      # The dstack guest agent: key service and quotes. The image runs as the
-      # unprivileged `node` user; if it cannot open the socket, see the runbook.
+      # The dstack guest agent: key service and quotes. The image runs as root
+      # to open it, as the keeper's does.
       - /var/run/dstack.sock:/var/run/dstack.sock
     environment:
       TRAINER_MODE: phala

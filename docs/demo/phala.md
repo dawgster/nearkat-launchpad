@@ -30,6 +30,11 @@ docker push <registry>/<trainer-image>:<tag>
 docker inspect --format '{{index .RepoDigests 0}}' <registry>/<trainer-image>:<tag>
 ```
 
+The trainer image contains the held-out images (AGPL-3.0, from
+`truepositive/hotdog_nothotdog`), and so does the web image under `/heldout`:
+pushing either to a registry distributes them under the AGPL. Make the source
+available accordingly, and push only with the user's go-ahead.
+
 Reference the images by digest (`@sha256:...`) in the compose files. The
 compose hash is part of each app's attested identity, so a changed image digest
 is a new app version: renters and collections trust that identity.
@@ -84,11 +89,6 @@ Record the **app id** of each CVM below. Phala's gateway URL has the form
 Set `WEB_ORIGINS` to the final web URL before the first deploy, since changing
 env or compose later redeploys (and the keeper needs the origin to allow the
 web app).
-
-If the trainer logs a permission error on `/var/run/dstack.sock`: the image
-runs as the unprivileged `node` user. Either add `user: root` to the trainer
-service in the compose (which changes the compose hash) or relax the socket's
-group access; decide with the user.
 
 ## 3. Fund the accounts and add the keys
 

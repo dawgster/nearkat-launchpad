@@ -69,8 +69,8 @@ scripts/fetch-hotdog.sh            # data/hotdog/train, trainer/heldout, web/pub
 
 See `keeper/README.md`, `trainer/README.md`, `web/README.md` and
 `docs/demo/walkthrough.md` for configuration. Container images:
-`deploy/keeper.Dockerfile`, `deploy/trainer.Dockerfile`; deployment to Phala is
-in `docs/demo/phala.md`.
+`deploy/keeper.Dockerfile`, `deploy/trainer.Dockerfile`, `deploy/web.Dockerfile`;
+deploying to Phala (not done yet) is in `docs/demo/phala.md`.
 
 ## Honesty notes
 
@@ -92,11 +92,16 @@ in `docs/demo/phala.md`.
   model, not the samples, but that is not the same as no leakage.
 - **The dataset is AGPL-3.0.** The hotdog / not-hotdog images are
   `truepositive/hotdog_nothotdog` (AGPL-3.0), fetched at a pinned commit by
-  `scripts/fetch-hotdog.sh` and never committed to this repository.
+  `scripts/fetch-hotdog.sh` and never committed to this repository. The
+  trainer image (`deploy/trainer.Dockerfile`) and the web image
+  (`deploy/web.Dockerfile`) do contain the held-out images, so pushing either
+  image distributes them under the AGPL.
 - **What was tested against what.** Most tests run against stand-ins: a local
   NEAR sandbox and a mock MPC contract that does the real key maths. The key
   derivation is also checked live against testnet's MPC (`npm run live-check`
-  in `keeper/`). Deployment on Phala is covered in `docs/demo/phala.md`.
+  in `keeper/`). Nothing has been deployed to Phala yet: the dataset keeper
+  and the training app have only run locally and in tests, and
+  `docs/demo/phala.md` is the plan for deploying them, not a record of it.
 
 ## Hackathon
 

@@ -1,7 +1,8 @@
 # The training app: Node 24 service plus a CPU-only PyTorch trainer. Built from
 # the repo root; it imports the keeper's modules beside it. A clean checkout
 # builds: the held-out images are fetched in a stage (pinned commit, AGPL-3.0,
-# never committed), so scripts/fetch-hotdog.sh needs no earlier run.
+# never committed), so scripts/fetch-hotdog.sh needs no earlier run. The image
+# therefore contains those images: pushing it distributes them under the AGPL.
 FROM debian:bookworm-slim AS heldout
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates python3 \
@@ -34,6 +35,7 @@ COPY --from=heldout /w/trainer/heldout ./trainer/heldout
 ENV NODE_ENV=production \
     HELDOUT_DIR=/app/trainer/heldout \
     TRAINER_PYTHON=/app/trainer/py/.venv/bin/python
-USER node
+# Runs as root, like the keeper's image: it must open dstack's socket
+# (/var/run/dstack.sock), which belongs to root inside the CVM.
 EXPOSE 8790
 CMD ["node", "trainer/src/main.ts"]
