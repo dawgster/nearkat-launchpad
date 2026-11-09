@@ -1,6 +1,7 @@
 mod admin;
 pub mod attestation;
 pub(crate) mod ckd;
+mod dataset;
 mod kat;
 mod keeper;
 pub mod lending;
@@ -20,8 +21,8 @@ use near_sdk::{
 };
 
 pub use kat::{
-    Collection, CollectionView, ConfigView, Kat, KatView, KeySource, SealedPrompt, TeeRequirement,
-    Terms, DEFAULT_PROMPT, DEFAULT_STARTER,
+    Collection, CollectionKind, CollectionView, ConfigView, Kat, KatView, KeySource, SealedPrompt,
+    TeeRequirement, Terms, DEFAULT_PROMPT, DEFAULT_STARTER,
 };
 use kat::{MAX_PROMPT_LEN, MAX_SEALED_PROMPT_LEN, MAX_STARTER_LEN};
 pub use payout::Payout;
@@ -128,6 +129,9 @@ impl Contract {
             key_source,
             wallet_code_hash,
             history_import,
+            kind,
+            class_counts,
+            initial_supply,
         } = collection;
         require!(
             !name.trim().is_empty() && !symbol.trim().is_empty(),
@@ -158,6 +162,9 @@ impl Contract {
             "max_supply must be at least 1"
         );
         terms.validate();
+        let dataset_size = dataset::validate(&kind, &class_counts, initial_supply);
+        // A dataset holds exactly its samples, whatever else was asked for.
+        let max_supply = dataset_size.map(U64).or(max_supply);
         let media_extension = if media_extension.is_empty() {
             "png".to_string()
         } else {
@@ -192,7 +199,18 @@ impl Contract {
         if history_import {
             env::storage_write(HISTORY_IMPORT_KEY, &[1]);
         }
-        Self {
+        if let CollectionKind::Dataset { classes } = &kind {
+            let info = dataset::DatasetInfo {
+                classes: classes.clone(),
+                class_counts: class_counts.iter().map(|c| c.0).collect(),
+            };
+            env::storage_write(
+                dataset::DATASET_KEY,
+                &near_sdk::borsh::to_vec(&info)
+                    .unwrap_or_else(|_| env::panic_str("Dataset can't be encoded")),
+            );
+        }
+        let mut contract = Self {
             tokens: NonFungibleToken::new(
                 StorageKey::OwnerById,
                 admin_id.clone(),
@@ -228,7 +246,11 @@ impl Contract {
             kat_epochs: LookupMap::new(StorageKey::KatEpochs),
             wallet_code_hash: wallet_code_hash.map(Into::into),
             wallets: LookupMap::new(StorageKey::Wallets),
+        };
+        if let Some(n) = dataset_size {
+            contract.mint_sample_batch(n);
         }
+        contract
     }
 
     /// Mints the next kat to the caller. The deposit must cover the mint price
@@ -237,6 +259,10 @@ impl Contract {
     #[payable]
     pub fn mint(&mut self) -> Token {
         let deposit = env::attached_deposit();
+        require!(
+            self.dataset_classes().is_none(),
+            "This collection's samples were all minted at launch"
+        );
         require!(
             self.max_supply.is_none_or(|max| self.next_token_id <= max),
             "Sold out"
@@ -321,6 +347,14 @@ impl Contract {
             key_epoch: self.key_epoch,
             wallet_code_hash: self.wallet_code_hash.map(Into::into),
             history_import: env::storage_has_key(HISTORY_IMPORT_KEY),
+            kind: self
+                .dataset_classes()
+                .map_or(CollectionKind::Character, |classes| {
+                    CollectionKind::Dataset { classes }
+                }),
+            class_counts: self.dataset_info().map_or_else(Vec::new, |info| {
+                info.class_counts.into_iter().map(U64).collect()
+            }),
             minted: U64(self.next_token_id - 1),
             factory_id: self.factory_id.clone(),
             code_hash: self.code_hash.map(Into::into),

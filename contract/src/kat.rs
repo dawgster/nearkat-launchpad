@@ -149,6 +149,17 @@ impl TeeRequirement {
     }
 }
 
+/// What a collection's tokens are: characters that talk and grow, or the
+/// samples of a training dataset. Fixed at deployment.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum CollectionKind {
+    #[default]
+    Character,
+    /// One encrypted training image per token, labelled with one of `classes`.
+    Dataset { classes: Vec<String> },
+}
+
 /// How the collection presents itself, fixed at deployment.
 ///
 /// `prompt` and `starter` are public on purpose: a buyer can read what every
@@ -192,6 +203,16 @@ pub struct Collection {
     /// other assistants. The keeper refuses imports when this is off.
     #[serde(default)]
     pub history_import: bool,
+    /// Characters (the default) or the samples of a dataset.
+    #[serde(default)]
+    pub kind: CollectionKind,
+    /// For a dataset: how many samples each class has, in class order.
+    #[serde(default)]
+    pub class_counts: Vec<U64>,
+    /// For a dataset: how many samples are minted to the creator at launch,
+    /// which is also its max supply.
+    #[serde(default)]
+    pub initial_supply: Option<U64>,
 }
 
 #[near(serializers = [json])]
@@ -217,6 +238,9 @@ pub struct CollectionView {
     pub wallet_code_hash: Option<near_sdk::json_types::Base58CryptoHash>,
     /// Whether owners may teach their token from their chat history.
     pub history_import: bool,
+    pub kind: CollectionKind,
+    /// For a dataset: samples per class, in class order.
+    pub class_counts: Vec<U64>,
     /// Tokens minted so far.
     pub minted: U64,
     /// The launchpad this collection came from, which approves its upgrades.

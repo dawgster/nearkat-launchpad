@@ -62,6 +62,9 @@ fn collection(name: &str, symbol: &str, base_uri: &str) -> Collection {
         key_source: crate::tests::mpc_source(),
         wallet_code_hash: Some([5u8; 32].into()),
         history_import: false,
+        kind: crate::CollectionKind::Character,
+        class_counts: Vec::new(),
+        initial_supply: None,
     }
 }
 
@@ -1741,4 +1744,91 @@ mod lending {
         ctx("alice.near", STORAGE);
         lend(&mut c, Some("bob.near"), Some(0), None);
     }
+}
+
+fn dataset(classes: &[&str], counts: &[u64], supply: u64) -> Collection {
+    Collection {
+        kind: crate::CollectionKind::Dataset {
+            classes: classes.iter().map(|c| c.to_string()).collect(),
+        },
+        class_counts: counts.iter().map(|c| (*c).into()).collect(),
+        initial_supply: Some(supply.into()),
+        ..collection("Hotdogs", "HOT", "")
+    }
+}
+
+#[test]
+fn a_dataset_mints_every_sample_to_the_creator() {
+    let c = deploy_with(dataset(&["hotdog", "not_hotdog"], &[3, 2], 5));
+    let view = c.get_collection();
+    assert_eq!(view.minted.0, 5);
+    assert_eq!(view.max_supply, Some(5.into()));
+    assert_eq!(
+        view.kind,
+        crate::CollectionKind::Dataset {
+            classes: vec!["hotdog".to_string(), "not_hotdog".to_string()]
+        }
+    );
+    assert_eq!(view.class_counts, vec![3.into(), 2.into()]);
+    let token = c.nft_token("5".to_string()).unwrap();
+    assert_eq!(token.owner_id, acc("admin.near"));
+    assert_eq!(token.metadata.unwrap().title.as_deref(), Some("Sample #5"));
+    assert!(c.get_kat("1".to_string()).is_some());
+}
+
+#[test]
+fn a_dataset_over_fifty_schedules_the_rest() {
+    let mut c = deploy_with(dataset(&["a", "b"], &[100, 20], 120));
+    assert_eq!(c.get_collection().minted.0, 50);
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].receiver_id, acc("alice.near")); // the test context's own account
+    match receipts[0].actions.as_slice() {
+        [near_sdk::mock::MockAction::FunctionCallWeight {
+            method_name, args, ..
+        }] => {
+            assert_eq!(method_name, b"mint_samples");
+            assert_eq!(args, br#"{"count":"70"}"#);
+        }
+        other => panic!("unexpected actions {other:?}"),
+    }
+    // The continuation mints the next batch and schedules the last.
+    ctx("collection.near", NearToken::from_yoctonear(0));
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(acc("collection.near"))
+        .predecessor_account_id(acc("collection.near"))
+        .storage_usage(env::storage_usage())
+        .build());
+    c.mint_samples(70.into());
+    assert_eq!(c.get_collection().minted.0, 100);
+    c.mint_samples(20.into());
+    assert_eq!(c.get_collection().minted.0, 120);
+}
+
+#[test]
+#[should_panic(expected = "initial_supply must equal the sum of class_counts")]
+fn dataset_counts_must_add_up() {
+    deploy_with(dataset(&["a", "b"], &[3, 2], 6));
+}
+
+#[test]
+#[should_panic(expected = "class names are 1 to 32 lowercase letters, digits or _")]
+fn dataset_class_names_are_checked() {
+    deploy_with(dataset(&["Hot Dog", "b"], &[3, 2], 5));
+}
+
+#[test]
+#[should_panic(expected = "This collection's samples were all minted at launch")]
+fn nobody_mints_from_a_dataset() {
+    let mut c = deploy_with(dataset(&["a", "b"], &[3, 2], 5));
+    ctx("alice.near", NearToken::from_near(3));
+    c.mint();
+}
+
+#[test]
+fn a_character_collection_reads_as_character() {
+    let c = deploy();
+    let view = c.get_collection();
+    assert_eq!(view.kind, crate::CollectionKind::Character);
+    assert!(view.class_counts.is_empty());
 }

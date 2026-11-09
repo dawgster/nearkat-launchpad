@@ -53,6 +53,9 @@ fn args(slug: &str) -> LaunchArgs {
             terms: None,
             sealed_prompt: None,
             history_import: false,
+            kind: None,
+            class_counts: Vec::new(),
+            initial_supply: None,
         },
         keeper_id: None,
     }
@@ -353,4 +356,31 @@ fn migrating_from_before_wallets_keeps_everything_and_adds_no_wallets() {
     assert!(migrated
         .get_collection(acc("magister.launch.near"))
         .is_some());
+}
+
+#[test]
+fn launch_passes_dataset_fields_through() {
+    let source = crate::KeySource {
+        mpc_contract_id: acc("v1.signer"),
+        domain_id: 2,
+    };
+    let mut collection = args("hotdogs").collection;
+    collection.kind = Some(near_sdk::serde_json::json!({
+        "Dataset": { "classes": ["hotdog", "not_hotdog"] }
+    }));
+    collection.class_counts = vec![3.into(), 2.into()];
+    collection.initial_supply = Some(5.into());
+    let value = crate::with_key_source(&collection, &source, None);
+    assert_eq!(
+        value["kind"]["Dataset"]["classes"],
+        near_sdk::serde_json::json!(["hotdog", "not_hotdog"])
+    );
+    assert_eq!(
+        value["class_counts"],
+        near_sdk::serde_json::json!(["3", "2"])
+    );
+    assert_eq!(value["initial_supply"], "5");
+    // A character launch sends none of them.
+    let plain = crate::with_key_source(&args("magister").collection, &source, None);
+    assert!(plain.get("kind").is_none() && plain.get("initial_supply").is_none());
 }

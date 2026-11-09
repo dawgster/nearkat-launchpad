@@ -64,6 +64,15 @@ pub struct CollectionArgs {
     /// Whether owners may teach their token from their chat history. Passed through.
     #[serde(default)]
     pub history_import: bool,
+    /// `"Character"` or `{"Dataset": {"classes": [...]}}`. Passed through; the collection validates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<near_sdk::serde_json::Value>,
+    /// Samples per class, for a dataset. Passed through.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub class_counts: Vec<U64>,
+    /// How many samples a dataset mints to its creator at launch. Passed through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_supply: Option<U64>,
 }
 
 /// Where every launched collection's context keys come from: NEAR's MPC

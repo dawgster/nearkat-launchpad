@@ -188,6 +188,9 @@ fn tee_collection() -> Contract {
             key_source: crate::tests::mpc_source(),
             wallet_code_hash: None,
             history_import: false,
+            kind: crate::CollectionKind::Character,
+            class_counts: Vec::new(),
+            initial_supply: None,
         },
         None,
     );
@@ -274,6 +277,9 @@ fn registration_needs_a_tee_requirement() {
             key_source: crate::tests::mpc_source(),
             wallet_code_hash: None,
             history_import: false,
+            kind: crate::CollectionKind::Character,
+            class_counts: Vec::new(),
+            initial_supply: None,
         },
         None,
     );
