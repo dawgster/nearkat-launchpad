@@ -7,6 +7,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { SignedMessage } from "near-kit";
 import type { Auth } from "./auth.ts";
 import { CorruptContextError, HttpError } from "./errors.ts";
+import { type Ingest, MAX_SAMPLES_PER_CALL, MAX_SEALED_CHARS } from "./ingest.ts";
 import type { KatService } from "./kats.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import { IMPORT_INFO, type SealingKey } from "./sealing.ts";
@@ -24,6 +25,10 @@ export interface AppOptions {
    * their `base_uri` at /art/<contract>/. Null when there is no such token.
    */
   art?: (contractId: string, tokenId: string) => Promise<string | null>;
+  /** A dataset collection's ingest, served at POST /c/:contract/samples. */
+  ingest?: (contractId: string) => Ingest | undefined;
+  /** Whether a served collection is a dataset: its samples can't be talked to. */
+  isDataset?: (contractId: string) => boolean;
   /** Served at GET /collections: what this keeper serves, and what it is waiting on. */
   collections?: () => Record<string, unknown>;
   /** Served at GET /attestation. */
@@ -40,7 +45,13 @@ export interface AppOptions {
    * one every 3 seconds; 30 reads, then one a second; 30 sign-in requests,
    * then one every 2 seconds.
    */
-  limits?: { chat: RateLimiter; read?: RateLimiter; auth: RateLimiter; import?: RateLimiter };
+  limits?: {
+    chat: RateLimiter;
+    read?: RateLimiter;
+    auth: RateLimiter;
+    import?: RateLimiter;
+    ingest?: RateLimiter;
+  };
   /**
    * Behind one reverse proxy, the client is the address that proxy appended:
    * the last in X-Forwarded-For. Earlier entries are whatever the client sent.
@@ -54,7 +65,10 @@ type Env = { Variables: { accountId: string } };
 const MAX_BODY_BYTES = 16 * 1024;
 /** A sealed history import: 120,000 characters, mostly ASCII, sealed and base64-encoded. */
 const MAX_IMPORT_BYTES = 768 * 1024;
+/** A batch of sealed samples: at most 25, each up to 140,000 characters, plus JSON around them. */
+const MAX_SAMPLES_BYTES = MAX_SAMPLES_PER_CALL * (MAX_SEALED_CHARS + 100) + 1024;
 const isImport = (path: string) => path.endsWith("/import");
+const isSamples = (path: string) => path.endsWith("/samples");
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -76,6 +90,7 @@ export function createApp(options: AppOptions): Hono<Env> {
     read: options.limits?.read ?? new RateLimiter({ burst: 30, refillMs: 1_000 }),
     auth: options.limits?.auth ?? new RateLimiter({ burst: 30, refillMs: 2_000 }),
     import: options.limits?.import ?? new RateLimiter({ burst: 3, refillMs: 60_000 }),
+    ingest: options.limits?.ingest ?? new RateLimiter({ burst: 20, refillMs: 2_000 }),
   };
   const limit = (limiter: RateLimiter, key: string) => {
     const waitMs = limiter.take(key);
@@ -113,7 +128,13 @@ export function createApp(options: AppOptions): Hono<Env> {
   };
   const smallBodies = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: tooLarge });
   const importBodies = bodyLimit({ maxSize: MAX_IMPORT_BYTES, onError: tooLarge });
-  app.use("*", (c, next) => (isImport(c.req.path) ? importBodies : smallBodies)(c, next));
+  const sampleBodies = bodyLimit({ maxSize: MAX_SAMPLES_BYTES, onError: tooLarge });
+  app.use("*", (c, next) =>
+    (isSamples(c.req.path) ? sampleBodies : isImport(c.req.path) ? importBodies : smallBodies)(
+      c,
+      next,
+    ),
+  );
 
   // After CORS, so a refusal still carries the headers the browser needs to
   // read it; preflights are free.
@@ -188,6 +209,7 @@ export function createApp(options: AppOptions): Hono<Env> {
   });
   app.use("/kats/*", signedIn);
   app.use("/c/:contract/kats/*", signedIn);
+  app.use("/c/:contract/samples", signedIn);
 
   /** The collection a request is for: the home one, or the one in the path. */
   const serving = (contractId: string | undefined): KatService => {
@@ -207,17 +229,48 @@ export function createApp(options: AppOptions): Hono<Env> {
     return scoped;
   };
 
+  /** Datasets hold pictures, not minds: nothing to chat with, read, export or teach. */
+  const talkable = (contractId: string | undefined): KatService => {
+    const kats = serving(contractId);
+    if (options.isDataset?.(contractId ?? options.homeContractId ?? "")) {
+      throw new HttpError(409, "not_talkable", "Samples can't be talked to");
+    }
+    return kats;
+  };
+
+  app.post("/c/:contract/samples", async (c) => {
+    const contract = c.req.param("contract");
+    const ingest = options.ingest?.(contract);
+    if (!ingest) {
+      if (!options.collection?.(contract)) {
+        throw new HttpError(404, "not_served", `This keeper does not serve ${contract}`);
+      }
+      throw new HttpError(409, "not_a_dataset", "This is not a dataset collection");
+    }
+    limit(limits.ingest, c.get("accountId"));
+    const body = await jsonBody(c.req.raw);
+    if (!Array.isArray(body.samples)) {
+      throw new HttpError(400, "invalid_input", "samples must be a list");
+    }
+    return c.json(
+      await ingest.seal(
+        c.get("accountId"),
+        body.samples as Array<{ token_id: string; sealed: string }>,
+      ),
+    );
+  });
+
   for (const prefix of ["", "/c/:contract"]) {
     app.get(`${prefix}/kats/:id/context`, async (c) => {
       limit(limits.read, c.get("accountId"));
       return c.json(
-        await serving(c.req.param("contract")).getContext(c.get("accountId"), c.req.param("id")),
+        await talkable(c.req.param("contract")).getContext(c.get("accountId"), c.req.param("id")),
       );
     });
 
     app.get(`${prefix}/kats/:id/export`, async (c) => {
       limit(limits.read, c.get("accountId"));
-      const mind = await serving(c.req.param("contract")).exportMind(
+      const mind = await talkable(c.req.param("contract")).exportMind(
         c.get("accountId"),
         c.req.param("id"),
       );
@@ -229,6 +282,7 @@ export function createApp(options: AppOptions): Hono<Env> {
     });
 
     app.post(`${prefix}/kats/:id/import`, async (c) => {
+      const kats = talkable(c.req.param("contract"));
       limit(limits.import, c.get("accountId"));
       const body = await jsonBody(c.req.raw);
       if (!options.sealing || typeof body.sealed !== "string") {
@@ -245,7 +299,7 @@ export function createApp(options: AppOptions): Hono<Env> {
         );
       }
       return c.json(
-        await serving(c.req.param("contract")).importHistory(
+        await kats.importHistory(
           c.get("accountId"),
           c.req.param("id"),
           history.messages,
@@ -258,7 +312,7 @@ export function createApp(options: AppOptions): Hono<Env> {
       limit(limits.chat, c.get("accountId"));
       const body = await jsonBody(c.req.raw);
       return c.json(
-        await serving(c.req.param("contract")).chat(
+        await talkable(c.req.param("contract")).chat(
           c.get("accountId"),
           c.req.param("id"),
           body.message as string,

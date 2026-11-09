@@ -4,13 +4,22 @@ import { createApp } from "../src/app.ts";
 import { Auth } from "../src/auth.ts";
 import { DEFAULT_COLLECTION } from "../src/collection.ts";
 import { STARTER_PERSONALITY } from "../src/context.ts";
+import { Ingest } from "../src/ingest.ts";
 import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
 import { Meter } from "../src/meter.ts";
 import { RateLimiter } from "../src/ratelimit.ts";
+import { SAMPLE_INFO } from "../src/samples.ts";
 import { IMPORT_INFO, sealTo } from "../src/sealing.ts";
 import { MemoryStore } from "../src/store.ts";
-import { FAKE_COLLECTION, FakeChain, FakeInference, keyringFor, NEAR } from "./fakes.ts";
+import {
+  FAKE_COLLECTION,
+  FakeChain,
+  FakeInference,
+  KEY_SOURCE,
+  keyringFor,
+  NEAR,
+} from "./fakes.ts";
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 7));
 
@@ -564,5 +573,115 @@ describe("importing a chat history", () => {
     (chain.kats.get("1") as { balance: string }).balance = (10n ** 21n).toString();
     const poor = await app.request("/kats/1/import", as(alice, { sealed }));
     expect(poor.status).toBe(402);
+  });
+});
+
+describe("dataset collections", () => {
+  async function datasetSetup() {
+    const base = await setup();
+    const chain = new FakeChain();
+    chain.collection = {
+      ...FAKE_COLLECTION,
+      kind: { Dataset: { classes: ["cat"] } },
+      minted: 1,
+      max_supply: 1,
+    };
+    chain.samples.set("1", {
+      owner_id: "admin.near",
+      sample_hash: null,
+      sample_ref: null,
+      runs: 0,
+    });
+    const kats = new KatService({
+      collection: DEFAULT_COLLECTION,
+      chain,
+      store: new MemoryStore(),
+      keyring: keyringFor(chain),
+      inference: new FakeInference(),
+      meter: new Meter(chain),
+      prices: { chat: 1n, save: 1n },
+      retryDelayMs: 0,
+    });
+    const ingest = new Ingest({
+      contractId: chain.contractId,
+      chain,
+      store: new MemoryStore(),
+      sealing: keys.sealing(),
+      keySource: KEY_SOURCE,
+      mpcPublicKey: () => chain.mpcPublicKey(KEY_SOURCE),
+    });
+    const auth = new Auth({
+      sessionKey: keys.sessionKey(),
+      recipient: "nearkat.xyz",
+      verify: async (signed) => signed.signature === "valid",
+    });
+    const app = createApp({
+      auth,
+      attestation: async () => ({}),
+      info: { chat_price: "1", save_price: "1", model: "m" },
+      webOrigins: ["http://localhost:3000"],
+      collection: (id) => (id === "set.near" ? kats : undefined),
+      isDataset: (id) => id === "set.near",
+      ingest: (id) => (id === "set.near" ? ingest : undefined),
+    });
+    return { app, chain, signIn: base.signIn, as: base.as };
+  }
+  // Sessions are signed with the same keys, so one sign-in works against either app.
+  const sealedSample = (label: string) =>
+    sealTo(
+      keys.sealing().publicKeyHex,
+      JSON.stringify({ label, jpeg: Buffer.from([0xff, 0xd8, 1]).toString("base64") }),
+      SAMPLE_INFO,
+    );
+
+  test("dataset collections refuse chat", async () => {
+    const { app, signIn, as } = await datasetSetup();
+    const token = await signIn("alice.near");
+    for (const [path, method] of [
+      ["/c/set.near/kats/1/chat", "POST"],
+      ["/c/set.near/kats/1/context", "GET"],
+      ["/c/set.near/kats/1/export", "GET"],
+      ["/c/set.near/kats/1/import", "POST"],
+    ] as const) {
+      const response = await app.request(
+        path,
+        as(token, method === "POST" ? { message: "hi" } : undefined, method),
+      );
+      expect(response.status).toBe(409);
+      expect((await response.json()).message).toBe("Samples can't be talked to");
+    }
+  });
+
+  test("seals samples for the creator only", async () => {
+    const { app, chain, signIn, as } = await datasetSetup();
+    const body = { samples: [{ token_id: "1", sealed: sealedSample("cat") }] };
+    const mallory = await signIn("mallory.near");
+    expect((await app.request("/c/set.near/samples", as(mallory, body))).status).toBe(403);
+    const admin = await signIn("admin.near");
+    const bad = await app.request(
+      "/c/set.near/samples",
+      as(admin, { samples: [{ token_id: "1", sealed: sealedSample("bird") }] }),
+    );
+    expect(bad.status).toBe(400);
+    const ok = await app.request("/c/set.near/samples", as(admin, body));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ sealed: ["1"], skipped: [] });
+    expect(chain.samples.get("1")?.sample_ref).toBeTruthy();
+    const huge = await app.request(
+      "/c/set.near/samples",
+      as(admin, { samples: "z".repeat(4 * 1024 * 1024) }),
+    );
+    expect(huge.status).toBe(413);
+  });
+
+  test("refuses samples for a collection that isn't a dataset", async () => {
+    const { app, signIn, as } = await datasetSetup();
+    const token = await signIn("admin.near");
+    expect((await app.request("/c/other.near/samples", as(token, { samples: [] }))).status).toBe(
+      404,
+    );
+    expect((await app.request("/c/set.near/samples", { method: "POST", body: "{}" })).status).toBe(
+      401,
+    );
   });
 });

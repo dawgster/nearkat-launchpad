@@ -1,6 +1,7 @@
 import type { Chain, KeyProof } from "./chain.ts";
 import { MpcKeyring } from "./ckd.ts";
 import { type CollectionInfo, collectionPrices, type KeeperPrices } from "./collection.ts";
+import type { Ingest } from "./ingest.ts";
 import type { KatService } from "./kats.ts";
 import type { Meter } from "./meter.ts";
 import type { SealingKey } from "./sealing.ts";
@@ -15,6 +16,8 @@ export interface ServedCollection {
   chain: Chain;
   meter: Meter;
   kats: KatService;
+  /** Present for a dataset: how its creator's samples come in. */
+  ingest?: Ingest;
 }
 
 export interface CollectionsOptions {
@@ -32,7 +35,7 @@ export interface CollectionsOptions {
     info: CollectionInfo,
     prices: { chat: bigint; save: bigint },
     keyring: MpcKeyring,
-  ): { meter: Meter; kats: KatService };
+  ): { meter: Meter; kats: KatService; ingest?: Ingest };
   /** Proof that the keeper's key runs inside its TEE app. Absent in local mode. */
   proof?: () => Promise<KeyProof>;
   log?: (message: string) => void;
@@ -135,8 +138,8 @@ export class Collections {
         `could not get its context key from ${info.key_source.mpc_contract_id}: ${String(error)}`,
       );
     }
-    const { meter, kats } = this.#o.build(contractId, chain, info, prices, keyring);
-    this.#served.set(contractId, { contractId, info, prices, chain, meter, kats });
+    const { meter, kats, ingest } = this.#o.build(contractId, chain, info, prices, keyring);
+    this.#served.set(contractId, { contractId, info, prices, chain, meter, kats, ingest });
     this.#waiting.delete(contractId);
     this.#log(
       info.tee

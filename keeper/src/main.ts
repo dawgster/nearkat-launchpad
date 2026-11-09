@@ -13,6 +13,7 @@ import { Collections } from "./collections.ts";
 import { loadConfig } from "./config.ts";
 import { FastfsStore } from "./fastfs.ts";
 import { NearAiInference } from "./inference.ts";
+import { Ingest } from "./ingest.ts";
 import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
 import { FileLoanCounter } from "./loans.ts";
@@ -105,7 +106,19 @@ const collections = new Collections({
         contractId === config.contractId ? (tokenId) => natureOf(katForToken(tokenId)) : undefined,
       loans: new FileLoanCounter(join(dirname(config.meterJournal), `loans-${contractId}.json`)),
     });
-    return { meter, kats };
+    // A dataset's samples come in through the keeper, sealed to its attested key.
+    const ingest =
+      info.kind && typeof info.kind === "object" && info.key_source
+        ? new Ingest({
+            contractId,
+            chain,
+            store: storeFor(contractId, chain),
+            sealing: keys.sealing(),
+            keySource: info.key_source,
+            mpcPublicKey: () => chain.mpcPublicKey(info.key_source),
+          })
+        : undefined;
+    return { meter, kats, ingest };
   },
   proof: quote ? () => keyProof(keys.nearPublicKey(), sealKey, quote, phalaCollateral) : undefined,
 });
@@ -159,11 +172,14 @@ const app = createApp({
     }
     return served;
   },
+  isDataset: (contractId) => collections.get(contractId)?.ingest !== undefined,
+  ingest: (contractId) => collections.get(contractId)?.ingest,
   collections: () => ({
     home: config.contractId,
     served: collections.all().map(({ contractId, info, prices }) => ({
       contract_id: contractId,
       name: info.name,
+      kind: info.kind ?? "Character",
       tee: info.tee,
       chat_price: prices.chat.toString(),
       save_price: prices.save.toString(),
@@ -229,27 +245,35 @@ function every(ms: number, name: string, job: () => Promise<unknown>): void {
 }
 
 /** Runs a job for every served collection; one failing never stops the others. */
-const forEach = (name: string, job: (kats: KatService, meter: Meter) => Promise<unknown>) => () =>
-  Promise.all(
-    collections
-      .all()
-      .map(({ contractId, kats, meter }) =>
-        job(kats, meter).catch((error) =>
-          console.error(`${name} failed for ${contractId}:`, error),
+const forEach =
+  (
+    name: string,
+    job: (kats: KatService, meter: Meter) => Promise<unknown>,
+    { characters = false }: { characters?: boolean } = {},
+  ) =>
+  () =>
+    Promise.all(
+      collections
+        .all()
+        // Datasets have no minds to wake or consolidate.
+        .filter(({ ingest }) => !(characters && ingest))
+        .map(({ contractId, kats, meter }) =>
+          job(kats, meter).catch((error) =>
+            console.error(`${name} failed for ${contractId}:`, error),
+          ),
         ),
-      ),
-  );
+    );
 
 void discover().catch((error) => console.error("discover failed:", error));
 every(
   WAKE_EVERY_MS,
   "wake",
-  forEach("wake", (kats) => kats.wakeNew()),
+  forEach("wake", (kats) => kats.wakeNew(), { characters: true }),
 );
 every(
   CONSOLIDATE_EVERY_MS,
   "consolidate",
-  forEach("consolidate", (kats) => kats.consolidateIdle()),
+  forEach("consolidate", (kats) => kats.consolidateIdle(), { characters: true }),
 );
 every(FLUSH_EVERY_MS, "flush", async () => {
   await forEach("flush", (_, meter) => meter.flush())();

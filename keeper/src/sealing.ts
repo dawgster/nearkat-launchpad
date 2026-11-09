@@ -17,7 +17,7 @@ import {
  * ciphertext | tag (16). The AES key is HKDF-SHA256 over the shared secret,
  * salted with both public keys. The web app's `sealPrompt` must match this.
  */
-const INFO = "nearkat-sealed-prompt:v1";
+export const INFO = "nearkat-sealed-prompt:v1";
 /** For an owner's chat history, sealed in their browser for one token's mind. */
 export const IMPORT_INFO = "nearkat-history-import:v1";
 const X25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
