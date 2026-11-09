@@ -107,9 +107,11 @@ export interface LaunchRequest {
 
 /**
  * What each dataset sample adds to the launch deposit: the collection's
- * storage for the sample's token and its sealed record, in yoctoNEAR (0.006 NEAR).
+ * storage for the sample's token and its sealed record, in yoctoNEAR (0.008
+ * NEAR). Sealing stores a FastFS ref of about 135 characters
+ * (`fastfs:<keeper>:<sha256>:<tx hash>`), about 220 bytes a sample.
  */
-export const SAMPLE_STORAGE_DEPOSIT = 6_000_000_000_000_000_000_000n;
+export const SAMPLE_STORAGE_DEPOSIT = 8_000_000_000_000_000_000_000n;
 
 export const MAX_PROMPT_CHARS = 4000;
 export const MAX_STARTER_CHARS = 2000;

@@ -4,6 +4,7 @@ import {
   Launchpad,
   pricesFor,
   promptFor,
+  SAMPLE_STORAGE_DEPOSIT,
   slugFrom,
   slugProblem,
 } from "../src/lib/launchpad.ts";
@@ -138,4 +139,11 @@ test("prices a collection as the keeper does", () => {
   expect(pricesFor(undefined, keeper)).toEqual(keeper);
   const terms = { royalty_bps: 0, creator_share_bps: 2_000, chat_price: null, save_price: "70000" };
   expect(pricesFor(terms, keeper)).toEqual({ chat: 2_500n, save: 70_000n });
+});
+
+describe("a dataset's launch deposit", () => {
+  test("covers each sample's token and sealed record with a real-length FastFS ref", () => {
+    // About 220 bytes to seal with a ~135-character ref, plus the token: 0.008 NEAR.
+    expect(SAMPLE_STORAGE_DEPOSIT).toBe(8n * 10n ** 21n);
+  });
 });
