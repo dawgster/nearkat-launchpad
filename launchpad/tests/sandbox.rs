@@ -424,17 +424,17 @@ async fn a_creator_launches_a_dataset_and_finishes_minting_its_samples() -> Test
     eprintln!("the launch minted {minted} of 120");
     assert!(minted >= 40, "only {minted} minted at launch");
 
-    // Whatever is missing, its creator (the admin) mints by calling again.
+    // Whatever is missing, anyone (here Bob) mints, to the creator, by calling again.
     let mut calls = 0;
     while minted < 120 {
         assert!(calls < 3, "still {minted} after {calls} calls");
         call_with_gas(
             &env,
             &collection,
-            &env.alice,
+            &env.bob,
             "finish_minting",
             json!({}),
-            NearToken::from_yoctonear(1),
+            NearToken::from_yoctonear(0),
             300,
         )
         .await??;

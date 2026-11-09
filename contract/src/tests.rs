@@ -1810,7 +1810,7 @@ fn the_admin_finishes_minting() {
     // The continuation never ran, as if it had failed: 50 of 120 are minted.
     let mut c = deploy_with(dataset(&["a", "b"], &[100, 20], 120));
     assert_eq!(c.get_collection().minted.0, 50);
-    ctx("admin.near", YOCTO);
+    ctx("alice.near", NearToken::from_yoctonear(0));
     c.finish_minting();
     assert_eq!(c.get_collection().minted.0, 100);
     // It schedules the last batch, which the collection runs on its own.
@@ -1825,7 +1825,7 @@ fn the_admin_finishes_minting() {
         }
         other => panic!("unexpected actions {other:?}"),
     }
-    ctx("admin.near", YOCTO);
+    ctx("alice.near", NearToken::from_yoctonear(0));
     c.finish_minting();
     assert_eq!(c.get_collection().minted.0, 120);
     assert_eq!(
@@ -1838,16 +1838,21 @@ fn the_admin_finishes_minting() {
 #[should_panic(expected = "All samples are minted")]
 fn nothing_left_to_mint() {
     let mut c = deploy_with(dataset(&["a", "b"], &[3, 2], 5));
-    ctx("admin.near", YOCTO);
+    ctx("alice.near", NearToken::from_yoctonear(0));
     c.finish_minting();
 }
 
 #[test]
-#[should_panic(expected = "Only the admin can call this method")]
-fn only_the_admin_finishes_minting() {
+fn anyone_can_finish_minting() {
     let mut c = deploy_with(dataset(&["a", "b"], &[100, 20], 120));
-    ctx("alice.near", YOCTO);
+    ctx("alice.near", NearToken::from_yoctonear(0));
     c.finish_minting();
+    assert_eq!(c.get_collection().minted.0, 100);
+    // Always to the creator, whoever asked.
+    assert_eq!(
+        c.nft_token("100".to_string()).unwrap().owner_id,
+        acc("admin.near")
+    );
 }
 
 #[test]

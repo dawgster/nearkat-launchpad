@@ -424,11 +424,11 @@ impl Contract {
     }
 
     /// Mints the samples still missing, up to the dataset's size, so a launch
-    /// whose continuation ran out of gas or balance can be completed. Admin
-    /// only; one batch per call, the rest scheduled like at launch.
-    #[payable]
+    /// whose continuation ran out of gas or balance can be completed. Anyone
+    /// may call it: the samples always go to the creator, never past the
+    /// dataset's size, and the caller only pays gas. One batch per call, the
+    /// rest scheduled like at launch.
     pub fn finish_minting(&mut self) {
-        self.assert_admin();
         self.require_dataset();
         let remaining = self
             .max_supply

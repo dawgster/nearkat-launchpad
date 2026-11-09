@@ -1161,7 +1161,14 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     eprintln!("premint reached {premint} of {SAMPLES}");
     let mut finishes = 0;
     while minted(&env).await? < SAMPLES {
-        call_gas(&env, &env.admin, "finish_minting", json!({}), YOCTO, 300).await??;
+        call_gas(
+            &env,
+            &env.bob,
+            "finish_minting",
+            json!({}),
+            NearToken::from_yoctonear(0),
+            300,
+        ).await??;
         finishes += 1;
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
