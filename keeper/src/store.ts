@@ -58,6 +58,29 @@ export class MirroredStore implements ContextStore {
     return ref;
   }
 
+  /**
+   * Stores several blobs, in one durable call when the durable store batches
+   * (FastFS: one transaction), then mirrors each locally. Refs in order.
+   */
+  async putMany(blobs: Uint8Array[]): Promise<string[]> {
+    const durable = this.#durable as ContextStore & {
+      putMany?: (blobs: Uint8Array[]) => Promise<string[]>;
+    };
+    let refs: string[];
+    if (typeof durable.putMany === "function") {
+      refs = await durable.putMany(blobs);
+    } else {
+      refs = [];
+      for (const blob of blobs) {
+        refs.push(await durable.put(blob));
+      }
+    }
+    for (const blob of blobs) {
+      await this.#local.put(blob).catch(() => undefined);
+    }
+    return refs;
+  }
+
   async get(ref: string): Promise<Uint8Array> {
     try {
       return await this.#local.get(ref);
