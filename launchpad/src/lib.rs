@@ -16,9 +16,13 @@ mod tests;
 
 const GAS_FOR_INIT: Gas = Gas::from_tgas(100);
 /// A dataset mints its samples while it initialises, about 4 Tgas each, so
-/// it gets more: room for roughly 45 before `finish_minting` takes over. The
-/// launch call then needs about 280 Tgas attached.
+/// it gets more: enough for `new` to mint its first batch of 50 (the sandbox
+/// sees exactly 50 at launch, with too little gas left to chain more);
+/// `finish_minting` mints the rest.
 const GAS_FOR_DATASET_INIT: Gas = Gas::from_tgas(230);
+/// What a dataset launch must attach: the init, the callback, and the launch
+/// call itself.
+const GAS_TO_LAUNCH_DATASET: Gas = Gas::from_tgas(280);
 const GAS_FOR_LAUNCH_CALLBACK: Gas = Gas::from_tgas(15);
 const GAS_FOR_WITHDRAW_CALLBACK: Gas = Gas::from_tgas(5);
 const MAX_SLUG_LEN: usize = 32;
@@ -77,6 +81,32 @@ pub struct CollectionArgs {
     /// How many samples a dataset mints to its creator at launch. Passed through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_supply: Option<U64>,
+}
+
+/// Whether `kind` names a dataset. Its classes are left for the collection
+/// to check; only the shape is checked here, so a malformed kind fails the
+/// launch call rather than the collection's set-up.
+fn is_dataset(kind: Option<&near_sdk::serde_json::Value>) -> bool {
+    let shape = || env::panic_str(r#"kind is "Character" or {"Dataset": {"classes": [...]}}"#);
+    match kind {
+        None => false,
+        Some(near_sdk::serde_json::Value::String(kind)) if kind == "Character" => false,
+        Some(near_sdk::serde_json::Value::Object(kind)) if kind.len() == 1 => {
+            match kind.get("Dataset").and_then(|d| d.as_object()) {
+                Some(dataset)
+                    if dataset.len() == 1
+                        && dataset.get("classes").is_some_and(|c| {
+                            c.as_array()
+                                .is_some_and(|classes| classes.iter().all(|c| c.is_string()))
+                        }) =>
+                {
+                    true
+                }
+                _ => shape(),
+            }
+        }
+        Some(_) => shape(),
+    }
 }
 
 /// Where every launched collection's context keys come from: NEAR's MPC
@@ -212,6 +242,17 @@ impl Launchpad {
             !name.trim().is_empty() && !symbol.trim().is_empty(),
             "name and symbol must not be empty"
         );
+        let dataset = is_dataset(args.collection.kind.as_ref());
+        require!(
+            dataset == args.collection.initial_supply.is_some(),
+            "A dataset needs an initial_supply, and only a dataset takes one"
+        );
+        if dataset {
+            require!(
+                env::prepaid_gas() >= GAS_TO_LAUNCH_DATASET,
+                "Attach 280 Tgas to launch a dataset"
+            );
+        }
 
         let creator_id = env::predecessor_account_id();
         let keeper_id = args.keeper_id.unwrap_or_else(|| self.keeper_id.clone());
@@ -234,7 +275,7 @@ impl Launchpad {
             "collection": with_key_source(&args.collection, &key_source, self.wallet_code_hash),
             "code_hash": Base58CryptoHash::from(code_hash),
         });
-        let init_gas = if args.collection.initial_supply.is_some() {
+        let init_gas = if dataset {
             GAS_FOR_DATASET_INIT
         } else {
             GAS_FOR_INIT

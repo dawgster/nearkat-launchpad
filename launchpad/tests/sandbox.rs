@@ -411,18 +411,16 @@ async fn a_creator_launches_a_dataset_and_finishes_minting_its_samples() -> Test
     assert_eq!(launched, json!(true));
 
     let collection: AccountId = format!("hotdogs.{}", env.launchpad.id).parse()?;
-    let mut minted = 0;
-    for _ in 0..20 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // A call returns once its whole receipt chain is final (near-api waits
+    // for FINAL), so the chained mints are done by now.
+    let minted_now = || async {
         let info = view(&env, &collection, "get_collection", json!({})).await?;
-        let now: u64 = info["minted"].as_str().unwrap().parse()?;
-        if now == minted && now > 0 {
-            break;
-        }
-        minted = now;
-    }
+        TestResult::Ok(info["minted"].as_str().unwrap().parse::<u64>()?)
+    };
+    let mut minted = minted_now().await?;
     eprintln!("the launch minted {minted} of 120");
-    assert!(minted >= 40, "only {minted} minted at launch");
+    // `new` mints its first batch of 50 itself, within the launch's gas.
+    assert!(minted >= 50, "only {minted} minted at launch");
 
     // Whatever is missing, anyone (here Bob) mints, to the creator, by calling again.
     let mut calls = 0;
@@ -439,14 +437,7 @@ async fn a_creator_launches_a_dataset_and_finishes_minting_its_samples() -> Test
         )
         .await??;
         calls += 1;
-        for _ in 0..40 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let info = view(&env, &collection, "get_collection", json!({})).await?;
-            minted = info["minted"].as_str().unwrap().parse()?;
-            if minted == 120 {
-                break;
-            }
-        }
+        minted = minted_now().await?;
     }
     eprintln!("finish_minting calls needed: {calls}");
     let token = view(&env, &collection, "nft_token", json!({ "token_id": "120" })).await?;

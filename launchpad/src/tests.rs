@@ -384,3 +384,81 @@ fn launch_passes_dataset_fields_through() {
     let plain = crate::with_key_source(&args("magister").collection, &source, None);
     assert!(plain.get("kind").is_none() && plain.get("initial_supply").is_none());
 }
+
+fn dataset_args(slug: &str) -> LaunchArgs {
+    let mut launch = args(slug);
+    launch.collection.kind = Some(near_sdk::serde_json::json!({
+        "Dataset": { "classes": ["hotdog", "not_hotdog"] }
+    }));
+    launch.collection.class_counts = vec![3.into(), 2.into()];
+    launch.collection.initial_supply = Some(5.into());
+    launch
+}
+
+fn launch_with_gas(launch: LaunchArgs, tgas: u64) {
+    let mut l = deploy();
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(acc("launch.near"))
+        .predecessor_account_id(acc("alice.near"))
+        .attached_deposit(NearToken::from_near(3))
+        .prepaid_gas(near_sdk::Gas::from_tgas(tgas))
+        .build());
+    let _ = l.launch(launch);
+}
+
+#[test]
+fn a_dataset_launches_with_280_tgas() {
+    launch_with_gas(dataset_args("hotdogs"), 280);
+}
+
+#[test]
+#[should_panic(expected = "Attach 280 Tgas to launch a dataset")]
+fn a_dataset_launch_needs_280_tgas() {
+    launch_with_gas(dataset_args("hotdogs"), 279);
+}
+
+#[test]
+fn a_character_launch_needs_no_more_gas_than_before() {
+    launch_with_gas(args("magister"), 150);
+}
+
+#[test]
+fn an_explicit_character_kind_launches() {
+    let mut launch = args("magister");
+    launch.collection.kind = Some(near_sdk::serde_json::json!("Character"));
+    launch_with_gas(launch, 150);
+}
+
+#[test]
+fn a_malformed_kind_is_refused_by_the_launchpad() {
+    for kind in [
+        near_sdk::serde_json::json!("Dataset"),
+        near_sdk::serde_json::json!({ "Dataset": ["hotdog"] }),
+        near_sdk::serde_json::json!({ "Dataset": { "classes": [1, 2] } }),
+        near_sdk::serde_json::json!({ "Dataset": { "classes": [] }, "Character": null }),
+        near_sdk::serde_json::json!({ "Datasets": { "classes": ["a", "b"] } }),
+    ] {
+        let mut launch = dataset_args("hotdogs");
+        launch.collection.kind = Some(kind.clone());
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            launch_with_gas(launch, 300);
+        }));
+        assert!(refused.is_err(), "{kind} was accepted");
+    }
+}
+
+#[test]
+#[should_panic(expected = "A dataset needs an initial_supply, and only a dataset takes one")]
+fn a_dataset_launch_needs_an_initial_supply() {
+    let mut launch = dataset_args("hotdogs");
+    launch.collection.initial_supply = None;
+    launch_with_gas(launch, 300);
+}
+
+#[test]
+#[should_panic(expected = "A dataset needs an initial_supply, and only a dataset takes one")]
+fn a_character_launch_takes_no_initial_supply() {
+    let mut launch = args("magister");
+    launch.collection.initial_supply = Some(5.into());
+    launch_with_gas(launch, 300);
+}
