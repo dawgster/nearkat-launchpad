@@ -92,7 +92,14 @@ export interface RunsOptions {
   heldoutDir: string;
   /** Registers the app's key with the collection if it isn't yet. */
   ensureRegistered(contract: string): Promise<void>;
+  /** The clock, in ms; for tests. */
+  now?: () => number;
 }
+
+/** The most runs kept at once; past this the oldest finished one is dropped. */
+export const MAX_RUNS = 20;
+/** How long a finished run's model is kept. */
+export const MODEL_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Training runs. Each checks the renter's rentals on-chain, gets the
@@ -105,6 +112,8 @@ export class Runs {
   readonly #o: RunsOptions;
   readonly #runs = new Map<string, RunState>();
   readonly #models = new Map<string, Buffer>();
+  /** When each finished run finished, oldest first. */
+  readonly #finishedAt = new Map<string, number>();
   /** `contract:token` of every sample in a run that has not finished. */
   readonly #busy = new Set<string>();
 
@@ -156,9 +165,38 @@ export class Runs {
       tokenIds: [...tokenIds],
       stage: "keys",
     };
+    this.#sweep();
     this.#runs.set(state.id, state);
+    this.#evict();
     void this.#pipeline(state, checked).finally(release);
     return { ...state, tokenIds: [...state.tokenIds] };
+  }
+
+  /** Drops models older than their time to live. */
+  #sweep(): void {
+    const now = (this.#o.now ?? Date.now)();
+    for (const [id, at] of this.#finishedAt) {
+      if (now - at >= MODEL_TTL_MS) {
+        this.#models.delete(id);
+      }
+    }
+  }
+
+  /** Keeps at most MAX_RUNS runs by dropping the oldest finished ones, with their models. */
+  #evict(): void {
+    for (const id of this.#finishedAt.keys()) {
+      if (this.#runs.size <= MAX_RUNS) {
+        return;
+      }
+      this.#runs.delete(id);
+      this.#models.delete(id);
+      this.#finishedAt.delete(id);
+    }
+  }
+
+  #finish(id: string): void {
+    this.#finishedAt.set(id, (this.#o.now ?? Date.now)());
+    this.#evict();
   }
 
   get(id: string): RunState | undefined {
@@ -168,6 +206,7 @@ export class Runs {
 
   /** The trained model, for the renter only. */
   model(id: string, caller: string): Buffer {
+    this.#sweep();
     const state = this.#runs.get(id);
     if (!state) {
       throw new NotFoundError("No such run");
@@ -377,6 +416,7 @@ export class Runs {
       state.accuracy = result.accuracy;
       state.modelSha256 = modelSha256;
       state.stage = "done";
+      this.#finish(state.id);
     } catch (error) {
       const message =
         error instanceof RunFailure
@@ -391,6 +431,7 @@ export class Runs {
       );
       state.error = message;
       state.stage = "failed";
+      this.#finish(state.id);
     }
   }
 }

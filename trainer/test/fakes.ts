@@ -43,7 +43,8 @@ export class FakeTrainerChain implements TrainerChain {
   recordCalls = 0;
   /** This many calls land on-chain, then their reply is lost as a transport error. */
   landedButLost = 0;
-  readonly registered = new Set<string>();
+  /** Registered app keys: public key to the app id it is registered to. */
+  readonly appKeys = new Map<string, string>();
   readonly #txs = new Map<string, Uint8Array[]>();
   readonly #store = new FastfsStore({
     uploader: "keeper.near",
@@ -170,12 +171,13 @@ export class FakeTrainerChain implements TrainerChain {
     return this.records.filter((r) => r.run_id === runId).flatMap((r) => r.token_ids);
   }
 
-  async isAppKeyRegistered(_contract: string, publicKey: string) {
-    return this.registered.has(publicKey);
+  async getAppKey(_contract: string, publicKey: string) {
+    const appId = this.appKeys.get(publicKey);
+    return appId === undefined ? null : { app_id: appId };
   }
 
   async registerAppKey(_contract: string, proof: KeyProof & { label: string }) {
-    this.registered.add(proof.public_key);
+    this.appKeys.set(proof.public_key, APP_ID);
   }
 
   async mpcPublicKey(_source: KeySource) {

@@ -291,3 +291,50 @@ describe("Runs", () => {
     expect(chain.records).toEqual([]);
   });
 });
+
+describe("Runs memory bounds", () => {
+  async function finishedRun(
+    runs: Runs,
+    chain: FakeTrainerChain,
+    token: string,
+  ): Promise<RunState> {
+    await chain.addRentedSample(token, "cat");
+    const started = await runs.start(CONTRACT, RENTER, [token]);
+    return settle(runs, started.id);
+  }
+
+  test("keeps at most 20 runs, evicting the oldest finished one and its model", async () => {
+    const { chain, runs } = setup();
+    const ids: string[] = [];
+    for (let i = 1; i <= 20; i++) {
+      ids.push((await finishedRun(runs, chain, String(i))).id);
+    }
+    expect(runs.get(ids[0] as string)).toBeDefined();
+    const newest = await finishedRun(runs, chain, "21");
+    expect(runs.get(ids[0] as string)).toBeUndefined();
+    expect(() => runs.model(ids[0] as string, RENTER)).toThrow(/No such run/);
+    expect(runs.get(ids[1] as string)).toBeDefined();
+    expect(runs.get(newest.id)).toBeDefined();
+  });
+
+  test("drops a model 24 hours after its run finished", async () => {
+    let now = 1_000_000;
+    const chain = new FakeTrainerChain();
+    const python = new FakePython();
+    const runs = new Runs({
+      appId: APP_ID,
+      appPublicKey: () => "ed25519:trainer",
+      chain,
+      python: python.run,
+      heldoutDir: "/heldout",
+      ensureRegistered: async () => {},
+      now: () => now,
+    });
+    const done = await finishedRun(runs, chain, "1");
+    now += 23 * 3_600_000;
+    expect(runs.model(done.id, RENTER)).toEqual(python.model);
+    now += 2 * 3_600_000;
+    expect(() => runs.model(done.id, RENTER)).toThrow(/no model/);
+    expect(runs.get(done.id)?.stage).toBe("done");
+  });
+});

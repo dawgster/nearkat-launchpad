@@ -7,14 +7,17 @@
     "node": ">=24"
   },
   "scripts": {
+    "dev": "node --env-file-if-exists=.env src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "biome check ."
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.6",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.4.0",
+    "hono": "^4.13.17",
     "near-kit": "^0.20.2"
   },
   "devDependencies": {

@@ -42,7 +42,8 @@ export interface TrainerChain {
   recordTraining(contract: string, run: TrainingRecord): Promise<void>;
   /** Every sample a run is recorded for, in the order recorded; empty if there is no such run. */
   getRunTokens(contract: string, runId: string): Promise<string[]>;
-  isAppKeyRegistered(contract: string, publicKey: string): Promise<boolean>;
+  /** The app a public key is registered to on the collection, or null if it isn't. */
+  getAppKey(contract: string, publicKey: string): Promise<{ app_id: string } | null>;
   registerAppKey(contract: string, proof: KeyProof & { label: string }): Promise<void>;
   /** The MPC network's public key for a CKD domain. */
   mpcPublicKey(source: KeySource): Promise<string>;
@@ -172,13 +173,16 @@ export class NearTrainerChain implements TrainerChain {
     return tokens;
   }
 
-  async isAppKeyRegistered(contract: string, publicKey: string): Promise<boolean> {
-    return (await this.#view<object>(contract, "get_app_key", { public_key: publicKey })) !== null;
+  getAppKey(contract: string, publicKey: string) {
+    return this.#view<{ app_id: string }>(contract, "get_app_key", { public_key: publicKey });
   }
 
   async registerAppKey(contract: string, proof: KeyProof & { label: string }): Promise<void> {
-    // Verifying a TDX quote on-chain costs about 170 Tgas.
-    await this.#call(contract, "register_app_key", proof, { gas: "300 Tgas" });
+    // Verifying a TDX quote on-chain costs about 170 Tgas; the deposit pays the key's storage.
+    await this.#call(contract, "register_app_key", proof, {
+      gas: "300 Tgas",
+      attachedDeposit: "0.05 NEAR",
+    });
   }
 
   async mpcPublicKey(source: KeySource): Promise<string> {
