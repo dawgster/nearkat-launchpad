@@ -38,6 +38,9 @@ LEARNING_RATE = 2e-3
 WEIGHT_DECAY = 1e-4
 CROP_SCALE_MIN = 0.65
 JITTER = 0.15
+# Training images are small; a header claiming more pixels than this is refused before decoding.
+MAX_SAMPLE_PIXELS = 4096 * 4096
+HELDOUT_SUFFIXES = {".jpg", ".jpeg"}
 
 
 class Fail(Exception):
@@ -104,6 +107,13 @@ def read_samples(stream, classes: list[str]) -> list[tuple[Image.Image, int]]:
             raise Fail(f"line {n}: unknown label {label!r}")
         try:
             img = Image.open(io.BytesIO(raw))
+        except Exception:
+            raise Fail(f"line {n}: undecodable image (label {label!r})")
+        # Image.open reads only the header: check the size before decoding the pixels.
+        width, height = img.size
+        if width * height > MAX_SAMPLE_PIXELS:
+            raise Fail(f"line {n}: image too large (label {label!r})")
+        try:
             img = img.convert("RGB")
         except Exception:
             raise Fail(f"line {n}: undecodable image (label {label!r})")
@@ -111,18 +121,31 @@ def read_samples(stream, classes: list[str]) -> list[tuple[Image.Image, int]]:
     return samples
 
 
-def load_heldout(root: Path, classes: list[str]) -> list[tuple[torch.Tensor, int]]:
-    items = []
+def heldout_paths(root: Path, classes: list[str]) -> list[tuple[Path, int]]:
+    """Every class's held-out JPEGs (.jpg or .jpeg, any case). Fails unless every class has some."""
+    paths = []
     for idx, cls in enumerate(classes):
-        for path in sorted((root / cls).glob("*.jpg")):
-            with Image.open(path) as img:
-                items.append((EVAL_TRANSFORM(img.convert("RGB")), idx))
+        folder = root / cls
+        found = (
+            sorted(p for p in folder.iterdir() if p.suffix.lower() in HELDOUT_SUFFIXES)
+            if folder.is_dir()
+            else []
+        )
+        if not found:
+            raise Fail(f"no held-out images for class {cls!r}")
+        paths.extend((p, idx) for p in found)
+    return paths
+
+
+def load_heldout(paths: list[tuple[Path, int]]) -> list[tuple[torch.Tensor, int]]:
+    items = []
+    for path, idx in paths:
+        with Image.open(path) as img:
+            items.append((EVAL_TRANSFORM(img.convert("RGB")), idx))
     return items
 
 
 def evaluate(model: nn.Module, items) -> float:
-    if not items:
-        return 0.0
     model.eval()
     correct = 0
     with torch.no_grad():
@@ -156,7 +179,8 @@ def train(samples, classes, epochs: int, seconds: float):
     loss_fn = nn.CrossEntropyLoss()
     # Leave room for evaluation and export inside the overall budget.
     deadline = START + seconds - min(6.0, 0.25 * seconds)
-    steps_per_epoch = max(1, math.ceil(len(samples) / BATCH_SIZE))
+    # Batches of one are skipped, so they don't count.
+    steps_per_epoch = max(1, len(samples) // BATCH_SIZE + (len(samples) % BATCH_SIZE >= 2))
     total_steps = epochs * steps_per_epoch
     train_start = time.monotonic()
     step = 0
@@ -187,7 +211,11 @@ def train(samples, classes, epochs: int, seconds: float):
             total_loss += loss.item() * len(batch)
             seen += len(batch)
             step += 1
-        emit({"stage": "epoch", "epoch": epoch, "epochs": epochs, "loss": total_loss / max(seen, 1)})
+        if seen == 0:  # the time ran out before this epoch's first batch
+            break
+        emit({"stage": "epoch", "epoch": epoch, "epochs": epochs, "loss": total_loss / seen})
+    if step == 0:
+        raise Fail("nothing was trained")
     return model
 
 
@@ -210,13 +238,15 @@ def main() -> int:
     random.seed(args.seed)
     torch.set_num_threads(os.cpu_count() or 1)
 
+    # Checked first: a run without a held-out set can't report its accuracy.
+    heldout_files = heldout_paths(args.heldout, classes)
     samples = read_samples(sys.stdin, classes)
-    if not samples:
-        raise Fail("no samples on stdin")
+    if len(samples) < 2:
+        raise Fail("training needs at least two samples")
     emit({"stage": "loaded", "count": len(samples)})
 
     model = train(samples, classes, args.epochs, args.seconds)
-    heldout = load_heldout(args.heldout, classes)
+    heldout = load_heldout(heldout_files)
     accuracy = evaluate(model, heldout)
     export_onnx(model, args.out)
     emit(
