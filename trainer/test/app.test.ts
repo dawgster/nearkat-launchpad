@@ -1,8 +1,9 @@
-import type { SignedMessage } from "near-kit";
+import { Near, type SignedMessage, verifyNep413Signature } from "near-kit";
 import { describe, expect, test, vi } from "vitest";
-import { Auth } from "../../keeper/src/auth.ts";
+import { Auth, SIGN_IN_MESSAGE } from "../../keeper/src/auth.ts";
 import { keysFromRootSecret } from "../../keeper/src/keys.ts";
 import { createApp } from "../src/app.ts";
+import { loadConfig } from "../src/config.ts";
 import { Runs } from "../src/run.ts";
 import { APP_ID, CONTRACT, FakePython, FakeTrainerChain, jpegFor, RENTER } from "./fakes.ts";
 
@@ -195,5 +196,41 @@ describe("trainer HTTP API", () => {
     expect(ok.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
     const other = await app.request("/info", { headers: { origin: "https://evil.example" } });
     expect(other.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
+
+describe("sign-in recipient", () => {
+  test("a sign-in signed for the keeper does not open a session with the trainer", async () => {
+    const recipient = loadConfig({
+      TRAINER_ACCOUNT_ID: "trainer.testnet",
+      TRAINER_ROOT_SECRET: "ab".repeat(32),
+    }).authRecipient;
+    // The keeper's default recipient.
+    expect(recipient).not.toBe("nearkat.xyz");
+    const auth = new Auth({
+      sessionKey: keys.sessionKey(),
+      recipient,
+      verify: (signed, params) => verifyNep413Signature(signed, params),
+    });
+    const user = new Near({
+      network: "testnet",
+      privateKey: keysFromRootSecret(Buffer.alloc(32, 4)).nearPrivateKey(),
+      defaultSignerId: RENTER,
+    });
+    const signFor = async (to: string) => {
+      const { nonce } = auth.challenge();
+      const signed = await user.signMessage({
+        message: SIGN_IN_MESSAGE,
+        recipient: to,
+        nonce: Buffer.from(nonce, "base64"),
+      });
+      return { nonce, signed };
+    };
+    const forKeeper = await signFor("nearkat.xyz");
+    await expect(auth.createSession(forKeeper.signed, forKeeper.nonce)).rejects.toMatchObject({
+      status: 401,
+    });
+    const forTrainer = await signFor(recipient);
+    expect((await auth.createSession(forTrainer.signed, forTrainer.nonce)).account_id).toBe(RENTER);
   });
 });

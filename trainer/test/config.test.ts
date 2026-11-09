@@ -13,7 +13,7 @@ describe("loadConfig", () => {
       appId: "local-trainer",
       label: "Hotdog CNN",
       port: 8790,
-      authRecipient: "nearkat.xyz",
+      authRecipient: "trainer.local",
       webOrigins: ["http://localhost:3000"],
       archivalRpcUrl: "https://archival-rpc.testnet.fastnear.com",
       fastfsGateway: null,
@@ -64,8 +64,12 @@ describe("loadConfig", () => {
       loadConfig({ ...base, TRAINER_MODE: "phala", TRAINER_ROOT_SECRET: SECRET }),
     ).toThrow(/TRAINER_ROOT_SECRET must not be set in phala mode/);
     expect(
-      loadConfig({ ...base, TRAINER_MODE: "phala", TRAINER_LAUNCHPAD_ID: "launch.testnet" })
-        .rootSecretHex,
+      loadConfig({
+        ...base,
+        TRAINER_MODE: "phala",
+        TRAINER_LAUNCHPAD_ID: "launch.testnet",
+        AUTH_RECIPIENT: "train.example",
+      }).rootSecretHex,
     ).toBeUndefined();
   });
 
@@ -75,7 +79,20 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...local, TRAINER_LAUNCHPAD_ID: "launch.testnet" }).launchpadId).toBe(
       "launch.testnet",
     );
-    expect(() => loadConfig({ ...base, TRAINER_MODE: "phala" })).toThrow(/TRAINER_LAUNCHPAD_ID/);
+    expect(() =>
+      loadConfig({ ...base, TRAINER_MODE: "phala", AUTH_RECIPIENT: "train.example" }),
+    ).toThrow(/TRAINER_LAUNCHPAD_ID/);
+  });
+
+  test("signs renters in under its own recipient; phala mode must name one", () => {
+    const local = { ...base, TRAINER_ROOT_SECRET: SECRET };
+    expect(loadConfig(local).authRecipient).toBe("trainer.local");
+    expect(loadConfig({ ...local, AUTH_RECIPIENT: "train.example" }).authRecipient).toBe(
+      "train.example",
+    );
+    expect(() =>
+      loadConfig({ ...base, TRAINER_MODE: "phala", TRAINER_LAUNCHPAD_ID: "launch.testnet" }),
+    ).toThrow(/AUTH_RECIPIENT/);
   });
 
   test("local mode needs a root secret of 64 hex characters", () => {

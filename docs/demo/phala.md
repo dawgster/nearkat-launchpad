@@ -56,7 +56,13 @@ and `.phala-trainer.env` with `TRAINER_IMAGE`, `NEAR_RPC_URL`,
 `NEAR_ARCHIVAL_RPC_URL`, `TRAINER_ACCOUNT_ID=<trainer-account>`,
 `LAUNCHPAD_ID=<launchpad>` (the trainer trains only on collections that
 launchpad launched and lists as live; it refuses any other contract, which
-could relay its signed calls), `WEB_ORIGINS`, `AUTH_RECIPIENT`. Then **(to verify)**:
+could relay its signed calls), `WEB_ORIGINS`, and
+`TRAINER_AUTH_RECIPIENT=<trainer-auth-recipient>` (e.g. `train.<web-host>`):
+the trainer's own sign-in recipient, which must differ from the keeper's
+`AUTH_RECIPIENT` so a sign-in for one never opens the other. The web app names
+it in `VITE_TRAINER_URLS` as
+`{"<trainer-app-id>":{"url":"<trainer-url>","recipient":"<trainer-auth-recipient>"}}`.
+Then **(to verify)**:
 
 ```bash
 phala auth login <api-key>

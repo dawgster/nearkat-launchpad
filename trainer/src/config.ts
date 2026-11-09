@@ -27,6 +27,7 @@ export interface Config {
   /** Epochs per run; undefined leaves train.py's default. */
   epochs: number | undefined;
   port: number;
+  /** The NEP-413 recipient renters sign in to: this app's own, never the keeper's. */
   authRecipient: string;
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
@@ -83,6 +84,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (mode === "phala" && !env.TRAINER_LAUNCHPAD_ID) {
     throw new Error("TRAINER_LAUNCHPAD_ID is required in phala mode");
   }
+  if (mode === "phala" && !env.AUTH_RECIPIENT) {
+    // Its own, never the keeper's: a sign-in for one must not open the other.
+    throw new Error("AUTH_RECIPIENT is required in phala mode");
+  }
   const port = Number(env.PORT ?? "8790");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
@@ -112,7 +117,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     sampleKeysPerCall: sampleKeysPerCall(env),
     epochs: epochs(env),
     port,
-    authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
+    authRecipient: env.AUTH_RECIPIENT || "trainer.local",
     webOrigins: (env.WEB_ORIGINS ?? "http://localhost:3000")
       .split(",")
       .map((origin) => origin.trim())

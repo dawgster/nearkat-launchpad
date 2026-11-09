@@ -25,5 +25,6 @@ services:
       TRAINER_LABEL: Hotdog CNN
       SAMPLE_KEYS_PER_CALL: "10"
       WEB_ORIGINS: ${WEB_ORIGINS}
-      AUTH_RECIPIENT: ${AUTH_RECIPIENT}
+      # The trainer's own sign-in recipient, distinct from the keeper's.
+      AUTH_RECIPIENT: ${TRAINER_AUTH_RECIPIENT}
       TRUST_PROXY: "true"

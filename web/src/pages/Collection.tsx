@@ -670,18 +670,22 @@ function DatasetSection({
       return {};
     }
     return Object.fromEntries(
-      Object.entries(config.trainerUrls).map(([appId, url]): [string, TrainerAccess] => {
-        const trainer = createTrainer(url);
-        const session = new KeeperSession({
-          keeper: trainer,
-          accountId,
-          signMessage,
-          expect: { message: SIGN_IN_MESSAGE, recipient: config.authRecipient },
-          callbackUrl: window.location.origin,
-          scope: `trainer.${appId}`,
-        });
-        return [appId, { trainer, session }];
-      }),
+      Object.entries(config.trainers).map(
+        ([appId, { url, recipient }]): [string, TrainerAccess] => {
+          const trainer = createTrainer(url);
+          const session = new KeeperSession({
+            keeper: trainer,
+            accountId,
+            signMessage,
+            // Each training app signs renters in under its own recipient, so a
+            // sign-in for one service never opens a session with another.
+            expect: { message: SIGN_IN_MESSAGE, recipient },
+            callbackUrl: window.location.origin,
+            scope: `trainer.${appId}`,
+          });
+          return [appId, { trainer, session }];
+        },
+      ),
     );
   }, [config, accountId, signMessage]);
   const explorer =

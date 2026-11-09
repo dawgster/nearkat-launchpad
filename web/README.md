@@ -56,7 +56,10 @@ so first run `cargo near build non-reproducible-wasm` in `../contract` and in
   mainnet. Pinning that list and adding a content security policy are still
   to do.
 - The app only ever asks a wallet to sign the fixed sign-in message for the
-  configured recipient, with a nonce from the keeper.
+  configured recipient, with a nonce from the keeper. Each training app in
+  `VITE_TRAINER_URLS` has its own recipient (`trainer.local` for a bare URL),
+  never the keeper's, so a sign-in for one service opens no session with
+  another.
 
 - Token art comes from the shared `../art` module, which the keeper also
   serves to marketplaces: kat portraits for the home collection, abstract

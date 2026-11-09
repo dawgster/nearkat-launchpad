@@ -25,6 +25,8 @@ services:
       STORAGE: fastfs
       SAMPLE_KEYS_PER_CALL: "10"
       WEB_ORIGIN: ${WEB_ORIGINS}
+      # The keeper's sign-in recipient (the web's VITE_AUTH_RECIPIENT), distinct
+      # from the trainer's.
       AUTH_RECIPIENT: ${AUTH_RECIPIENT}
       TRUST_PROXY: "true"
       STORE_DIR: /data/contexts

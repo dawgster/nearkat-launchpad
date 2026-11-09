@@ -38,7 +38,7 @@ Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
 | `TRAINER_EPOCHS` | train.py's (30) | Epochs per run, 1 to 1000. |
 | `PORT` | `8790` | |
 | `WEB_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origins. |
-| `AUTH_RECIPIENT` | `nearkat.xyz` | The NEP-413 recipient renters sign in to. |
+| `AUTH_RECIPIENT` | `trainer.local`; required in phala mode | The NEP-413 recipient renters sign in to. The app's own, never the keeper's, so a keeper sign-in opens no session here; the web app's `VITE_TRAINER_URLS` names it per app. |
 | `TRUST_PROXY` | `false` | Rate limits key on `X-Forwarded-For` behind a proxy. |
 | `DSTACK_ENDPOINT` | guest agent socket | A URL reaches the dstack simulator. |
 | `TRAINER_PYTHON` | uv | Interpreter for `py/train.py`. |

@@ -13,22 +13,46 @@ describe("loadConfig", () => {
       authRecipient: "nearkat.xyz",
       factoryId: null,
       devWallet: null,
-      trainerUrls: {},
+      trainers: {},
     });
   });
 
-  test("reads the training apps' addresses by app id", () => {
+  test("reads the training apps' addresses and sign-in recipients by app id", () => {
     expect(
       loadConfig({
         ...base,
-        VITE_TRAINER_URLS: '{"local-trainer":"http://localhost:8790/","app-2":"https://t.example"}',
-      }).trainerUrls,
-    ).toEqual({ "local-trainer": "http://localhost:8790", "app-2": "https://t.example" });
-    for (const bad of ["not json", "[]", '{"a":1}', '"x"']) {
+        VITE_TRAINER_URLS: JSON.stringify({
+          "local-trainer": "http://localhost:8790/",
+          "app-2": { url: "https://t.example", recipient: "train.example" },
+        }),
+      }).trainers,
+    ).toEqual({
+      // A bare URL is a local trainer, which signs renters in as trainer.local.
+      "local-trainer": { url: "http://localhost:8790", recipient: "trainer.local" },
+      "app-2": { url: "https://t.example", recipient: "train.example" },
+    });
+    for (const bad of [
+      "not json",
+      "[]",
+      '{"a":1}',
+      '"x"',
+      '{"a":{"url":"https://t.example"}}',
+      '{"a":{"recipient":"r"}}',
+    ]) {
       expect(() => loadConfig({ ...base, VITE_TRAINER_URLS: bad }), bad).toThrow(
         /VITE_TRAINER_URLS/,
       );
     }
+  });
+
+  test("refuses a training app that signs in under the keeper's recipient", () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        VITE_AUTH_RECIPIENT: "app.example",
+        VITE_TRAINER_URLS: JSON.stringify({ a: { url: "https://t", recipient: "app.example" } }),
+      }),
+    ).toThrow(/its own sign-in recipient/);
   });
 
   test("strips trailing slashes from the keeper URL", () => {
