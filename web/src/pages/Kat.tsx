@@ -6,7 +6,7 @@ import { FundPanel } from "../components/FundPanel.tsx";
 import { GiveAwayPanel } from "../components/GiveAwayPanel.tsx";
 import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { ImportPanel, type KeeperPrivacy } from "../components/ImportPanel.tsx";
+import { ImportPanel } from "../components/ImportPanel.tsx";
 import { LendPanel } from "../components/LendPanel.tsx";
 import { NaturePanel } from "../components/NaturePanel.tsx";
 import { Savannah, type SavannahMood } from "../components/Savannah.tsx";
@@ -22,7 +22,7 @@ import { capitalized, describeTerms, loanEnd, who } from "../lib/loans.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { rememberProof } from "../lib/proof.ts";
 import { IMPORT_INFO, sealPrompt } from "../lib/sealing.ts";
-import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
+import { type KeeperPrivacy, privacyOf } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { type TokenWallet, TokenWallets } from "../lib/wallet.ts";
 import { proofId, useScope } from "../scope.tsx";
@@ -34,24 +34,6 @@ const SETTLE_WAIT_MS = 2000;
 const SETTLE_WAITS = 30;
 /** Keeper answers that mean "not yet" while the contract shows this wallet as owner. */
 const SETTLING_CODES = ["waking_up", "not_owner", "not_found", "not_served"];
-
-/** Where the keeper runs, as far as its attestation shows this browser. */
-function privacyOf(report: Record<string, unknown>): KeeperPrivacy {
-  if (report.mode === "local") {
-    return { kind: "local" };
-  }
-  if (report.mode !== "phala") {
-    return { kind: "unknown", reason: "it reported no TEE" };
-  }
-  const check = checkPhalaReport(report as unknown as PhalaReport);
-  if (check.status !== "read") {
-    return { kind: "unknown", reason: check.reason };
-  }
-  if (!check.bindsKey || !check.logMatchesQuote) {
-    return { kind: "unknown", reason: "its quote doesn't bind the key it reports" };
-  }
-  return { kind: "tee", appId: check.appId };
-}
 
 /** The owner's side of the page: the conversation, and what the kat has become. */
 function Den({

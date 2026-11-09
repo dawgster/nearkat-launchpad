@@ -54,6 +54,24 @@ describe("createKeeper", () => {
     );
   });
 
+  test("hands a dataset's sealed samples to the keeper", async () => {
+    const { keeper, calls } = setup(() => Response.json({ sealed: ["1"], skipped: ["2"] }));
+    const samples = [
+      { token_id: "1", sealed: "c2Vh" },
+      { token_id: "2", sealed: "bGVk" },
+    ];
+    expect(await keeper.sealSamples("tok", "hotdogs.launch.near", samples)).toEqual({
+      sealed: ["1"],
+      skipped: ["2"],
+    });
+    expect(calls[0]?.url).toBe("https://keeper.example/c/hotdogs.launch.near/samples");
+    expect(calls[0]?.init).toMatchObject({
+      method: "POST",
+      headers: { authorization: "Bearer tok" },
+      body: JSON.stringify({ samples }),
+    });
+  });
+
   test("escapes a token id so it cannot change the path", async () => {
     const { keeper, calls } = setup(() => Response.json({}));
     await keeper.getContext("tok", "1/../2");

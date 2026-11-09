@@ -12,6 +12,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 const INFO = "nearkat-sealed-prompt:v1";
 /** For an owner's chat history, sealed for one token's mind. Must match the keeper's. */
 export const IMPORT_INFO = "nearkat-history-import:v1";
+/** For one picture of a dataset, sealed in its creator's browser. Must match the keeper's. */
+export const SAMPLE_INFO = "nearkat-dataset-sample:v1";
 
 function fromHex(hex: string): Uint8Array {
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
@@ -20,10 +22,20 @@ function fromHex(hex: string): Uint8Array {
   return Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
 }
 
-export async function sealPrompt(
+/** Secret instructions, sealed for the keeper to read as a collection's prompt. */
+export function sealPrompt(
   sealPublicKeyHex: string,
   plaintext: string,
   info = INFO,
+): Promise<string> {
+  return sealTo(sealPublicKeyHex, plaintext, info);
+}
+
+/** Seals `plaintext` to a keeper's sealing key, for the purpose `info` names. */
+export async function sealTo(
+  sealPublicKeyHex: string,
+  plaintext: string,
+  info: string,
 ): Promise<string> {
   const recipient = fromHex(sealPublicKeyHex);
   const ephemeralSecret = x25519.utils.randomSecretKey();

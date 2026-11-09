@@ -162,6 +162,11 @@ export default async function globalSetup() {
     PORT: String(KEEPER_PORT),
     WEB_ORIGIN: `${ALICE_URL},${BOB_URL}`,
     LAUNCHPAD_ID: names.launchpad,
+    // Everything is stored on the sandbox with FastFS and read back from it as
+    // the archival node, as a training app reads a dataset's samples.
+    STORAGE: "fastfs",
+    NEAR_ARCHIVAL_RPC_URL: sandbox.rpcUrl,
+    FASTFS_GATEWAY: "",
   });
   const attestation = await (await waitFor(`http://127.0.0.1:${KEEPER_PORT}/attestation`)).json();
 
@@ -289,6 +294,7 @@ export default async function globalSetup() {
   process.env.E2E_ALICE_ID = names.alice;
   process.env.E2E_CONTRACT_ID = names.contract;
   process.env.E2E_LAUNCHPAD_ID = names.launchpad;
+  process.env.E2E_RPC_URL = sandbox.rpcUrl;
 
   return async () => {
     for (const child of children) {

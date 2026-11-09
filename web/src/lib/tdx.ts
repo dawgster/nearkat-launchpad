@@ -169,3 +169,27 @@ export function checkPhalaReport(report: PhalaReport): PhalaCheck {
     claimMatchesLog: appId !== null && appId === report.app_id.toLowerCase(),
   };
 }
+
+/** Where a keeper runs, as far as this browser can tell from its attestation. */
+export type KeeperPrivacy =
+  | { kind: "tee"; appId: string | null }
+  | { kind: "local" }
+  | { kind: "unknown"; reason: string };
+
+/** Reads where a keeper runs from what it serves at /attestation. */
+export function privacyOf(report: Record<string, unknown>): KeeperPrivacy {
+  if (report.mode === "local") {
+    return { kind: "local" };
+  }
+  if (report.mode !== "phala") {
+    return { kind: "unknown", reason: "it reported no TEE" };
+  }
+  const check = checkPhalaReport(report as unknown as PhalaReport);
+  if (check.status !== "read") {
+    return { kind: "unknown", reason: check.reason };
+  }
+  if (!check.bindsKey || !check.logMatchesQuote) {
+    return { kind: "unknown", reason: "its quote doesn't bind the key it reports" };
+  }
+  return { kind: "tee", appId: check.appId };
+}

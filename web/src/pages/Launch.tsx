@@ -1,10 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { type Dataset, DatasetDrop } from "../components/DatasetDrop.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenSigil } from "../components/TokenSigil.tsx";
+import { KatContract } from "../lib/contract.ts";
 import { formatNear, parseNear, shorten } from "../lib/format.ts";
-import type { Keeper } from "../lib/keeper.ts";
+import { type Keeper, KeeperError } from "../lib/keeper.ts";
 import {
   appIdProblem,
   Launchpad,
@@ -12,13 +14,15 @@ import {
   MAX_STARTER_CHARS,
   PROMPT_TEMPLATES,
   promptFor,
+  SAMPLE_STORAGE_DEPOSIT,
   type SealedPrompt,
   slugFrom,
   slugProblem,
 } from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { datasetProblem, sealSample } from "../lib/samples.ts";
 import { sealPrompt } from "../lib/sealing.ts";
-import { checkPhalaReport, type PhalaReport } from "../lib/tdx.ts";
+import { checkPhalaReport, type KeeperPrivacy, type PhalaReport, privacyOf } from "../lib/tdx.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
@@ -109,29 +113,135 @@ function percentToBps(text: string, max: number): number | null {
 }
 
 /**
- * Seals secret instructions to the sealing key of this app's keeper, after
- * checking in the browser that the keeper's quote binds that key and comes
- * from the chosen Phala app. The contract checks the same quote, Intel's
- * signature included, when the keeper registers.
+ * The sealing key of this app's keeper, after checking in the browser that
+ * the keeper's quote binds that key and comes from the chosen Phala app. The
+ * contract checks the same quote, Intel's signature included, when the
+ * keeper registers. `what` names what is being sealed, for the error.
  */
-async function sealForApp(keeper: Keeper, appId: string, secret: string): Promise<SealedPrompt> {
-  const report = (await keeper.attestation()) as Partial<PhalaReport> & { mode?: string };
-  const check = report.mode === "phala" ? checkPhalaReport(report as PhalaReport) : null;
+function sealKeyForApp(report: Record<string, unknown>, appId: string, what: string): string {
+  const phala = report as Partial<PhalaReport> & { mode?: string };
+  const check = phala.mode === "phala" ? checkPhalaReport(phala as PhalaReport) : null;
   if (
     check?.status !== "read" ||
     !check.bindsKey ||
     !check.logMatchesQuote ||
     check.appId !== appId ||
-    !report.seal_public_key
+    !phala.seal_public_key
   ) {
     throw new Error(
-      `Secret instructions are sealed to this app's keeper, and it isn't running as Phala app ${appId}, so there is no key inside that app to seal them to.`,
+      `${what} are sealed to this app's keeper, and it isn't running as Phala app ${appId}, so there is no key inside that app to seal them to.`,
     );
   }
-  return {
-    ciphertext: await sealPrompt(report.seal_public_key, secret),
-    sealed_to: report.seal_public_key,
-  };
+  return phala.seal_public_key;
+}
+
+/** Seals secret instructions to the sealing key of this app's keeper; see `sealKeyForApp`. */
+async function sealForApp(keeper: Keeper, appId: string, secret: string): Promise<SealedPrompt> {
+  const key = sealKeyForApp(await keeper.attestation(), appId, "Secret instructions");
+  return { ciphertext: await sealPrompt(key, secret), sealed_to: key };
+}
+
+/** Samples handed to the keeper per request; its limit. */
+const SAMPLES_PER_CALL = 25;
+/** How long to wait for the keeper to find a new launch before giving up. */
+const FIND_WAIT_MS = 2000;
+const FIND_WAITS = 30;
+
+/** Runs a keeper call, waiting while the keeper hasn't found the collection yet. */
+async function untilFound<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      const finding =
+        error instanceof KeeperError &&
+        (error.code === "not_served" || error.code === "minting_unfinished");
+      if (!finding || attempt >= FIND_WAITS) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, FIND_WAIT_MS));
+    }
+  }
+}
+
+/** Whether `collection` is the same dataset, so a launch that stopped part way can go on. */
+function sameDataset(
+  collection: { kind?: unknown; class_counts?: string[] },
+  classes: string[],
+  counts: number[],
+): boolean {
+  const kind = collection.kind as { Dataset?: { classes?: string[] } } | undefined;
+  return (
+    JSON.stringify(kind?.Dataset?.classes) === JSON.stringify(classes) &&
+    JSON.stringify(collection.class_counts) === JSON.stringify(counts.map(String))
+  );
+}
+
+type Progress = { step: "sealing" | "launching" | "storing"; done: number; total: number };
+
+/** What a progress bar says for each step of a dataset launch. */
+const PROGRESS_LABELS = {
+  sealing: "Sealing pictures in this browser",
+  launching: "Launching the collection",
+  storing: "The keeper is storing the samples",
+} as const;
+
+const TEMPLATE_CHIP =
+  "rounded-full border border-glow/35 bg-glow/5 px-3 py-1 text-sm transition-colors hover:border-glow hover:bg-glow/12 aria-pressed:border-glow aria-pressed:bg-glow/15";
+
+/** Where the pictures will be sealed to, and the creator's go-ahead when that isn't a TEE. */
+function SealingNote({
+  privacy,
+  understood,
+  onUnderstood,
+  problem,
+}: {
+  privacy: KeeperPrivacy | null;
+  understood: boolean;
+  onUnderstood: (value: boolean) => void;
+  problem: string | null;
+}) {
+  if (privacy === null) {
+    return <p className="text-sm text-mist">Checking where the keeper runs…</p>;
+  }
+  if (privacy.kind === "tee") {
+    return (
+      <p className="flex items-start gap-2 text-sm text-glow">
+        <Icon name="shield" size={16} className="mt-0.5 shrink-0" />
+        <span>
+          Sealed to a key that exists only inside the keeper's TEE app
+          {privacy.appId ? ` (Phala app ${privacy.appId})` : ""}, checked in this browser against
+          its hardware quote.
+        </span>
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="flex items-start gap-2 text-sm text-lamp">
+        <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+        <span>
+          {privacy.kind === "local"
+            ? "This keeper runs in local mode, not in a sealed TEE app. The pictures are still encrypted on the way, but whoever runs the keeper could see them."
+            : `This browser couldn't confirm the keeper runs in a sealed TEE app: ${privacy.reason}.`}
+        </span>
+      </p>
+      <label className="flex items-start gap-2.5 text-sm text-mist">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={understood}
+          onChange={(event) => onUnderstood(event.target.checked)}
+        />
+        I understand this keeper isn't sealed, so whoever runs it could see the pictures.
+      </label>
+      {problem && (
+        <p className="text-sm text-alarm" role="alert">
+          {problem}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Where anyone launches their own collection of prompt-based NFTs. */
@@ -150,7 +260,7 @@ export function Launch() {
 
 function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const wallet = useWallet();
-  const { prices, keeper, config: app } = useServices();
+  const { prices, keeper, config: app, reader, session } = useServices();
   const navigate = useNavigate();
   const [config] = useAsync("launchpad", () => launchpad.getConfig());
   const [listing] = useAsync("collections", () => launchpad.collections());
@@ -178,6 +288,23 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [taken, setTaken] = useState(false);
+  /** A dataset's tokens hold labelled pictures instead of sharing a prompt. */
+  const [kind, setKind] = useState<"character" | "dataset">("character");
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  /** The creator accepts sealing to a keeper this browser can't confirm runs in a TEE. */
+  const [understood, setUnderstood] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [finished, setFinished] = useState<{ count: number; account: string } | null>(null);
+  const [attestation] = useAsync(kind === "dataset" ? "keeper-attestation" : null, () =>
+    keeper.attestation(),
+  );
+  const privacy =
+    attestation.status === "ready"
+      ? privacyOf(attestation.data)
+      : attestation.status === "error"
+        ? ({ kind: "unknown", reason: describeProblem(attestation.error) } as const)
+        : null;
+  const isDataset = kind === "dataset";
 
   const effectiveSlug = slugEdited ? slug : slugFrom(name);
   const account = effectiveSlug ? launchpad.accountFor(effectiveSlug) : null;
@@ -204,23 +331,40 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     name: name.trim() ? null : "Give the collection a name.",
     symbol: /^[A-Z0-9]{1,10}$/.test(symbol) ? null : "1 to 10 capital letters or digits.",
     slug: effectiveSlug ? slugProblem(effectiveSlug) : "Pick an address.",
-    prompt: prompt.trim()
-      ? prompt.length > MAX_PROMPT_CHARS
-        ? "Too long."
-        : null
-      : "Write the prompt every token shares.",
-    starter: starter.trim()
-      ? starter.length > MAX_STARTER_CHARS
-        ? "Too long."
-        : null
-      : "Say where each token starts.",
-    price: mintPrice === null ? "Enter an amount in NEAR, like 1 or 0.5." : null,
+    prompt: isDataset
+      ? null
+      : prompt.trim()
+        ? prompt.length > MAX_PROMPT_CHARS
+          ? "Too long."
+          : null
+        : "Write the prompt every token shares.",
+    starter: isDataset
+      ? null
+      : starter.trim()
+        ? starter.length > MAX_STARTER_CHARS
+          ? "Too long."
+          : null
+        : "Say where each token starts.",
+    price: !isDataset && mintPrice === null ? "Enter an amount in NEAR, like 1 or 0.5." : null,
     supply:
-      maxSupply === null || (Number.isInteger(maxSupply) && maxSupply > 0)
+      isDataset || maxSupply === null || (Number.isInteger(maxSupply) && maxSupply > 0)
         ? null
         : "A whole number, or leave it empty for no limit.",
+    dataset: isDataset
+      ? dataset
+        ? datasetProblem(
+            dataset.classes,
+            dataset.samples.map((s) => s.label),
+          )
+        : "Drop a folder of pictures, one folder per class."
+      : null,
+    // Without a TEE, whoever runs the keeper could see the pictures: the creator must say it's fine.
+    unsealed:
+      isDataset && !private_ && privacy?.kind !== "tee" && !understood
+        ? "Confirm that this keeper may see the pictures."
+        : null,
     appId: private_ ? appIdProblem(appId) : null,
-    secret: secret.length > MAX_PROMPT_CHARS ? "Too long." : null,
+    secret: !isDataset && secret.length > MAX_PROMPT_CHARS ? "Too long." : null,
     royalty: royaltyBps === null ? "A percentage from 0 to 25." : null,
     share: shareBps === null ? "A percentage from 0 to 50." : null,
     chatPrice:
@@ -234,14 +378,111 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     imageExtension:
       ownImages && !/^[A-Za-z0-9]{1,8}$/.test(imageExtension) ? "Like png, jpg or webp." : null,
   };
-  const valid = Object.values(problems).every((p) => p === null) && !taken;
+  // A dataset that is already launched can be finished: its samples are sealed again.
+  const valid = Object.values(problems).every((p) => p === null) && (!taken || isDataset);
   const [touched, setTouched] = useState(false);
   const show = (p: string | null) => (touched ? p : null);
 
+  const sampleCount = isDataset ? (dataset?.samples.length ?? 0) : 0;
+  const sampleStorage = SAMPLE_STORAGE_DEPOSIT * BigInt(sampleCount);
   const cost =
     config.status === "ready"
-      ? BigInt(config.data.launch_fee) + BigInt(config.data.collection_funding)
+      ? BigInt(config.data.launch_fee) + BigInt(config.data.collection_funding) + sampleStorage
       : null;
+
+  /**
+   * Seals every picture in this browser, launches with one wallet
+   * confirmation, then hands the sealed samples to the keeper in batches.
+   * A dataset already launched to this address by this creator is not
+   * launched again: only the samples it is missing are stored.
+   */
+  async function launchDataset(chosen: Dataset, deposit: bigint) {
+    if (!wallet.near || !session) {
+      throw new Error("Connect your wallet first.");
+    }
+    const account = launchpad.accountFor(effectiveSlug);
+    const counts = chosen.classes.map((c) => chosen.samples.filter((s) => s.label === c).length);
+    const report = await keeper.attestation();
+    const sealKey = private_
+      ? sealKeyForApp(report, appId, "Samples")
+      : typeof report.seal_public_key === "string"
+        ? report.seal_public_key
+        : null;
+    if (!sealKey) {
+      throw new Error("This keeper has no sealing key, so the pictures can't be sealed to it.");
+    }
+    if (!private_ && privacyOf(report).kind !== "tee" && !understood) {
+      throw new Error("Confirm that this keeper may see the pictures.");
+    }
+
+    const total = chosen.samples.length;
+    const sealed: string[] = [];
+    for (const sample of chosen.samples) {
+      setProgress({ step: "sealing", done: sealed.length, total });
+      sealed.push(await sealSample(sealKey, sample.label, sample.jpeg));
+    }
+
+    // Signing in first, so the wallet's one transaction is the last thing it is asked for.
+    await session.call(async () => undefined);
+    setProgress({ step: "launching", done: 0, total: 1 });
+    if (await launchpad.isTaken(effectiveSlug)) {
+      const existing = new KatContract(reader, account);
+      const [collection, contractConfig] = await Promise.all([
+        existing.getCollection(),
+        existing.getConfig(),
+      ]);
+      if (
+        contractConfig.admin_id !== wallet.accountId ||
+        !sameDataset(collection, chosen.classes, counts)
+      ) {
+        throw new Error("That address is taken.");
+      }
+    } else {
+      await new Launchpad(wallet.near, launchpad.id).launch(
+        {
+          slug: effectiveSlug,
+          name: name.trim(),
+          symbol,
+          mintPrice: 0n,
+          prompt: "",
+          starter: "",
+          maxSupply: null,
+          phalaAppId: private_ ? appId : null,
+          keeperId: private_ && keeperId.trim() ? keeperId.trim() : null,
+          images: ownImages
+            ? { baseUri: imageBase, extension: imageExtension }
+            : { baseUri: `${app.keeperUrl}/art/${account}/`, extension: "svg" },
+          terms: {
+            royaltyBps: royaltyBps ?? 0,
+            creatorShareBps: 0,
+            chatPrice: null,
+            savePrice: null,
+          },
+          sealedPrompt: null,
+          historyImport: false,
+          dataset: { classes: chosen.classes, classCounts: counts },
+        },
+        deposit,
+      );
+      if (!(await launchpad.isTaken(effectiveSlug))) {
+        throw new Error("The launch did not go through. Your deposit was refunded.");
+      }
+    }
+
+    let stored = 0;
+    setProgress({ step: "storing", done: 0, total });
+    for (let start = 0; start < total; start += SAMPLES_PER_CALL) {
+      const batch = sealed
+        .slice(start, start + SAMPLES_PER_CALL)
+        .map((text, i) => ({ token_id: String(start + i + 1), sealed: text }));
+      const result = await untilFound(() =>
+        session.call((token) => keeper.sealSamples(token, account, batch)),
+      );
+      stored += result.sealed.length + result.skipped.length;
+      setProgress({ step: "storing", done: stored, total });
+    }
+    setFinished({ count: stored, account });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -251,6 +492,18 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     }
     setBusy(true);
     setProblem(null);
+    setFinished(null);
+    if (isDataset && dataset) {
+      try {
+        await launchDataset(dataset, cost);
+      } catch (error) {
+        setProblem(describeProblem(error));
+      } finally {
+        setProgress(null);
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const sealedPrompt =
         private_ && secret.trim() ? await sealForApp(keeper, appId, secret) : null;
@@ -280,6 +533,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           },
           sealedPrompt,
           historyImport,
+          dataset: null,
         },
         cost,
       );
@@ -340,7 +594,13 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
               id="slug"
               label="Address"
               hint="The collection gets its own NEAR account. This can't be changed later."
-              problem={taken ? "That address is taken." : show(problems.slug)}
+              problem={
+                taken
+                  ? isDataset
+                    ? "That address is taken. If it's your dataset, launching again stores only the samples it is missing."
+                    : "That address is taken."
+                  : show(problems.slug)
+              }
             >
               <div className="flex items-center gap-2">
                 <input
@@ -359,164 +619,228 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           </Step>
 
           <Step n={2} title="What every token is">
-            <Field
-              id="prompt"
-              label="Prompt"
-              hint="What every token is. Any kind of prompt works. {name} and {token_id} are filled in for each token. Everyone can read it before minting."
-              problem={show(problems.prompt)}
-            >
-              <div className="mb-2 flex flex-wrap gap-2">
-                <span className="self-center text-sm text-mist">Start from:</span>
-                {PROMPT_TEMPLATES.map((template) => (
-                  <button
-                    key={template.label}
-                    type="button"
-                    className="rounded-full border border-glow/35 bg-glow/5 px-3 py-1 text-sm transition-colors hover:border-glow hover:bg-glow/12"
-                    onClick={() => {
-                      setPrompt(template.prompt);
-                      setStarter(template.starter);
-                      setHistoryImport("historyImport" in template && template.historyImport);
-                    }}
-                  >
-                    {template.label}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                id="prompt"
-                className="field min-h-36"
-                value={prompt}
-                aria-describedby="prompt-hint"
-                onChange={(e) => setPrompt(e.target.value)}
-              />
-              <Counter text={prompt} max={MAX_PROMPT_CHARS} />
-            </Field>
+            <div className="flex flex-wrap gap-2">
+              <span className="self-center text-sm text-mist">Start from:</span>
+              {PROMPT_TEMPLATES.map((template) => (
+                <button
+                  key={template.label}
+                  type="button"
+                  className={TEMPLATE_CHIP}
+                  aria-pressed={!isDataset && prompt === template.prompt}
+                  onClick={() => {
+                    setKind("character");
+                    setPrompt(template.prompt);
+                    setStarter(template.starter);
+                    setHistoryImport("historyImport" in template && template.historyImport);
+                  }}
+                >
+                  {template.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={TEMPLATE_CHIP}
+                aria-pressed={isDataset}
+                onClick={() => {
+                  setKind("dataset");
+                  setHistoryImport(false);
+                }}
+              >
+                Dataset
+              </button>
+            </div>
+            {isDataset ? (
+              <>
+                <div>
+                  <p className="label">Pictures</p>
+                  <p className="hint mt-1">
+                    Every token holds one labelled picture for training models. They are all minted
+                    to you at launch, and can be lent to training apps.
+                  </p>
+                  <div className="mt-3">
+                    <DatasetDrop onChange={setDataset} disabled={busy} />
+                  </div>
+                  {show(problems.dataset) && (
+                    <p className="mt-2 text-sm text-alarm" role="alert">
+                      {problems.dataset}
+                    </p>
+                  )}
+                </div>
+                {!private_ && (
+                  <SealingNote
+                    privacy={privacy}
+                    understood={understood}
+                    onUnderstood={setUnderstood}
+                    problem={show(problems.unsealed)}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <Field
+                  id="prompt"
+                  label="Prompt"
+                  hint="What every token is. Any kind of prompt works. {name} and {token_id} are filled in for each token. Everyone can read it before minting."
+                  problem={show(problems.prompt)}
+                >
+                  <textarea
+                    id="prompt"
+                    className="field min-h-36"
+                    value={prompt}
+                    aria-describedby="prompt-hint"
+                    onChange={(e) => setPrompt(e.target.value)}
+                  />
+                  <Counter text={prompt} max={MAX_PROMPT_CHARS} />
+                </Field>
 
-            <Field
-              id="starter"
-              label="Where each token starts"
-              hint="Its first memory of itself. After that it changes only through conversations with its owner. Nobody can write it, you included."
-              problem={show(problems.starter)}
-            >
-              <textarea
-                id="starter"
-                className="field min-h-24"
-                value={starter}
-                aria-describedby="starter-hint"
-                onChange={(e) => setStarter(e.target.value)}
-              />
-              <Counter text={starter} max={MAX_STARTER_CHARS} />
-            </Field>
-            <label className="option">
-              <input
-                type="checkbox"
-                checked={historyImport}
-                onChange={(e) => setHistoryImport(e.target.checked)}
-              />
-              <span>
-                Owners can teach their token their ChatGPT or Claude history
-                <span className="block text-sm text-mist">
-                  The export is opened and trimmed in the owner's browser and sealed to the keeper;
-                  the token keeps only what it learns. Good for companions and recommenders; leave
-                  it off for tokens that should grow only by being talked to. Fixed at launch.
-                </span>
-              </span>
-            </label>
+                <Field
+                  id="starter"
+                  label="Where each token starts"
+                  hint="Its first memory of itself. After that it changes only through conversations with its owner. Nobody can write it, you included."
+                  problem={show(problems.starter)}
+                >
+                  <textarea
+                    id="starter"
+                    className="field min-h-24"
+                    value={starter}
+                    aria-describedby="starter-hint"
+                    onChange={(e) => setStarter(e.target.value)}
+                  />
+                  <Counter text={starter} max={MAX_STARTER_CHARS} />
+                </Field>
+                <label className="option">
+                  <input
+                    type="checkbox"
+                    checked={historyImport}
+                    onChange={(e) => setHistoryImport(e.target.checked)}
+                  />
+                  <span>
+                    Owners can teach their token their ChatGPT or Claude history
+                    <span className="block text-sm text-mist">
+                      The export is opened and trimmed in the owner's browser and sealed to the
+                      keeper; the token keeps only what it learns. Good for companions and
+                      recommenders; leave it off for tokens that should grow only by being talked
+                      to. Fixed at launch.
+                    </span>
+                  </span>
+                </label>
+              </>
+            )}
           </Step>
 
           <Step n={3} title="Price and earnings">
-            <div className="grid gap-6 sm:grid-cols-2">
-              <Field id="price" label="Mint price (NEAR)" problem={show(problems.price)}>
+            {isDataset ? (
+              <Field
+                id="royalty"
+                label="Royalty on resales (%)"
+                hint="Every sample is minted to you at launch. Paid to you by marketplaces that honour NEAR royalties (NEP-199) when one is sold on. Up to 25%."
+                problem={show(problems.royalty)}
+              >
                 <input
-                  id="price"
-                  className="field"
-                  inputMode="decimal"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                />
-              </Field>
-              <Field id="supply" label="Supply" problem={show(problems.supply)}>
-                <input
-                  id="supply"
-                  className="field"
-                  inputMode="numeric"
-                  placeholder="No limit"
-                  value={supply}
-                  onChange={(e) => setSupply(e.target.value)}
-                />
-              </Field>
-            </div>
-
-            <div className="divider" />
-            <fieldset>
-              <legend className="eyebrow mb-4">What you earn</legend>
-              <div className="grid gap-6 sm:grid-cols-2">
-                <Field
                   id="royalty"
-                  label="Royalty on resales (%)"
-                  hint="Paid to you by marketplaces that honour NEAR royalties (NEP-199). Up to 25%."
-                  problem={show(problems.royalty)}
-                >
-                  <input
-                    id="royalty"
-                    className="field"
-                    inputMode="decimal"
-                    value={royalty}
-                    aria-describedby="royalty-hint"
-                    onChange={(e) => setRoyalty(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  id="share"
-                  label="Your share of conversations (%)"
-                  hint="Taken from every message and memory save. Up to 50%; raises the price owners pay."
-                  problem={show(problems.share)}
-                >
-                  <input
-                    id="share"
-                    className="field"
-                    inputMode="decimal"
-                    value={share}
-                    aria-describedby="share-hint"
-                    onChange={(e) => setShare(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  id="chat-price"
-                  label="Price per message (NEAR)"
-                  hint={`Optional. Empty means the keeper's price, ${formatNear(prices.chat, 6)} NEAR, plus your share.`}
-                  problem={show(problems.chatPrice)}
-                >
-                  <input
-                    id="chat-price"
-                    className="field"
-                    inputMode="decimal"
-                    value={chatPrice}
-                    aria-describedby="chat-price-hint"
-                    onChange={(e) => setChatPrice(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  id="save-price"
-                  label="Price per memory save (NEAR)"
-                  hint={`Optional. Empty means the keeper's price, ${formatNear(prices.save, 6)} NEAR, plus your share.`}
-                  problem={show(problems.savePrice)}
-                >
-                  <input
-                    id="save-price"
-                    className="field"
-                    inputMode="decimal"
-                    value={savePrice}
-                    aria-describedby="save-price-hint"
-                    onChange={(e) => setSavePrice(e.target.value)}
-                  />
-                </Field>
-              </div>
-              <p className="hint mt-4">
-                A keeper only serves a collection whose prices still cover its own after your share.
-                These are fixed at launch.
-              </p>
-            </fieldset>
+                  className="field max-w-40"
+                  inputMode="decimal"
+                  value={royalty}
+                  aria-describedby="royalty-hint"
+                  onChange={(e) => setRoyalty(e.target.value)}
+                />
+              </Field>
+            ) : (
+              <>
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <Field id="price" label="Mint price (NEAR)" problem={show(problems.price)}>
+                    <input
+                      id="price"
+                      className="field"
+                      inputMode="decimal"
+                      value={price}
+                      onChange={(e) => setPrice(e.target.value)}
+                    />
+                  </Field>
+                  <Field id="supply" label="Supply" problem={show(problems.supply)}>
+                    <input
+                      id="supply"
+                      className="field"
+                      inputMode="numeric"
+                      placeholder="No limit"
+                      value={supply}
+                      onChange={(e) => setSupply(e.target.value)}
+                    />
+                  </Field>
+                </div>
+
+                <div className="divider" />
+                <fieldset>
+                  <legend className="eyebrow mb-4">What you earn</legend>
+                  <div className="grid gap-6 sm:grid-cols-2">
+                    <Field
+                      id="royalty"
+                      label="Royalty on resales (%)"
+                      hint="Paid to you by marketplaces that honour NEAR royalties (NEP-199). Up to 25%."
+                      problem={show(problems.royalty)}
+                    >
+                      <input
+                        id="royalty"
+                        className="field"
+                        inputMode="decimal"
+                        value={royalty}
+                        aria-describedby="royalty-hint"
+                        onChange={(e) => setRoyalty(e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      id="share"
+                      label="Your share of conversations (%)"
+                      hint="Taken from every message and memory save. Up to 50%; raises the price owners pay."
+                      problem={show(problems.share)}
+                    >
+                      <input
+                        id="share"
+                        className="field"
+                        inputMode="decimal"
+                        value={share}
+                        aria-describedby="share-hint"
+                        onChange={(e) => setShare(e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      id="chat-price"
+                      label="Price per message (NEAR)"
+                      hint={`Optional. Empty means the keeper's price, ${formatNear(prices.chat, 6)} NEAR, plus your share.`}
+                      problem={show(problems.chatPrice)}
+                    >
+                      <input
+                        id="chat-price"
+                        className="field"
+                        inputMode="decimal"
+                        value={chatPrice}
+                        aria-describedby="chat-price-hint"
+                        onChange={(e) => setChatPrice(e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      id="save-price"
+                      label="Price per memory save (NEAR)"
+                      hint={`Optional. Empty means the keeper's price, ${formatNear(prices.save, 6)} NEAR, plus your share.`}
+                      problem={show(problems.savePrice)}
+                    >
+                      <input
+                        id="save-price"
+                        className="field"
+                        inputMode="decimal"
+                        value={savePrice}
+                        aria-describedby="save-price-hint"
+                        onChange={(e) => setSavePrice(e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                  <p className="hint mt-4">
+                    A keeper only serves a collection whose prices still cover its own after your
+                    share. These are fixed at launch.
+                  </p>
+                </fieldset>
+              </>
+            )}
           </Step>
 
           <Step n={4} title="Token images" group>
@@ -629,20 +953,22 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                     onChange={(e) => setAppId(e.target.value.trim().toLowerCase())}
                   />
                 </Field>
-                <Field
-                  id="secret"
-                  label="Secret instructions (optional)"
-                  hint="Added after the prompt, for the model only. They're sealed in this browser to a key that exists only inside the Phala app; buyers, owners and the keeper's operator never see them."
-                  problem={show(problems.secret)}
-                >
-                  <textarea
+                {!isDataset && (
+                  <Field
                     id="secret"
-                    className="field min-h-24"
-                    value={secret}
-                    aria-describedby="secret-hint"
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </Field>
+                    label="Secret instructions (optional)"
+                    hint="Added after the prompt, for the model only. They're sealed in this browser to a key that exists only inside the Phala app; buyers, owners and the keeper's operator never see them."
+                    problem={show(problems.secret)}
+                  >
+                    <textarea
+                      id="secret"
+                      className="field min-h-24"
+                      value={secret}
+                      aria-describedby="secret-hint"
+                      onChange={(e) => setSecret(e.target.value)}
+                    />
+                  </Field>
+                )}
                 <Field
                   id="keeper-id"
                   label="Keeper account (optional)"
@@ -671,6 +997,14 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                   <dt className="text-mist">The collection's own storage</dt>
                   <dd>{formatNear(config.data.collection_funding)} NEAR</dd>
                 </div>
+                {isDataset && (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-mist">
+                      Storage for {sampleCount} sample{sampleCount === 1 ? "" : "s"}
+                    </dt>
+                    <dd>{formatNear(sampleStorage)} NEAR</dd>
+                  </div>
+                )}
                 <div className="flex items-baseline justify-between gap-4 border-t border-[var(--card-line)] pt-3">
                   <dt className="text-mist">You pay</dt>
                   <dd className="font-display text-2xl tracking-tight">
@@ -686,8 +1020,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
               </p>
             )}
             <p className="mt-3 text-sm text-mist">
-              Mint revenue goes to you. Owners pay for their tokens' conversations from each token's
-              own balance ({formatNear(prices.chat, 6)} NEAR a message here).
+              {isDataset
+                ? "One wallet confirmation launches the collection. The keeper then stores each sealed sample and records it on-chain; you sign nothing more."
+                : `Mint revenue goes to you. Owners pay for their tokens' conversations from each token's own balance (${formatNear(prices.chat, 6)} NEAR a message here).`}
             </p>
             {wallet.near ? (
               <button
@@ -709,6 +1044,38 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
               >
                 Connect wallet to launch
               </button>
+            )}
+            {progress && (
+              <div className="mt-4">
+                <label htmlFor="launch-progress" className="flex justify-between text-sm text-mist">
+                  <span>{PROGRESS_LABELS[progress.step]}</span>
+                  {progress.step !== "launching" && (
+                    <span className="font-mono">
+                      {progress.done} / {progress.total}
+                    </span>
+                  )}
+                </label>
+                <progress
+                  id="launch-progress"
+                  className="mt-2 h-2 w-full accent-[var(--accent)]"
+                  max={progress.total}
+                  value={progress.step === "launching" ? undefined : progress.done}
+                />
+              </div>
+            )}
+            {finished && (
+              <p
+                className="mt-4 flex items-start gap-2 rounded-xl border border-glow/30 bg-glow/10 px-3 py-2 text-sm text-glow"
+                role="status"
+              >
+                <Icon name="check" size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  {finished.count} samples sealed.{" "}
+                  <Link to={`/c/${finished.account}`} className="link">
+                    Open the collection
+                  </Link>
+                </span>
+              </p>
             )}
             {touched && !valid && !problem && (
               <p className="mt-3 text-sm text-alarm" role="alert">
@@ -741,18 +1108,31 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           <p className="mt-2 text-sm text-mist">
             Each token's art comes from its number and grows as it saves conversations.
           </p>
-          <h3 className="eyebrow mt-6">What token #1 is told</h3>
-          <blockquote className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
-            {sample}
-            {starter && (
-              <>
-                {"\n\n"}
-                <span className="text-mist">This is who you are now:</span>
-                {"\n\n"}
-                {starter}
-              </>
-            )}
-          </blockquote>
+          {isDataset ? (
+            <>
+              <h3 className="eyebrow mt-6">What each token holds</h3>
+              <p className="mt-2 text-sm leading-relaxed text-mist">
+                One picture and its label, sealed in this browser to the keeper's key and stored
+                under a key of its own. Token #1 is the first picture of the first class, and so on
+                through the classes in order.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="eyebrow mt-6">What token #1 is told</h3>
+              <blockquote className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
+                {sample}
+                {starter && (
+                  <>
+                    {"\n\n"}
+                    <span className="text-mist">This is who you are now:</span>
+                    {"\n\n"}
+                    {starter}
+                  </>
+                )}
+              </blockquote>
+            </>
+          )}
           {account && (
             <p className="mt-4 text-sm text-mist">
               Address <span className="break-all font-mono text-cream">{account}</span>

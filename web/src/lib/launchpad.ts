@@ -29,7 +29,14 @@ export interface CollectionView {
   wallet_code_hash?: string | null;
   /** Whether owners may teach their token from their chat history. Absent on older contracts. */
   history_import?: boolean;
+  /** Characters, or the samples of a dataset. Absent on older contracts. */
+  kind?: CollectionKind;
+  /** For a dataset: samples per class, in class order. */
+  class_counts?: string[];
 }
+
+/** What a collection's tokens are. */
+export type CollectionKind = "Character" | { Dataset: { classes: string[] } };
 
 /** NEAR's MPC network, which derives a collection's context key for its account alone. */
 export interface KeySource {
@@ -94,7 +101,15 @@ export interface LaunchRequest {
   sealedPrompt: SealedPrompt | null;
   /** Whether owners may teach their token from their ChatGPT or Claude history. */
   historyImport: boolean;
+  /** A dataset: every sample is minted to the creator at launch. Null for characters. */
+  dataset: { classes: string[]; classCounts: number[] } | null;
 }
+
+/**
+ * What each dataset sample adds to the launch deposit: the collection's
+ * storage for the sample's token and its sealed record, in yoctoNEAR (0.006 NEAR).
+ */
+export const SAMPLE_STORAGE_DEPOSIT = 6_000_000_000_000_000_000_000n;
 
 export const MAX_PROMPT_CHARS = 4000;
 export const MAX_STARTER_CHARS = 2000;
@@ -170,6 +185,14 @@ export const PROMPT_TEMPLATES = [
   },
 ] as const;
 
+function datasetArgs({ classes, classCounts }: { classes: string[]; classCounts: number[] }) {
+  return {
+    kind: { Dataset: { classes } },
+    class_counts: classCounts.map(String),
+    initial_supply: String(classCounts.reduce((sum, count) => sum + count, 0)),
+  };
+}
+
 export class Launchpad {
   readonly #near: Near;
   readonly #id: string;
@@ -236,11 +259,13 @@ export class Launchpad {
             },
             ...(request.sealedPrompt ? { sealed_prompt: request.sealedPrompt } : {}),
             history_import: request.historyImport,
+            ...(request.dataset ? datasetArgs(request.dataset) : {}),
           },
           keeper_id: request.keeperId,
         },
       },
-      { gas: "150 Tgas", attachedDeposit: `${deposit} yocto` },
+      // A dataset mints its samples while it is set up, which takes more gas.
+      { gas: request.dataset ? "300 Tgas" : "150 Tgas", attachedDeposit: `${deposit} yocto` },
     );
   }
 

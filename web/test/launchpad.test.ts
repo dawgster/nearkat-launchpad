@@ -58,6 +58,7 @@ test("launches with the arguments the factory expects", async () => {
       },
       sealedPrompt: { ciphertext: "c2VhbGVk", sealed_to: "ab".repeat(32) },
       historyImport: true,
+      dataset: null,
     },
     3n * 10n ** 24n,
   );
@@ -91,6 +92,45 @@ test("launches with the arguments the factory expects", async () => {
     },
     { gas: "150 Tgas", attachedDeposit: "3000000000000000000000000 yocto" },
   );
+});
+
+test("launches a dataset that mints its samples, with room to do it", async () => {
+  const call = vi.fn(async () => ({}));
+  const near = { call } as unknown as ConstructorParameters<typeof Launchpad>[0];
+  await new Launchpad(near, "launch.testnet").launch(
+    {
+      slug: "hotdogs",
+      name: "Hotdogs",
+      symbol: "HOT",
+      mintPrice: 0n,
+      prompt: "",
+      starter: "",
+      maxSupply: null,
+      phalaAppId: null,
+      keeperId: null,
+      images: { baseUri: "", extension: "svg" },
+      terms: { royaltyBps: 0, creatorShareBps: 0, chatPrice: null, savePrice: null },
+      sealedPrompt: null,
+      historyImport: false,
+      dataset: { classes: ["hotdog", "not_hotdog"], classCounts: [3, 4] },
+    },
+    2n * 10n ** 24n,
+  );
+  const [, , { args }, options] = call.mock.calls[0] as unknown as [
+    string,
+    string,
+    { args: { collection: Record<string, unknown> } },
+    unknown,
+  ];
+  expect(args.collection).toMatchObject({
+    prompt: "",
+    starter: "",
+    max_supply: null,
+    kind: { Dataset: { classes: ["hotdog", "not_hotdog"] } },
+    class_counts: ["3", "4"],
+    initial_supply: "7",
+  });
+  expect(options).toEqual({ gas: "300 Tgas", attachedDeposit: "2000000000000000000000000 yocto" });
 });
 
 test("prices a collection as the keeper does", () => {

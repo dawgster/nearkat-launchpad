@@ -88,7 +88,11 @@ export interface KeeperInfo {
 /** What a keeper serves, and why it isn't serving the others it has seen. */
 export interface KeeperCollections {
   home?: string;
-  served?: Array<{ contract_id: string; name: string }>;
+  served?: Array<{
+    contract_id: string;
+    name: string;
+    kind?: "Character" | { Dataset: { classes: string[] } };
+  }>;
   waiting?: Array<{ contract_id: string; reason: string }>;
 }
 
@@ -110,6 +114,16 @@ export interface Keeper {
     sealed: string,
     collection?: string,
   ): Promise<ImportResult>;
+  /**
+   * Hands a dataset's samples, sealed to the keeper's key in the creator's
+   * browser, to the keeper to store. At most 25 at a time. Samples already
+   * stored come back as skipped.
+   */
+  sealSamples(
+    token: string,
+    collection: string,
+    samples: Array<{ token_id: string; sealed: string }>,
+  ): Promise<{ sealed: string[]; skipped: string[] }>;
 }
 
 /** What the keeper did with an imported history. `balance` is yoctoNEAR. */
@@ -171,5 +185,10 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
       request("GET", `${kat(tokenId, collection)}/export`, { token }),
     importHistory: (token, tokenId, sealed, collection) =>
       request("POST", `${kat(tokenId, collection)}/import`, { token, body: { sealed } }),
+    sealSamples: (token, collection, samples) =>
+      request("POST", `/c/${encodeURIComponent(collection)}/samples`, {
+        token,
+        body: { samples },
+      }),
   };
 }

@@ -3,13 +3,8 @@ import { formatNear } from "../lib/format.ts";
 import { type History, readExport, type Selection, selectForImport } from "../lib/history.ts";
 import type { ImportResult } from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
+import type { KeeperPrivacy } from "../lib/tdx.ts";
 import { Icon } from "./Icon.tsx";
-
-/** Where the keeper that will read the history runs, as far as this browser can tell. */
-export type KeeperPrivacy =
-  | { kind: "tee"; appId: string | null }
-  | { kind: "local" }
-  | { kind: "unknown"; reason: string };
 
 export interface ImportPanelProps {
   name: string;
