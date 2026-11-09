@@ -9,12 +9,13 @@ import { Icon } from "../components/Icon.tsx";
 import { ImportPanel } from "../components/ImportPanel.tsx";
 import { LendPanel } from "../components/LendPanel.tsx";
 import { NaturePanel } from "../components/NaturePanel.tsx";
+import { SamplePanel } from "../components/SamplePanel.tsx";
 import { Savannah, type SavannahMood } from "../components/Savannah.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { type Panel, TokenLayout } from "../components/TokenLayout.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
-import type { KatContract } from "../lib/contract.ts";
+import type { KatContract, RunView } from "../lib/contract.ts";
 import { DAY_PHASE_TITLES, useDayGreetings, useDayPhase } from "../lib/dayPhase.ts";
 import { formatNear, shorten } from "../lib/format.ts";
 import { type ChatReply, KeeperError } from "../lib/keeper.ts";
@@ -638,7 +639,86 @@ function ExportPanel({ noun, download }: { noun: string; download: () => Promise
   );
 }
 
+/** A token's page: a character's conversation, or a dataset sample's rentals and runs. */
 export function Kat() {
+  const scope = useScope();
+  const [collection] = useAsync(`collection/${scope.contractId}`, () =>
+    scope.contract.getCollection(),
+  );
+  if (!scope.home && collection.status === "loading") {
+    return (
+      <Shell world="burrow">
+        <p className="pt-16 text-mist" role="status">
+          Reading the collection…
+        </p>
+      </Shell>
+    );
+  }
+  if (
+    collection.status === "ready" &&
+    typeof collection.data.kind === "object" &&
+    "Dataset" in collection.data.kind
+  ) {
+    return <SampleView />;
+  }
+  return <KatPage />;
+}
+
+/** A dataset sample: owner, rental, runs. The picture is never read or shown. */
+function SampleView() {
+  const { id = "" } = useParams();
+  const scope = useScope();
+  const { contract } = scope;
+  const [sample] = useAsync(`sample/${scope.contractId}/${id}`, () => contract.getSample(id));
+  const [loan] = useAsync(`sample-loan/${scope.contractId}/${id}`, () => contract.getLoan(id));
+  const [training] = useAsync(`sample-training/${scope.contractId}/${id}`, () =>
+    contract.getLoanTraining(id),
+  );
+  const [runs] = useAsync(`sample-runs/${scope.contractId}/${id}`, async () => {
+    const ids = await contract.getSampleRuns(id);
+    const views = await Promise.all(ids.map((run) => contract.getRun(run)));
+    return views.filter((run): run is RunView => run !== null);
+  });
+  const [apps] = useAsync(`training-apps/${scope.contractId}`, () => contract.trainingApps());
+  const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
+  const name = `${scope.name} #${id}`;
+  return (
+    <Shell world="burrow">
+      <div className="descend">
+        <Link
+          to={scope.backPath}
+          className="inline-flex items-center gap-1.5 text-sm text-mist transition-colors hover:text-cream"
+        >
+          <Icon name="arrowLeft" size={15} />
+          {scope.backLabel}
+        </Link>
+        {sample.status === "loading" && <p className="mt-10 text-mist">Reading the sample…</p>}
+        {sample.status === "error" && (
+          <p className="mt-10 text-alarm" role="alert">
+            Can't read this sample from the contract. {describeProblem(sample.error)}
+          </p>
+        )}
+        {sample.status === "ready" && !sample.data && (
+          <p className="mt-10 text-mist">There is no {name}.</p>
+        )}
+        {sample.status === "ready" && sample.data && (
+          <SamplePanel
+            name={name}
+            seed={`${scope.contractId}/${id}`}
+            owner={sample.data.owner_id}
+            loan={loan.status === "ready" ? loan.data : null}
+            training={training.status === "ready" ? training.data : null}
+            runs={runs.status === "ready" ? runs.data : []}
+            runCount={sample.data.runs}
+            labels={labels}
+          />
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+function KatPage() {
   const { id = "" } = useParams();
   const wallet = useWallet();
   const scope = useScope();

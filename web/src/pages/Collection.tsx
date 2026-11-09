@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Icon, type IconName } from "../components/Icon.tsx";
+import { ListSamplesPanel } from "../components/ListSamplesPanel.tsx";
 import { MintPanel } from "../components/MintPanel.tsx";
+import { RentPanel } from "../components/RentPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { PLAIN_STAGE_NAMES, STAGE_NAMES, stageOf } from "../lib/art.ts";
@@ -105,6 +107,7 @@ export function Collection() {
   }
   const c = collection.data;
   const s = settings.data;
+  const dataset = typeof c.kind === "object" && "Dataset" in c.kind ? c.kind.Dataset : null;
   const style = home ? "kat" : "sigil";
   const soldOut = c.max_supply !== null && BigInt(c.minted) >= BigInt(c.max_supply);
 
@@ -271,6 +274,15 @@ export function Collection() {
               Everything here is fixed at launch.
             </p>
           </section>
+          {dataset && (
+            <DatasetSection
+              contractId={contractId}
+              reader={reader}
+              classes={dataset.classes}
+              classCounts={c.class_counts}
+              accountId={wallet.accountId}
+            />
+          )}
           <KeeperPanel
             contractId={contractId}
             collection={c}
@@ -621,5 +633,101 @@ function Version({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * A dataset collection: what its creator says it holds, the training apps, and
+ * renting. Pictures never appear: samples are only ever opened by an app.
+ */
+function DatasetSection({
+  contractId,
+  reader,
+  classes,
+  classCounts,
+  accountId,
+}: {
+  contractId: string;
+  reader: KatContract;
+  classes: string[];
+  classCounts: string[] | undefined;
+  accountId: string | null;
+}) {
+  const wallet = useWallet();
+  const [apps] = useAsync(`training-apps/${contractId}`, () => reader.trainingApps());
+  const [offers, reloadOffers] = useAsync(`offers/${contractId}`, () => reader.sampleOffers());
+  const [mine, reloadMine] = useAsync(
+    accountId ? `my-samples/${contractId}/${accountId}` : null,
+    async () => {
+      const ids = await reader.katsOf(accountId as string);
+      const free = await Promise.all(
+        ids.map(async (id) => ((await reader.getLoan(id))?.status === "active" ? null : id)),
+      );
+      return free.filter((id): id is string => id !== null);
+    },
+  );
+  const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
+  const signer = wallet.near ? new KatContract(wallet.near, contractId) : null;
+  const rentable =
+    offers.status === "ready" ? offers.data.filter((offer) => offer.lender !== accountId) : [];
+
+  return (
+    <>
+      <section className="card" aria-labelledby="dataset">
+        <h2 id="dataset" className="card-title">
+          The dataset
+        </h2>
+        <p className="mt-2 text-xs text-mist">
+          Declared by the creator. Nothing on-chain checks the pictures match their class.
+        </p>
+        <ul className="mt-3 flex flex-wrap gap-2 text-sm">
+          {classes.map((name, i) => (
+            <li key={name} className="chip">
+              {name}
+              {classCounts?.[i] !== undefined && (
+                <span className="ml-1.5 text-mist">{classCounts[i]}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+        <h3 className="eyebrow mt-5">Training apps</h3>
+        {apps.status === "ready" && apps.data.length === 0 && (
+          <p className="mt-2 text-sm text-mist">No training app is registered yet.</p>
+        )}
+        {apps.status === "ready" && apps.data.length > 0 && (
+          <ul className="mt-2 space-y-1.5 text-sm">
+            {apps.data.map(([id, label]) => (
+              <li key={id} className="break-all">
+                {label || "(no label)"} <span className="font-mono text-xs text-mist">({id})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {signer && mine.status === "ready" && apps.status === "ready" && (
+        <ListSamplesPanel
+          available={mine.data}
+          apps={apps.data}
+          list={async (ids, terms) => {
+            const listed = await signer.lendMany(ids, terms);
+            void reloadOffers();
+            void reloadMine();
+            return listed;
+          }}
+        />
+      )}
+      {signer && offers.status === "ready" && (
+        <RentPanel
+          offers={rentable}
+          labels={labels}
+          borrow={async (ids, appId, total) => {
+            const byId = new Map(rentable.map((offer) => [offer.tokenId, offer.fee]));
+            const rented = await signer.borrowMany(ids, appId, total, (id) => byId.get(id) ?? 0n);
+            void reloadOffers();
+            return rented;
+          }}
+        />
+      )}
+    </>
   );
 }

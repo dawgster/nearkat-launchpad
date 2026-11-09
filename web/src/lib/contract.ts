@@ -60,6 +60,97 @@ export interface LoanTerms {
 /** Covers a loan record's storage; what isn't needed comes back. */
 export const LOAN_STORAGE_DEPOSIT = 10n ** 22n;
 
+/** What `lend_many` and `borrow_many` take at most per call. */
+export const MAX_SAMPLES_PER_CALL = 50;
+
+/** What an owner chooses when listing samples for rent to training apps. */
+export interface SampleTerms {
+  /** Null: until it is used. */
+  durationS: number | null;
+  /** yoctoNEAR per rental. */
+  fee: bigint;
+  /** Registered training app ids, 1 to 8. */
+  apps: string[];
+}
+
+/** A sample on offer to training apps. */
+export interface Offer {
+  tokenId: string;
+  fee: bigint;
+  lender: string;
+  apps: string[];
+}
+
+/** A sample's training record: who may use it, who did, and whether the one use is spent. */
+export interface LoanTraining {
+  apps: string[];
+  app_id: string | null;
+  spent: boolean;
+}
+
+export interface SampleView {
+  owner_id: string;
+  sample_hash: string | null;
+  sample_ref: string | null;
+  runs: number;
+}
+
+export interface RunView {
+  run_id: string;
+  app_id: string;
+  renter_id: string;
+  model_sha256: string;
+  accuracy_bps: number;
+  token_count: number;
+  recorded_at: string;
+}
+
+export interface AppKeyView {
+  app_id: string;
+  label: string;
+  seal_public_key: string;
+  attested_at: string;
+  trusted_by_admin: boolean;
+}
+
+/**
+ * Chooses `count` samples to rent for an app: cheapest first, but taking one
+ * from each lender in turn so that several holders get paid.
+ */
+export function pickRentable(offers: Offer[], appId: string, count: number): string[] {
+  const byLender = new Map<string, Offer[]>();
+  for (const offer of offers) {
+    if (offer.apps.includes(appId)) {
+      byLender.set(offer.lender, [...(byLender.get(offer.lender) ?? []), offer]);
+    }
+  }
+  const queues = [...byLender.values()].map((queue) =>
+    queue.sort((a, b) => (a.fee < b.fee ? -1 : a.fee > b.fee ? 1 : 0)),
+  );
+  const picked: string[] = [];
+  // Each round takes every lender's cheapest remaining offer, cheapest lender first.
+  while (picked.length < count && queues.some((queue) => queue.length > 0)) {
+    const round = queues
+      .map((queue) => queue.shift())
+      .filter((offer): offer is Offer => offer !== undefined)
+      .sort((a, b) => (a.fee < b.fee ? -1 : a.fee > b.fee ? 1 : 0));
+    for (const offer of round) {
+      if (picked.length < count) {
+        picked.push(offer.tokenId);
+      }
+    }
+  }
+  return picked;
+}
+
+const chunked = <T>(items: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+};
+
 /**
  * The value a contract method returned, taken from a transaction outcome.
  * Null when there is none or it cannot be read: wallets differ in what they
@@ -241,6 +332,133 @@ export class KatContract {
       { token_id: tokenId },
       { gas: "30 Tgas", attachedDeposit: yocto(fee > 0n ? fee : 1n), waitUntil: "FINAL" },
     );
+  }
+
+  /**
+   * Lists samples for rent to training apps, in transactions of at most 50.
+   * Returns how many were listed.
+   */
+  async lendMany(tokenIds: string[], terms: SampleTerms): Promise<number> {
+    let listed = 0;
+    for (const chunk of chunked(tokenIds, MAX_SAMPLES_PER_CALL)) {
+      const outcome = await this.#near.call(
+        this.#contractId,
+        "lend_many",
+        {
+          token_ids: chunk,
+          duration_s: terms.durationS === null ? null : String(terms.durationS),
+          fee: terms.fee.toString(),
+          apps: terms.apps,
+        },
+        {
+          gas: "300 Tgas",
+          attachedDeposit: yocto(LOAN_STORAGE_DEPOSIT * BigInt(chunk.length)),
+          waitUntil: "FINAL",
+        },
+      );
+      listed += returnValue<number>(outcome) ?? chunk.length;
+    }
+    return listed;
+  }
+
+  /**
+   * Rents samples for an app, in transactions of at most 50. `totalFee` covers
+   * them all; with `feeOf`, each transaction attaches just its own samples' fees.
+   * Anything over is refunded. Returns how many were rented.
+   */
+  async borrowMany(
+    tokenIds: string[],
+    appId: string,
+    totalFee: bigint,
+    feeOf?: (tokenId: string) => bigint,
+  ): Promise<number> {
+    const chunks = chunked(tokenIds, MAX_SAMPLES_PER_CALL);
+    let rented = 0;
+    for (const chunk of chunks) {
+      const fee =
+        feeOf && chunks.length > 1 ? chunk.reduce((sum, id) => sum + feeOf(id), 0n) : totalFee;
+      const outcome = await this.#near.call(
+        this.#contractId,
+        "borrow_many",
+        { token_ids: chunk, app_id: appId },
+        {
+          gas: "300 Tgas",
+          attachedDeposit: yocto(fee > 0n ? fee : 1n),
+          waitUntil: "FINAL",
+        },
+      );
+      rented += returnValue<number>(outcome) ?? chunk.length;
+    }
+    return rented;
+  }
+
+  async getLoanTraining(tokenId: string): Promise<LoanTraining | null> {
+    return (
+      (await this.#view<LoanTraining | null>("get_loan_training", { token_id: tokenId })) ?? null
+    );
+  }
+
+  async getSample(tokenId: string): Promise<SampleView | null> {
+    return (await this.#view<SampleView | null>("get_sample", { token_id: tokenId })) ?? null;
+  }
+
+  async getSampleRuns(tokenId: string): Promise<string[]> {
+    return (await this.#view<string[]>("get_sample_runs", { token_id: tokenId })) ?? [];
+  }
+
+  async getRun(runId: string): Promise<RunView | null> {
+    return (await this.#view<RunView | null>("get_run", { run_id: runId })) ?? null;
+  }
+
+  /** `[app_id, label]` for every registered training app. Labels are the apps' own words. */
+  async trainingApps(): Promise<Array<[string, string]>> {
+    return (await this.#view<Array<[string, string]>>("training_apps", {})) ?? [];
+  }
+
+  async getAppKey(publicKey: string): Promise<AppKeyView | null> {
+    return (await this.#view<AppKeyView | null>("get_app_key", { public_key: publicKey })) ?? null;
+  }
+
+  /**
+   * The samples of a dataset (the first `max`, in pages) with their owners, and
+   * those of them on offer to training apps.
+   */
+  async sampleOffers(max = 200): Promise<Offer[]> {
+    const tokens: Array<{ token_id: string; owner_id: string }> = [];
+    while (tokens.length < max) {
+      const page =
+        (await this.#view<Array<{ token_id: string; owner_id: string }>>("nft_tokens", {
+          from_index: String(tokens.length),
+          limit: Math.min(100, max - tokens.length),
+        })) ?? [];
+      tokens.push(...page);
+      if (page.length < 100) {
+        break;
+      }
+    }
+    const offers: Offer[] = [];
+    for (const batch of chunked(tokens, 25)) {
+      const found = await Promise.all(
+        batch.map(async (token): Promise<Offer | null> => {
+          const loan = await this.getLoan(token.token_id);
+          if (loan?.status !== "offered" || loan.lender_id !== token.owner_id) {
+            return null;
+          }
+          const training = await this.getLoanTraining(token.token_id);
+          if (!training || training.apps.length === 0) {
+            return null;
+          }
+          return {
+            tokenId: token.token_id,
+            fee: BigInt(loan.fee),
+            lender: token.owner_id,
+            apps: training.apps,
+          };
+        }),
+      );
+      offers.push(...found.filter((offer): offer is Offer => offer !== null));
+    }
+    return offers;
   }
 
   /** Ends a loan: the borrower giving it back, or the owner withdrawing or ending it. */
