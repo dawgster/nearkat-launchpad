@@ -222,6 +222,19 @@ describe("Runs", () => {
     expect(chain.recordCalls).toBe(1);
   });
 
+  test("counts a chunk whose call landed despite a transport error", async () => {
+    const { chain, python, runs } = setup();
+    await chain.addRentedSample("1", "cat");
+    await chain.addRentedSample("2", "dog");
+    chain.landedButLost = 1;
+    const { id } = await runs.start(CONTRACT, RENTER, ["1", "2"]);
+    const state = await settle(runs, id);
+    expect(state).toMatchObject({ stage: "done", recordedTokens: 2 });
+    expect(state.partial).toBeUndefined();
+    expect(chain.recordCalls).toBe(1);
+    expect(runs.model(id, RENTER)).toEqual(python.model);
+  });
+
   test("hands out a copy of the model", async () => {
     const { chain, python, runs } = setup();
     await chain.addRentedSample("1", "cat");

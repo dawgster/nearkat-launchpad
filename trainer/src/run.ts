@@ -182,17 +182,39 @@ export class Runs {
     return Buffer.from(model);
   }
 
-  /** One `record_training` call, tried again once if the outcome is unknown. */
+  /**
+   * One `record_training` call. When the outcome is unknown, the chain is
+   * asked whether it landed, and only if it didn't is the call tried again,
+   * once; a refused or lost repeat is checked the same way.
+   */
   async #record(contract: string, run: TrainingRecord): Promise<void> {
     try {
       await this.#o.chain.recordTraining(contract, run);
+      return;
     } catch (error) {
       if (error instanceof ContractRefusal) {
         throw error;
       }
-      // A transport failure: the call may or may not have landed. A repeat
-      // that did land is refused as "already used", which is then reported.
+      if (await this.#landed(contract, run)) {
+        return;
+      }
+    }
+    try {
       await this.#o.chain.recordTraining(contract, run);
+    } catch (error) {
+      if (!(await this.#landed(contract, run))) {
+        throw error;
+      }
+    }
+  }
+
+  /** Whether every sample of this call is already in the run's record on-chain. */
+  async #landed(contract: string, run: TrainingRecord): Promise<boolean> {
+    try {
+      const recorded = new Set(await this.#o.chain.getRunTokens(contract, run.run_id));
+      return run.token_ids.every((id) => recorded.has(id));
+    } catch {
+      return false; // Can't tell: treated as not landed.
     }
   }
 

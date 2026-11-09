@@ -40,6 +40,8 @@ export interface TrainerChain {
   ): Promise<Array<{ big_y: string; big_c: string } | null>>;
   /** Records a run on at most 50 samples and spends their rentals. */
   recordTraining(contract: string, run: TrainingRecord): Promise<void>;
+  /** Every sample a run is recorded for, in the order recorded; empty if there is no such run. */
+  getRunTokens(contract: string, runId: string): Promise<string[]>;
   isAppKeyRegistered(contract: string, publicKey: string): Promise<boolean>;
   registerAppKey(contract: string, proof: KeyProof & { label: string }): Promise<void>;
   /** The MPC network's public key for a CKD domain. */
@@ -50,6 +52,9 @@ export interface TrainerChain {
 
 /** The contract refused a call; the message is its panic. */
 export class ContractRefusal extends Error {}
+
+/** The most tokens one `get_run_tokens` page returns. */
+const RUN_TOKENS_PAGE = 100;
 
 /** What each `record_training` call attaches for storage; the contract refunds the rest. */
 const RECORD_DEPOSIT = "0.1 NEAR";
@@ -144,6 +149,27 @@ export class NearTrainerChain implements TrainerChain {
       gas: "300 Tgas",
       attachedDeposit: RECORD_DEPOSIT,
     });
+  }
+
+  async getRunTokens(contract: string, runId: string): Promise<string[]> {
+    const run = await this.#view<{ token_count: number }>(contract, "get_run", { run_id: runId });
+    if (!run) {
+      return [];
+    }
+    const tokens: string[] = [];
+    while (tokens.length < run.token_count) {
+      const page =
+        (await this.#view<string[]>(contract, "get_run_tokens", {
+          run_id: runId,
+          from: tokens.length,
+          limit: RUN_TOKENS_PAGE,
+        })) ?? [];
+      if (page.length === 0) {
+        break;
+      }
+      tokens.push(...page);
+    }
+    return tokens;
   }
 
   async isAppKeyRegistered(contract: string, publicKey: string): Promise<boolean> {

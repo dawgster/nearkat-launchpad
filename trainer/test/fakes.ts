@@ -41,6 +41,8 @@ export class FakeTrainerChain implements TrainerChain {
   /** What each recordTraining call does in turn: throw the error, or succeed (null). */
   readonly recordScript: Array<Error | null> = [];
   recordCalls = 0;
+  /** This many calls land on-chain, then their reply is lost as a transport error. */
+  landedButLost = 0;
   readonly registered = new Set<string>();
   readonly #txs = new Map<string, Uint8Array[]>();
   readonly #store = new FastfsStore({
@@ -158,6 +160,14 @@ export class FakeTrainerChain implements TrainerChain {
       }
     }
     this.records.push(run);
+    if (this.landedButLost > 0) {
+      this.landedButLost -= 1;
+      throw new Error("fetch failed");
+    }
+  }
+
+  async getRunTokens(_contract: string, runId: string): Promise<string[]> {
+    return this.records.filter((r) => r.run_id === runId).flatMap((r) => r.token_ids);
   }
 
   async isAppKeyRegistered(_contract: string, publicKey: string) {
