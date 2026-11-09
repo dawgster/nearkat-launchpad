@@ -94,6 +94,8 @@ export interface RunsOptions {
   ensureRegistered(contract: string): Promise<void>;
   /** Sample keys asked for per call, 1 to 10. Defaults to 10. */
   keysPerCall?: number;
+  /** Epochs per run; undefined leaves train.py's default. */
+  epochs?: number;
   /** The clock, in ms; for tests. */
   now?: () => number;
 }
@@ -365,6 +367,7 @@ export class Runs {
         classes: checked.classes,
         heldoutDir: this.#o.heldoutDir,
         samples: samples(),
+        ...(this.#o.epochs !== undefined && { epochs: this.#o.epochs }),
         onProgress: (p) => {
           if (p.stage === "loaded") {
             state.stage = "training";

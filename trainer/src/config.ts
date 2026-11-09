@@ -19,6 +19,8 @@ export interface Config {
   fastfsGateway: string | null;
   /** Sample keys asked for per call to the collection, 1 to 10. 1 for the sandbox's mock MPC. */
   sampleKeysPerCall: number;
+  /** Epochs per run; undefined leaves train.py's default. */
+  epochs: number | undefined;
   port: number;
   authRecipient: string;
   /** Origins the web app is served from, for CORS. */
@@ -38,6 +40,18 @@ function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
   const value = Number(env.SAMPLE_KEYS_PER_CALL ?? "10");
   if (!Number.isInteger(value) || value < 1 || value > 10) {
     throw new Error("SAMPLE_KEYS_PER_CALL must be a whole number from 1 to 10");
+  }
+  return value;
+}
+
+/** Epochs per run, 1 to 1000; unset leaves train.py's default. */
+function epochs(env: NodeJS.ProcessEnv): number | undefined {
+  if (!env.TRAINER_EPOCHS) {
+    return undefined;
+  }
+  const value = Number(env.TRAINER_EPOCHS);
+  if (!Number.isInteger(value) || value < 1 || value > 1000) {
+    throw new Error("TRAINER_EPOCHS must be a whole number from 1 to 1000");
   }
   return value;
 }
@@ -87,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
           ? "https://{uploader}.fastfs.io"
           : null,
     sampleKeysPerCall: sampleKeysPerCall(env),
+    epochs: epochs(env),
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
     webOrigins: (env.WEB_ORIGINS ?? "http://localhost:3000")

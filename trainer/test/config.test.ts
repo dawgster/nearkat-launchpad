@@ -31,6 +31,15 @@ describe("loadConfig", () => {
     }
   });
 
+  test("leaves the epochs to train.py unless TRAINER_EPOCHS is set", () => {
+    const local = { ...base, TRAINER_ROOT_SECRET: SECRET };
+    expect(loadConfig(local).epochs).toBeUndefined();
+    expect(loadConfig({ ...local, TRAINER_EPOCHS: "3" }).epochs).toBe(3);
+    for (const bad of ["0", "1.5", "x", "1001"]) {
+      expect(() => loadConfig({ ...local, TRAINER_EPOCHS: bad }), bad).toThrow(/TRAINER_EPOCHS/);
+    }
+  });
+
   test("reads overrides", () => {
     const config = loadConfig({
       ...base,

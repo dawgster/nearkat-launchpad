@@ -71,6 +71,15 @@ def test_onnx_matches_the_input_contract(tmp_path):
     assert graph.output[0].type.tensor_type.shape.dim[-1].dim_value == 2
 
 
+def test_onnx_is_one_self_contained_file(tmp_path):
+    # The app reads back only --out, and onnxruntime-web can't open external data.
+    proc, out = run(tmp_path, "--epochs", "1")
+    assert proc.returncode == 0, proc.stderr
+    assert sorted(p.name for p in out.parent.iterdir() if p.name.startswith("m.onnx")) == ["m.onnx"]
+    model = onnx.load(str(out), load_external_data=False)
+    assert all(t.data_location != onnx.TensorProto.EXTERNAL for t in model.graph.initializer)
+
+
 def test_refuses_an_unknown_label(tmp_path):
     bad = json.dumps({"label": "pizza", "jpeg": base64.b64encode(jpeg((0, 0, 0))).decode()})
     proc, _ = run(tmp_path, "--epochs", "1", stdin=stdin_lines([bad]))

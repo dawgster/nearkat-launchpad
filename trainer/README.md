@@ -34,6 +34,7 @@ Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
 | `ARCHIVAL_RPC_URL` | fastnear archival | Reads back FastFS files from old transactions. |
 | `FASTFS_GATEWAY` | none (mainnet: fastfs.io) | Gateway URL with `{uploader}`. |
 | `SAMPLE_KEYS_PER_CALL` | `10` | Sample keys asked for in one `request_sample_keys` call, 1 to 10. 1 for the sandbox's mock MPC, which costs ~120 Tgas per key. |
+| `TRAINER_EPOCHS` | train.py's (30) | Epochs per run, 1 to 1000. |
 | `PORT` | `8790` | |
 | `WEB_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origins. |
 | `AUTH_RECIPIENT` | `nearkat.xyz` | The NEP-413 recipient renters sign in to. |

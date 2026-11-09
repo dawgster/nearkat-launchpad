@@ -60,6 +60,7 @@ const runs = new Runs({
   python: runPython,
   heldoutDir: config.heldoutDir,
   keysPerCall: config.sampleKeysPerCall,
+  epochs: config.epochs,
   ensureRegistered: ensureRegistered({
     chain,
     mode: config.mode,

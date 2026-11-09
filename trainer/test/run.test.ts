@@ -33,6 +33,26 @@ async function settle(runs: Runs, id: string): Promise<RunState> {
 }
 
 describe("Runs", () => {
+  test("passes the configured epochs to Python, and none by default", async () => {
+    const { chain, python, runs } = setup();
+    await chain.addRentedSample("1", "cat");
+    await settle(runs, (await runs.start(CONTRACT, RENTER, ["1"])).id);
+    expect(python.epochs).toEqual([undefined]);
+
+    const three = new Runs({
+      appId: APP_ID,
+      appPublicKey: () => "ed25519:trainer",
+      chain,
+      python: python.run,
+      heldoutDir: "/heldout",
+      ensureRegistered: async () => {},
+      epochs: 3,
+    });
+    await chain.addRentedSample("2", "dog");
+    await settle(three, (await three.start(CONTRACT, RENTER, ["2"])).id);
+    expect(python.epochs).toEqual([undefined, 3]);
+  });
+
   test("trains on exactly the rented samples and records the run", async () => {
     const { chain, python, runs, ensureRegistered } = setup();
     await chain.addRentedSample("1", "cat");

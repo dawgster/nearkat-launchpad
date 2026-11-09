@@ -145,6 +145,8 @@ def export_onnx(model: nn.Module, out: Path) -> None:
             input_names=["image"],
             output_names=["logits"],
             dynamic_shapes={"images": {0: torch.export.Dim("batch")}},
+            # One file: the app reads back only `out`, and onnxruntime-web can't open external data.
+            external_data=False,
         )
 
 

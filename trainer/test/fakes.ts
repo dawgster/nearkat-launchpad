@@ -192,6 +192,8 @@ export class FakeTrainerChain implements TrainerChain {
 /** A Python stand-in: records what it was given and returns a fixed model. */
 export class FakePython {
   readonly received: Array<{ label: string; jpeg: Buffer }> = [];
+  /** The epochs each run asked for. */
+  readonly epochs: Array<number | undefined> = [];
   model = Buffer.from("onnx model bytes");
   accuracy = 0.875;
   heldout = 8;
@@ -201,6 +203,7 @@ export class FakePython {
   gate: Promise<void> | null = null;
 
   readonly run: typeof runPython = async (args) => {
+    this.epochs.push(args.epochs);
     for await (const sample of args.samples) {
       this.received.push(sample);
     }
