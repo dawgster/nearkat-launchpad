@@ -13,7 +13,7 @@ RUN bash scripts/fetch-hotdog.sh && rm -rf data/hotdog-src
 
 # Python 3.12 and the locked CPU torch, from trainer/py's uv.lock.
 FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS python
-COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.9@sha256:538e0b39736e7feae937a65983e49d2ab75e1559d35041f9878b7b7e51de91e4 /uv /usr/local/bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app/trainer/py
 COPY trainer/py/pyproject.toml trainer/py/uv.lock ./
