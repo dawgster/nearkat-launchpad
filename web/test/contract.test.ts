@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { pickRentable, returnValue } from "../src/lib/contract.ts";
+import {
+  KatContract,
+  LOAN_STORAGE_DEPOSIT,
+  pickRentable,
+  returnValue,
+} from "../src/lib/contract.ts";
 
 const outcome = (value: unknown) => ({
   // The chain returns the method's JSON as base64 of its UTF-8 bytes.
@@ -60,5 +65,45 @@ describe("pickRentable", () => {
   test("skips offers for other apps and never exceeds what is offered", () => {
     const mixed = [offer("1", "a.near", 1, ["other"]), offer("2", "b.near", 2)];
     expect(pickRentable(mixed, "app-a", 5)).toEqual(["2"]);
+  });
+});
+
+describe("chunked transactions", () => {
+  const tokens = Array.from({ length: 120 }, (_, i) => String(i + 1));
+  const recorder = () => {
+    const calls: Array<{ method: string; args: { token_ids: string[] }; deposit: string }> = [];
+    const near = {
+      call: async (
+        _id: string,
+        method: string,
+        args: { token_ids: string[] },
+        options: { attachedDeposit: string },
+      ) => {
+        calls.push({ method, args, deposit: options.attachedDeposit });
+        return {};
+      },
+    };
+    return { calls, contract: new KatContract(near as never, "set.near") };
+  };
+
+  test("lendMany splits 120 samples into 50/50/20 with matching storage deposits", async () => {
+    const { calls, contract } = recorder();
+    const listed = await contract.lendMany(tokens, { durationS: null, fee: 1n, apps: ["a"] });
+    expect(listed).toBe(120);
+    expect(calls.map((c) => c.args.token_ids.length)).toEqual([50, 50, 20]);
+    expect(calls.map((c) => c.deposit)).toEqual(
+      [50n, 50n, 20n].map((n) => `${LOAN_STORAGE_DEPOSIT * n} yocto`),
+    );
+  });
+
+  test("borrowMany attaches each chunk's own fees", async () => {
+    const { calls, contract } = recorder();
+    const feeOf = (id: string) => BigInt(Number(id) * 7 + 3);
+    await contract.borrowMany(tokens, "a", feeOf);
+    expect(calls.map((c) => c.args.token_ids.length)).toEqual([50, 50, 20]);
+    for (const call of calls) {
+      const sum = call.args.token_ids.reduce((acc, id) => acc + feeOf(id), 0n);
+      expect(call.deposit).toBe(`${sum} yocto`);
+    }
   });
 });

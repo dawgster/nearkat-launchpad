@@ -362,21 +362,17 @@ export class KatContract {
   }
 
   /**
-   * Rents samples for an app, in transactions of at most 50. `totalFee` covers
-   * them all; with `feeOf`, each transaction attaches just its own samples' fees.
-   * Anything over is refunded. Returns how many were rented.
+   * Rents samples for an app, in transactions of at most 50. Each transaction
+   * attaches exactly its own samples' fees (`feeOf`). Returns how many were rented.
    */
   async borrowMany(
     tokenIds: string[],
     appId: string,
-    totalFee: bigint,
-    feeOf?: (tokenId: string) => bigint,
+    feeOf: (tokenId: string) => bigint,
   ): Promise<number> {
-    const chunks = chunked(tokenIds, MAX_SAMPLES_PER_CALL);
     let rented = 0;
-    for (const chunk of chunks) {
-      const fee =
-        feeOf && chunks.length > 1 ? chunk.reduce((sum, id) => sum + feeOf(id), 0n) : totalFee;
+    for (const chunk of chunked(tokenIds, MAX_SAMPLES_PER_CALL)) {
+      const fee = chunk.reduce((sum, id) => sum + feeOf(id), 0n);
       const outcome = await this.#near.call(
         this.#contractId,
         "borrow_many",

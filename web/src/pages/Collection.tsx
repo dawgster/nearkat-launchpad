@@ -720,9 +720,9 @@ function DatasetSection({
         <RentPanel
           offers={rentable}
           labels={labels}
-          borrow={async (ids, appId, total) => {
+          borrow={async (ids, appId) => {
             const byId = new Map(rentable.map((offer) => [offer.tokenId, offer.fee]));
-            const rented = await signer.borrowMany(ids, appId, total, (id) => byId.get(id) ?? 0n);
+            const rented = await signer.borrowMany(ids, appId, (id) => byId.get(id) ?? 0n);
             void reloadOffers();
             return rented;
           }}
