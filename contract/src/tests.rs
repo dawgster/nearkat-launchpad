@@ -2168,7 +2168,7 @@ mod sample_loans {
         assert_eq!(
             get_logs()
                 .iter()
-                .filter(|l| l.contains("loan_offered") && l.matches("token_id").count() == 2)
+                .filter(|l| l.contains("loan_offered") && l.contains(r#""token_ids":["1","2"]"#))
                 .count(),
             1
         );
@@ -2665,12 +2665,20 @@ mod sample_loans {
     fn fifty_sample_batches_fit_the_log_limit() {
         let owner = "a".repeat(64);
         let renter = "b".repeat(64);
-        let app_a = "c".repeat(64);
-        let app_b = "d".repeat(64);
+        let apps: Vec<String> = "0123456789abcdef"[..8]
+            .chars()
+            .map(|ch| ch.to_string().repeat(64))
+            .collect();
         let mut c = deploy_with(dataset(&["a", "b"], &[50, 50], 100));
         ctx("admin.near", NearToken::from_millinear(10));
-        c.trust_app_key(pk(APP_KEY_A), app_a.clone(), "One".to_string());
-        c.trust_app_key(pk(APP_KEY_B), app_b.clone(), "Two".to_string());
+        for (i, app) in apps.iter().enumerate() {
+            let key = near_sdk::PublicKey::from_parts(
+                near_sdk::CurveType::ED25519,
+                vec![i as u8 + 1; 32],
+            )
+            .unwrap();
+            c.trust_app_key(key, app.clone(), "App".to_string());
+        }
         ctx("admin.near", YOCTO);
         for i in 1..=50 {
             c.nft_transfer(acc(&owner), i.to_string(), None, None);
@@ -2681,12 +2689,12 @@ mod sample_loans {
             all.clone(),
             Some(86_400.into()),
             NearToken::from_millinear(10),
-            vec![app_a.clone(), app_b],
+            apps.clone(),
         );
         let bytes: usize = get_logs().iter().map(|l| l.len()).sum();
         assert!(bytes < 16_384, "lend_many logged {bytes} bytes");
         ctx(&renter, NearToken::from_near(5));
-        c.borrow_many(all, app_a);
+        c.borrow_many(all, apps[0].clone());
         let bytes: usize = get_logs().iter().map(|l| l.len()).sum();
         assert!(bytes < 16_384, "borrow_many logged {bytes} bytes");
     }

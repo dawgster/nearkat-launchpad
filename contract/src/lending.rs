@@ -232,7 +232,6 @@ impl Contract {
         }
         let owner_id = env::predecessor_account_id();
         let mut total = NearToken::from_yoctonear(0);
-        let mut events = Vec::new();
         for (i, token_id) in token_ids.iter().enumerate() {
             require!(
                 !token_ids[..i].contains(token_id),
@@ -276,17 +275,19 @@ impl Contract {
             loan.storage = cost;
             write(token_id, &loan);
             total = total.saturating_add(cost);
-            // Slim records in one line: 50 full views, or 50 envelopes, would
-            // pass NEAR's 16 KiB log limit per receipt.
-            events.push(near_sdk::serde_json::json!({
-                    "token_id": token_id,
-                    "lender_id": owner_id,
-                    "fee": fee,
-                    "duration_s": duration_s,
-                    "apps": apps,
-            }));
         }
-        log_events("loan_offered", events);
+        // One record for the batch, as all its tokens share the terms: 50
+        // records repeating the apps would pass NEAR's 16 KiB log limit.
+        log_event(
+            "loan_offered",
+            near_sdk::serde_json::json!({
+                "token_ids": token_ids,
+                "lender_id": owner_id,
+                "fee": fee,
+                "duration_s": duration_s,
+                "apps": apps,
+            }),
+        );
         let deposit = env::attached_deposit();
         require!(
             deposit >= total,
