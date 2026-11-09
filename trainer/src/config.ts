@@ -1,3 +1,5 @@
+import { sampleKeysPerCallFrom } from "../../keeper/src/ckd.ts";
+
 export interface Config {
   /** "local": root secret from the environment. "phala": from dstack's KMS, inside a Phala app. */
   mode: "local" | "phala";
@@ -37,15 +39,6 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) {
     throw new Error(`Missing environment variable ${name}`);
-  }
-  return value;
-}
-
-/** Sample keys asked for per call: 1 to 10. Use 1 with the sandbox's mock MPC, which costs ~120 Tgas per key. */
-function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
-  const value = Number(env.SAMPLE_KEYS_PER_CALL ?? "10");
-  if (!Number.isInteger(value) || value < 1 || value > 10) {
-    throw new Error("SAMPLE_KEYS_PER_CALL must be a whole number from 1 to 10");
   }
   return value;
 }
@@ -114,7 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
         : network === "mainnet"
           ? "https://{uploader}.fastfs.io"
           : null,
-    sampleKeysPerCall: sampleKeysPerCall(env),
+    sampleKeysPerCall: sampleKeysPerCallFrom(env),
     epochs: epochs(env),
     port,
     authRecipient: env.AUTH_RECIPIENT || "trainer.local",

@@ -1,3 +1,5 @@
+import { sampleKeysPerCallFrom } from "./ckd.ts";
+
 export interface Config {
   /** "local": root secret from the environment. "phala": from dstack's KMS, inside a Phala app. */
   mode: "local" | "phala";
@@ -77,15 +79,6 @@ function yocto(env: NodeJS.ProcessEnv, name: string, fallback: string): bigint {
   return BigInt(value);
 }
 
-/** Sample keys asked for per call: 1 to 10. Use 1 with the sandbox's mock MPC, which costs ~120 Tgas per key. */
-function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
-  const value = Number(env.SAMPLE_KEYS_PER_CALL ?? "10");
-  if (!Number.isInteger(value) || value < 1 || value > 10) {
-    throw new Error("SAMPLE_KEYS_PER_CALL must be a whole number from 1 to 10");
-  }
-  return value;
-}
-
 function homeContract(env: NodeJS.ProcessEnv): string | undefined {
   if (!env.CONTRACT_ID && !env.LAUNCHPAD_ID) {
     throw new Error("CONTRACT_ID is required unless LAUNCHPAD_ID is set");
@@ -154,7 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
         : `https://archival-rpc.${network}.fastnear.com`),
     meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
     maxTokens,
-    sampleKeysPerCall: sampleKeysPerCall(env),
+    sampleKeysPerCall: sampleKeysPerCallFrom(env),
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
     webOrigins: (env.WEB_ORIGIN ?? "http://localhost:3000")

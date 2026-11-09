@@ -2,10 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { fetchSampleKeys, type KeySource } from "../../keeper/src/ckd.ts";
 import { HttpError } from "../../keeper/src/errors.ts";
 import { openSample } from "../../keeper/src/samples.ts";
-import { ContractRefusal, type TrainerChain, type TrainingRecord } from "./chain.ts";
+import { ContractRefusal, isRentalEnded, type TrainerChain, type TrainingRecord } from "./chain.ts";
+import { classWithoutHeldout } from "./heldout.ts";
 import { PythonError, type runPython } from "./python.ts";
 
-export type Stage = "checking" | "keys" | "loading" | "training" | "recording" | "done" | "failed";
+/** A run exists only once its rentals are checked, so it starts at "keys". */
+export type Stage = "keys" | "loading" | "training" | "recording" | "done" | "failed";
 
 /** A run as the renter sees it. It never holds keys, images or Python's output. */
 export interface RunState {
@@ -57,14 +59,11 @@ const KEY_CALLS_AT_ONCE = 5;
 const PARALLEL = 8;
 
 /** What the renter is told when a stage fails for a reason not worth detailing. */
-const STAGE_FAILURE: Record<Stage, string> = {
-  checking: "Could not check the rentals",
+const STAGE_FAILURE: Record<Exclude<Stage, "done" | "failed">, string> = {
   keys: "Could not get the samples' keys",
   loading: "Could not load the samples",
   training: "Training failed",
   recording: "Could not record the run",
-  done: "Run failed",
-  failed: "Run failed",
 };
 
 /** Runs `fn` on every item, at most `limit` at a time; results in order. */
@@ -94,11 +93,9 @@ export interface RunsOptions {
   launchpadId?: string | null;
   /** The app id the contract knows this app by (the dstack app id from its event log). */
   appId: string;
-  /** The NEAR key the app signs with. */
-  appPublicKey: () => string;
   chain: TrainerChain;
   python: typeof runPython;
-  /** The held-out images, `<dir>/<class>/*.jpg`. */
+  /** The held-out images, `<dir>/<class>/*.jpg`; every class needs some. */
   heldoutDir: string;
   /** Registers the app's key with the collection if it isn't yet. */
   ensureRegistered(contract: string): Promise<void>;
@@ -287,6 +284,11 @@ export class Runs {
     if (!collection.classes) {
       throw new BadRequest(`${contract} is not a dataset`);
     }
+    // Checked before any key is asked for: without it the run can't be scored.
+    const unscored = classWithoutHeldout(this.#o.heldoutDir, collection.classes);
+    if (unscored !== undefined) {
+      throw new BadRequest(`This training app has no held-out images for "${unscored}"`);
+    }
     const problems = await mapLimit(tokenIds, PARALLEL, async (id) => {
       const [loan, training, sample] = await Promise.all([
         chain.getLoan(contract, id),
@@ -423,7 +425,7 @@ export class Runs {
             state.recordTx = tx;
           }
         } catch (error) {
-          const ended = /rental ended/.test(error instanceof Error ? error.message : String(error));
+          const ended = isRentalEnded(error);
           if (recorded === 0) {
             if (ended) {
               throw new RunFailure("A rental ended before the run was recorded");
@@ -452,7 +454,9 @@ export class Runs {
           ? error.message
           : error instanceof PythonError
             ? "Training failed"
-            : STAGE_FAILURE[state.stage];
+            : state.stage === "done" || state.stage === "failed"
+              ? "Run failed"
+              : STAGE_FAILURE[state.stage];
       // Only the stage and the error's kind are logged: never what Python printed.
       console.error(
         `Run ${state.id} failed while ${state.stage}: ${message}`,

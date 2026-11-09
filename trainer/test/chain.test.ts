@@ -3,7 +3,7 @@ import { base58 } from "@scure/base";
 import type { Near } from "near-kit";
 import { describe, expect, test, vi } from "vitest";
 import { FastfsStore } from "../../keeper/src/fastfs.ts";
-import { NearTrainerChain } from "../src/chain.ts";
+import { ContractRefusal, isRentalEnded, NearTrainerChain } from "../src/chain.ts";
 
 describe("NearTrainerChain.fastfsStore", () => {
   test("reads each FastFS transaction once per run, however many samples it holds", async () => {
@@ -55,5 +55,16 @@ describe("NearTrainerChain.fastfsStore", () => {
     await expect(store.get(ref)).rejects.toThrow();
     await expect(store.get(ref)).rejects.toThrow();
     expect(transactionArgs).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("isRentalEnded", () => {
+  test("knows the contract's own refusal, and nothing else", () => {
+    expect(
+      isRentalEnded(new ContractRefusal("Smart contract panicked: Sample 3: rental ended")),
+    ).toBe(true);
+    expect(isRentalEnded(new ContractRefusal("Sample 3: already used"))).toBe(false);
+    // Not the contract's word: a transport error that happens to say so.
+    expect(isRentalEnded(new Error("Sample 3: rental ended"))).toBe(false);
   });
 });

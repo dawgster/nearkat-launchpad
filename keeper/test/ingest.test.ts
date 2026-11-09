@@ -88,6 +88,43 @@ describe("Ingest", () => {
     expect(doc).toMatchObject({ token_id: "1", label: "cat", jpeg: JPEG });
   });
 
+  test("asks for keysPerCall sample keys per call, ten by default", async () => {
+    for (const [keysPerCall, sizes] of [
+      [undefined, [2, 10]],
+      [5, [2, 5, 5]],
+    ] as const) {
+      const chain = new FakeChain();
+      chain.collection = {
+        ...FAKE_COLLECTION,
+        kind: { Dataset: { classes: ["cat", "dog"] } },
+        minted: 12,
+        max_supply: 12,
+      };
+      for (let i = 1; i <= 12; i++) {
+        chain.samples.set(String(i), {
+          owner_id: "admin.near",
+          sample_hash: null,
+          sample_ref: null,
+          runs: 0,
+        });
+      }
+      const ingest = new Ingest({
+        contractId: chain.contractId,
+        chain,
+        store: new MemoryStore(),
+        sealing,
+        mpcPublicKey: () => chain.mpcPublicKey(KEY_SOURCE),
+        ...(keysPerCall !== undefined && { keysPerCall }),
+      });
+      const samples = Array.from({ length: 12 }, (_, i) => ({
+        token_id: String(i + 1),
+        sealed: sealed("cat"),
+      }));
+      expect((await ingest.seal("admin.near", samples)).sealed).toHaveLength(12);
+      expect(chain.ingestRequests.map((ids) => ids.length).sort((a, b) => a - b)).toEqual(sizes);
+    }
+  });
+
   test("skips tokens that already have a sample", async () => {
     const { chain, ingest } = setup();
     chain.samples.set("1", { owner_id: "admin.near", sample_hash: "x", sample_ref: "r", runs: 0 });

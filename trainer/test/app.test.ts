@@ -5,7 +5,15 @@ import { keysFromRootSecret } from "../../keeper/src/keys.ts";
 import { createApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { Runs } from "../src/run.ts";
-import { APP_ID, CONTRACT, FakePython, FakeTrainerChain, jpegFor, RENTER } from "./fakes.ts";
+import {
+  APP_ID,
+  CONTRACT,
+  FakePython,
+  FakeTrainerChain,
+  HELDOUT,
+  jpegFor,
+  RENTER,
+} from "./fakes.ts";
 
 const keys = keysFromRootSecret(Buffer.alloc(32, 9));
 
@@ -31,10 +39,9 @@ function setup() {
   const python = new FakePython();
   const runs = new Runs({
     appId: APP_ID,
-    appPublicKey: () => "ed25519:trainer",
     chain,
     python: python.run,
-    heldoutDir: "/heldout",
+    heldoutDir: HELDOUT,
     ensureRegistered: async () => {},
   });
   const auth = new Auth({

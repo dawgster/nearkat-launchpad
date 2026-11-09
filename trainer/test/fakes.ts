@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { base58 } from "@scure/base";
 import type { KeyProof, SampleView } from "../../keeper/src/chain.ts";
 import { type KeySource, sampleKey, sampleKeyPath } from "../../keeper/src/ckd.ts";
@@ -19,6 +22,16 @@ export const CONTRACT = "cats-vs-dogs.launch.near";
 export const APP_ID = "a".repeat(64);
 export const RENTER = "renter.near";
 export const LAUNCHPAD = "launch.near";
+
+/** A held-out set with one image for each of the fakes' classes, cat and dog. */
+export const HELDOUT = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "heldout-"));
+  for (const cls of ["cat", "dog"]) {
+    mkdirSync(join(dir, cls));
+    writeFileSync(join(dir, cls, "1.jpg"), "x");
+  }
+  return dir;
+})();
 
 /** A JPEG stand-in: the pipeline never looks inside. */
 export const jpegFor = (tokenId: string) => Buffer.from(`jpeg of sample ${tokenId}`);

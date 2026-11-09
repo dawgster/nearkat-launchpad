@@ -56,7 +56,6 @@ const chain = new NearTrainerChain(near, {
 const runs = new Runs({
   launchpadId: config.launchpadId,
   appId,
-  appPublicKey: () => publicKey,
   chain,
   python: runPython,
   heldoutDir: config.heldoutDir,

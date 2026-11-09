@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { countHeldout } from "../src/heldout.ts";
+import { classWithoutHeldout, countHeldout } from "../src/heldout.ts";
 
 test("counts the jpegs in each class directory", () => {
   const dir = mkdtempSync(join(tmpdir(), "heldout-"));
@@ -17,4 +17,15 @@ test("counts the jpegs in each class directory", () => {
   }
   expect(countHeldout(dir)).toBe(4 - 1);
   expect(countHeldout(join(dir, "missing"))).toBe(0);
+});
+
+test("names the first class with no held-out image", () => {
+  const dir = mkdtempSync(join(tmpdir(), "heldout-"));
+  mkdirSync(join(dir, "cat"));
+  writeFileSync(join(dir, "cat", "a.JPEG"), "x");
+  mkdirSync(join(dir, "dog"));
+  writeFileSync(join(dir, "dog", "notes.txt"), "x");
+  expect(classWithoutHeldout(dir, ["cat"])).toBeUndefined();
+  expect(classWithoutHeldout(dir, ["cat", "dog", "bird"])).toBe("dog");
+  expect(classWithoutHeldout(join(dir, "missing"), ["cat"])).toBe("cat");
 });

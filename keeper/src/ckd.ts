@@ -115,6 +115,21 @@ export function sampleKey(derivedKey: Uint8Array, tokenId: string): Buffer {
 export const MAX_SAMPLE_KEYS_PER_CALL = 10;
 
 /**
+ * SAMPLE_KEYS_PER_CALL, for the keeper and the training app alike: 1 to
+ * MAX_SAMPLE_KEYS_PER_CALL, the most by default. Use 1 with the sandbox's
+ * mock MPC, which costs ~120 Tgas per key.
+ */
+export function sampleKeysPerCallFrom(env: NodeJS.ProcessEnv): number {
+  const value = Number(env.SAMPLE_KEYS_PER_CALL ?? String(MAX_SAMPLE_KEYS_PER_CALL));
+  if (!Number.isInteger(value) || value < 1 || value > MAX_SAMPLE_KEYS_PER_CALL) {
+    throw new Error(
+      `SAMPLE_KEYS_PER_CALL must be a whole number from 1 to ${MAX_SAMPLE_KEYS_PER_CALL}`,
+    );
+  }
+  return value;
+}
+
+/**
  * Every listed sample's key. Asks the collection in chunks of `perCall` (up
  * to ten), in parallel, each with its own throwaway key, and checks every
  * answer is the network's signature on that sample's app id. Use 1 with the

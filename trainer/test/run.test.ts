@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
@@ -9,6 +12,7 @@ import {
   CONTRACT,
   FakePython,
   FakeTrainerChain,
+  HELDOUT,
   jpegFor,
   LAUNCHPAD,
   RENTER,
@@ -21,10 +25,9 @@ function setup(launchpadId: string | null = null) {
   const runs = new Runs({
     launchpadId,
     appId: APP_ID,
-    appPublicKey: () => "ed25519:trainer",
     chain,
     python: python.run,
-    heldoutDir: "/heldout",
+    heldoutDir: HELDOUT,
     ensureRegistered,
   });
   return { chain, python, runs, ensureRegistered };
@@ -54,10 +57,9 @@ describe("Runs", () => {
 
     const three = new Runs({
       appId: APP_ID,
-      appPublicKey: () => "ed25519:trainer",
       chain,
       python: python.run,
-      heldoutDir: "/heldout",
+      heldoutDir: HELDOUT,
       ensureRegistered: async () => {},
       epochs: 3,
     });
@@ -156,10 +158,9 @@ describe("Runs", () => {
     const chain = new FakeTrainerChain();
     const runs = new Runs({
       appId: APP_ID,
-      appPublicKey: () => "ed25519:trainer",
       chain,
       python: new FakePython().run,
-      heldoutDir: "/heldout",
+      heldoutDir: HELDOUT,
       ensureRegistered: async () => {},
       keysPerCall: 1,
     });
@@ -172,6 +173,55 @@ describe("Runs", () => {
     expect(done.stage).toBe("done");
     expect(chain.keyRequests).toHaveLength(20);
     expect(chain.mostKeyCallsAtOnce).toBe(5);
+  });
+
+  test("asks for keysPerCall keys per call, ten by default", async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => String(i + 1));
+    for (const [keysPerCall, sizes] of [
+      [undefined, [2, 10]],
+      [3, [3, 3, 3, 3]],
+    ] as const) {
+      const chain = new FakeTrainerChain();
+      for (const id of ids) {
+        await chain.addRentedSample(id, "cat");
+      }
+      const runs = new Runs({
+        appId: APP_ID,
+        chain,
+        python: new FakePython().run,
+        heldoutDir: HELDOUT,
+        ensureRegistered: async () => {},
+        ...(keysPerCall !== undefined && { keysPerCall }),
+      });
+      expect((await settle(runs, (await runs.start(CONTRACT, RENTER, ids)).id)).stage).toBe("done");
+      expect(chain.keyRequests.map((r) => r.length).sort((a, b) => a - b)).toEqual(sizes);
+    }
+  });
+
+  test("refuses a dataset whose classes the held-out set lacks, before any key", async () => {
+    const chain = new FakeTrainerChain();
+    const dir = mkdtempSync(join(tmpdir(), "heldout-"));
+    mkdirSync(join(dir, "cat"));
+    writeFileSync(join(dir, "cat", "1.jpg"), "x");
+    const ensureRegistered = vi.fn(async () => {});
+    const runs = new Runs({
+      appId: APP_ID,
+      chain,
+      python: new FakePython().run,
+      heldoutDir: dir,
+      ensureRegistered,
+    });
+    await chain.addRentedSample("1", "cat");
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject({
+      status: 400,
+      message: 'This training app has no held-out images for "dog"',
+    });
+    expect(chain.keyRequests).toEqual([]);
+    expect(ensureRegistered).not.toHaveBeenCalled();
+    // Refused runs hold no sample.
+    mkdirSync(join(dir, "dog"));
+    writeFileSync(join(dir, "dog", "1.jpg"), "x");
+    expect((await settle(runs, (await runs.start(CONTRACT, RENTER, ["1"])).id)).stage).toBe("done");
   });
 
   test("refuses tokens whose rental is spent or not the caller's", async () => {
@@ -414,10 +464,9 @@ describe("Runs memory bounds", () => {
     const python = new FakePython();
     const runs = new Runs({
       appId: APP_ID,
-      appPublicKey: () => "ed25519:trainer",
       chain,
       python: python.run,
-      heldoutDir: "/heldout",
+      heldoutDir: HELDOUT,
       ensureRegistered: async () => {},
       now: () => now,
     });
@@ -436,10 +485,9 @@ describe("Runs and registration", () => {
     const python = new FakePython();
     const runs = new Runs({
       appId: APP_ID,
-      appPublicKey: () => "ed25519:trainer",
       chain,
       python: python.run,
-      heldoutDir: "/heldout",
+      heldoutDir: HELDOUT,
       ensureRegistered: ensureRegistered({
         chain,
         mode,

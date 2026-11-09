@@ -68,6 +68,15 @@ export interface TrainerChain {
 /** The contract refused a call; the message is its panic. */
 export class ContractRefusal extends Error {}
 
+/**
+ * Whether the contract refused because a sample's rental is over. NEAR
+ * panics are text, so this matches the contract's own wording,
+ * "Sample <id>: rental ended" (contract/src/lending.rs `rental_problem`).
+ */
+export function isRentalEnded(error: unknown): boolean {
+  return error instanceof ContractRefusal && /\bSample \S+: rental ended\b/.test(error.message);
+}
+
 /** The most tokens one `get_run_tokens` page returns. */
 const RUN_TOKENS_PAGE = 100;
 
