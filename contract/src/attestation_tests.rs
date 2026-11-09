@@ -350,10 +350,25 @@ fn an_app_key_with_the_wrong_report_data_is_refused() {
 }
 
 #[test]
-#[should_panic(expected = "quote verification failed")]
-fn register_app_key_runs_the_quote_through_intels_checks() {
+#[should_panic(expected = "Sign the registration with the key being registered")]
+fn an_app_key_must_be_registered_by_its_own_signer() {
     let mut c = tee_collection();
     ctx("anyone.near", OPERATOR_KEY, NearToken::from_near(1));
+    c.register_app_key(
+        key(KEY),
+        SEAL.to_string(),
+        "trainer".to_string(),
+        String::new(),
+        String::new(),
+        String::new(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "quote verification failed")]
+fn register_app_key_passes_proof_of_possession_then_checks_the_quote() {
+    let mut c = tee_collection();
+    ctx("anyone.near", KEY, NearToken::from_near(1));
     c.register_app_key(
         key(KEY),
         SEAL.to_string(),
@@ -361,5 +376,45 @@ fn register_app_key_runs_the_quote_through_intels_checks() {
         hex::encode(INTEL_QUOTE),
         INTEL_COLLATERAL.to_string(),
         "[]".to_string(),
+    );
+}
+
+fn entry(app: &str, label: &str) -> crate::apps::AppKey {
+    crate::apps::AppKey {
+        app_id: app.to_string(),
+        label: label.to_string(),
+        seal_public_key: SEAL.to_string(),
+        attested_at: 0,
+        trusted_by_admin: false,
+    }
+}
+
+#[test]
+#[should_panic(expected = "This key is registered to another app")]
+fn a_key_cannot_move_to_another_app() {
+    let mut c = tee_collection();
+    ctx("anyone.near", KEY, NearToken::from_near(1));
+    c.store_app_key(key(KEY), entry("app-x", "x"), NearToken::from_yoctonear(0));
+    c.store_app_key(key(KEY), entry("app-y", "y"), NearToken::from_yoctonear(0));
+}
+
+#[test]
+fn a_key_can_be_re_registered_by_its_own_app() {
+    let mut c = tee_collection();
+    ctx("anyone.near", KEY, NearToken::from_near(1));
+    c.store_app_key(
+        key(KEY),
+        entry("app-x", "old"),
+        NearToken::from_yoctonear(0),
+    );
+    c.store_app_key(
+        key(KEY),
+        entry("app-x", "new"),
+        NearToken::from_yoctonear(0),
+    );
+    assert_eq!(c.get_app_key(key(KEY)).unwrap().label, "new");
+    assert_eq!(
+        c.training_apps(),
+        vec![("app-x".to_string(), "new".to_string())]
     );
 }

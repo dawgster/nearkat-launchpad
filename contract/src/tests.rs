@@ -2037,3 +2037,31 @@ fn training_apps_lists_each_app_once() {
         ]
     );
 }
+
+#[test]
+#[should_panic(expected = "This key is registered to another app")]
+fn trusting_a_key_cannot_move_it_to_another_app() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "app-one".to_string(), "One".to_string());
+    c.trust_app_key(pk(APP_KEY_A), "app-two".to_string(), "Two".to_string());
+}
+
+#[test]
+fn the_admin_takes_an_app_off_the_list() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "app-one".to_string(), "One".to_string());
+    ctx("admin.near", YOCTO);
+    c.remove_training_app("app-one".to_string());
+    assert!(c.training_apps().is_empty());
+    assert!(c.get_app_key(pk(APP_KEY_A)).is_some());
+}
+
+#[test]
+#[should_panic(expected = "Only the admin can call this method")]
+fn only_the_admin_removes_apps() {
+    let mut c = deploy();
+    ctx("alice.near", YOCTO);
+    c.remove_training_app("app-one".to_string());
+}

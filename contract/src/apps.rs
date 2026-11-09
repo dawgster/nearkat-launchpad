@@ -68,6 +68,10 @@ impl Contract {
         collateral: String,
         event_log: String,
     ) -> AppKey {
+        require!(
+            env::signer_account_pk() == public_key,
+            "Sign the registration with the key being registered"
+        );
         require_label(&label);
         require!(
             seal_public_key.len() == 64 && seal_public_key.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -127,6 +131,20 @@ impl Contract {
         self.store_app_key(public_key, entry, NearToken::from_yoctonear(1))
     }
 
+    /// Admin only: takes an app off the list offered to lenders. Key records
+    /// stay, and so do loans; only `training_apps` changes.
+    #[payable]
+    pub fn remove_training_app(&mut self, app_id: String) {
+        self.assert_admin();
+        let mut apps = read_apps();
+        apps.retain(|a| a != &app_id);
+        env::storage_write(
+            APPS_KEY,
+            &borsh::to_vec(&apps).unwrap_or_else(|_| env::abort()),
+        );
+        env::storage_remove(&label_slot(&app_id));
+    }
+
     pub fn get_app_key(&self, public_key: PublicKey) -> Option<AppKey> {
         env::storage_read(&app_key_slot(&public_key))
             .map(|raw| AppKey::try_from_slice(&raw).unwrap_or_else(|_| env::abort()))
@@ -162,6 +180,12 @@ impl Contract {
         entry: AppKey,
         minimum: NearToken,
     ) -> AppKey {
+        if let Some(existing) = self.get_app_key(public_key.clone()) {
+            require!(
+                existing.app_id == entry.app_id,
+                "This key is registered to another app"
+            );
+        }
         let before = env::storage_usage();
         let mut apps = read_apps();
         if !apps.contains(&entry.app_id) {
