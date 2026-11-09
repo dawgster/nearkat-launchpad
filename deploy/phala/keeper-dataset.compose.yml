@@ -1,0 +1,35 @@
+# Keeper for dataset (and character) collections, as a Phala Cloud (dstack) app.
+# ${...} values are filled from the encrypted env file given at deploy time
+# (see docs/demo/phala.md); nothing secret belongs in this file. The compose
+# hash is part of the app's attested identity, so change it only on purpose.
+services:
+  keeper:
+    # Replace with the pushed image, pinned by digest: ghcr.io/<owner>/<image>@sha256:<digest>
+    image: ${KEEPER_IMAGE}
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      # The dstack guest agent: key service and quotes.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      # Context cache, meter journal and loan counters survive restarts.
+      - keeper-data:/data
+    environment:
+      KEEPER_MODE: phala
+      NEAR_NETWORK: testnet
+      NEAR_RPC_URL: ${NEAR_RPC_URL}
+      NEAR_ARCHIVAL_RPC_URL: ${NEAR_ARCHIVAL_RPC_URL}
+      CONTRACT_ID: ${CONTRACT_ID}
+      LAUNCHPAD_ID: ${LAUNCHPAD_ID}
+      KEEPER_ACCOUNT_ID: ${KEEPER_ACCOUNT_ID}
+      STORAGE: fastfs
+      SAMPLE_KEYS_PER_CALL: "10"
+      WEB_ORIGIN: ${WEB_ORIGINS}
+      AUTH_RECIPIENT: ${AUTH_RECIPIENT}
+      TRUST_PROXY: "true"
+      STORE_DIR: /data/contexts
+      METER_JOURNAL: /data/meter.json
+      # Secret, supplied as an encrypted variable. KEEPER_ROOT_SECRET must stay unset.
+      NEAR_AI_API_KEY: ${NEAR_AI_API_KEY}
+volumes:
+  keeper-data:

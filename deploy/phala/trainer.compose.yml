@@ -1,0 +1,27 @@
+# Training app, as a Phala Cloud (dstack) app. ${...} values are filled from the
+# encrypted env file given at deploy time (see docs/demo/phala.md); nothing
+# secret belongs in this file. TRAINER_ROOT_SECRET must stay unset: the keys
+# come from dstack's KMS. The compose hash is part of the app's attested
+# identity, and renters trust that identity, so change it only on purpose.
+services:
+  trainer:
+    # Replace with the pushed image, pinned by digest: ghcr.io/<owner>/<image>@sha256:<digest>
+    image: ${TRAINER_IMAGE}
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    volumes:
+      # The dstack guest agent: key service and quotes. The image runs as the
+      # unprivileged `node` user; if it cannot open the socket, see the runbook.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    environment:
+      TRAINER_MODE: phala
+      NEAR_NETWORK: testnet
+      NEAR_RPC_URL: ${NEAR_RPC_URL}
+      ARCHIVAL_RPC_URL: ${NEAR_ARCHIVAL_RPC_URL}
+      TRAINER_ACCOUNT_ID: ${TRAINER_ACCOUNT_ID}
+      TRAINER_LABEL: Hotdog CNN
+      SAMPLE_KEYS_PER_CALL: "10"
+      WEB_ORIGINS: ${WEB_ORIGINS}
+      AUTH_RECIPIENT: ${AUTH_RECIPIENT}
+      TRUST_PROXY: "true"
