@@ -10,7 +10,7 @@ import type { ContextStore } from "./store.ts";
 /** Samples accepted per call. */
 export const MAX_SAMPLES_PER_CALL = 25;
 /** The longest sealed sample: a 96 KB JPEG as base64, in JSON, sealed and base64-encoded again. */
-export const MAX_SEALED_CHARS = 140_000;
+export const MAX_SEALED_CHARS = 180_000;
 const MAX_JPEG_BYTES = 96 * 1024;
 const STORE_CHUNK = 20;
 const RECORD_CHUNK = 50;

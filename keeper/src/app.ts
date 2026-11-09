@@ -65,7 +65,7 @@ type Env = { Variables: { accountId: string } };
 const MAX_BODY_BYTES = 16 * 1024;
 /** A sealed history import: 120,000 characters, mostly ASCII, sealed and base64-encoded. */
 const MAX_IMPORT_BYTES = 768 * 1024;
-/** A batch of sealed samples: at most 25, each up to 140,000 characters, plus JSON around them. */
+/** A batch of sealed samples: at most 25, each up to 180,000 characters, plus JSON around them. */
 const MAX_SAMPLES_BYTES = MAX_SAMPLES_PER_CALL * (MAX_SEALED_CHARS + 100) + 1024;
 const isImport = (path: string) => path.endsWith("/import");
 const isSamples = (path: string) => path.endsWith("/samples");

@@ -669,7 +669,7 @@ describe("dataset collections", () => {
     expect(chain.samples.get("1")?.sample_ref).toBeTruthy();
     const huge = await app.request(
       "/c/set.near/samples",
-      as(admin, { samples: "z".repeat(4 * 1024 * 1024) }),
+      as(admin, { samples: "z".repeat(5 * 1024 * 1024) }),
     );
     expect(huge.status).toBe(413);
   });

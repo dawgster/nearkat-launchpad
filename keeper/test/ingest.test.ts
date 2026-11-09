@@ -128,6 +128,32 @@ describe("Ingest", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  const jpegOf = (bytes: number) => {
+    const b = Buffer.alloc(bytes, 7);
+    b[0] = 0xff;
+    b[1] = 0xd8;
+    return b.toString("base64");
+  };
+
+  test("accepts a sample at the 96 KB limit", async () => {
+    const { ingest } = setup();
+    const result = await ingest.seal("admin.near", [
+      { token_id: "1", sealed: sealed("cat", jpegOf(96 * 1024)) },
+    ]);
+    expect(result.sealed).toEqual(["1"]);
+  });
+
+  test("refuses a JPEG over 96 KB", async () => {
+    const { ingest } = setup();
+    const jpeg = jpegOf(96 * 1024 + 1);
+    const error = await ingest
+      .seal("admin.near", [{ token_id: "2", sealed: sealed("cat", jpeg) }])
+      .catch((e: unknown) => e);
+    expect((error as HttpError).status).toBe(400);
+    expect((error as HttpError).message).toMatch(/2/);
+    expect((error as HttpError).message).not.toContain(jpeg.slice(0, 40));
+  });
+
   test("refuses a picture that isn't a JPEG", async () => {
     const { ingest } = setup();
     await expect(
