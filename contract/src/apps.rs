@@ -166,7 +166,6 @@ impl Contract {
 
 impl Contract {
     /// The app id of the key that signed this transaction, if registered.
-    #[allow(dead_code)]
     pub(crate) fn signer_app(&self) -> Option<String> {
         self.get_app_key(env::signer_account_pk())
             .map(|key| key.app_id)

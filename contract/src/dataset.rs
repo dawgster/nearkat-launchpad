@@ -10,6 +10,7 @@ use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, Promise
 
 use crate::ckd::sample_key_path;
 use crate::kat::{CollectionKind, Kat};
+use crate::lending::log_event;
 use crate::{Contract, ContractExt};
 
 /// Raw storage key of a dataset's classes and counts. Under its own key, so
@@ -23,6 +24,14 @@ pub(crate) const SAMPLE_MINT_BATCH: u64 = 50;
 const MAX_INGEST_KEYS: usize = 10;
 /// Samples sealed per `set_samples` call.
 const MAX_SEAL_BATCH: usize = 50;
+/// Samples one `record_training` call may list.
+const MAX_RUN_TOKENS: usize = 50;
+const MAX_RUN_ID_LEN: usize = 64;
+/// Most tokens `get_run_tokens` returns at once.
+const MAX_RUN_TOKENS_PAGE: u32 = 100;
+const RUN_PREFIX: &[u8] = b"run:";
+const RUN_TOKENS_PREFIX: &[u8] = b"runtok:";
+const SAMPLE_RUNS_PREFIX: &[u8] = b"runs:";
 /// Gas for `on_sample_keys`, which only reads the results.
 const GAS_FOR_SAMPLE_KEYS: Gas = Gas::from_tgas(10);
 /// An MPC response ({big_y, big_c}) is far below this.
@@ -97,6 +106,80 @@ pub struct SampleView {
     pub owner_id: AccountId,
     pub sample_hash: Option<Base64VecU8>,
     pub sample_ref: Option<String>,
+    /// How many training runs have used it.
+    pub runs: u32,
+}
+
+/// A training run, as an app recorded it. Lives under `run:<run_id>`; its
+/// tokens are under `runtok:<run_id>`.
+#[derive(BorshSerialize, BorshDeserialize)]
+#[borsh(crate = "near_sdk::borsh")]
+struct RunRecord {
+    app_id: String,
+    renter_id: AccountId,
+    model_sha256: String,
+    accuracy_bps: u16,
+    token_count: u32,
+    /// Nanoseconds, when its first part was recorded.
+    recorded_at: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunView {
+    pub run_id: String,
+    pub app_id: String,
+    pub renter_id: AccountId,
+    pub model_sha256: String,
+    pub accuracy_bps: u16,
+    pub token_count: u32,
+    pub recorded_at: U64,
+}
+
+impl RunRecord {
+    fn view(&self, run_id: &str) -> RunView {
+        RunView {
+            run_id: run_id.to_string(),
+            app_id: self.app_id.clone(),
+            renter_id: self.renter_id.clone(),
+            model_sha256: self.model_sha256.clone(),
+            accuracy_bps: self.accuracy_bps,
+            token_count: self.token_count,
+            recorded_at: U64(self.recorded_at),
+        }
+    }
+}
+
+fn slot(prefix: &[u8], id: &str) -> Vec<u8> {
+    [prefix, id.as_bytes()].concat()
+}
+
+fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
+    env::storage_read(key).map(|raw| {
+        T::try_from_slice(&raw).unwrap_or_else(|_| env::panic_str("Run record is corrupt"))
+    })
+}
+
+fn write_raw<T: BorshSerialize>(key: &[u8], value: &T) {
+    let bytes = near_sdk::borsh::to_vec(value).unwrap_or_else(|_| env::panic_str("Can't encode"));
+    env::storage_write(key, &bytes);
+}
+
+fn read_run(run_id: &str) -> Option<RunRecord> {
+    read_raw(&slot(RUN_PREFIX, run_id))
+}
+
+fn sample_runs(token_id: &str) -> Vec<String> {
+    read_raw(&slot(SAMPLE_RUNS_PREFIX, token_id)).unwrap_or_default()
+}
+
+fn require_unique(token_ids: &[TokenId]) {
+    for (i, token_id) in token_ids.iter().enumerate() {
+        require!(
+            !token_ids[..i].contains(token_id),
+            format!("Sample {token_id} is listed twice")
+        );
+    }
 }
 
 #[near]
@@ -117,25 +200,159 @@ impl Contract {
             (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
             format!("At most {MAX_INGEST_KEYS} keys per call")
         );
-        for (i, token_id) in token_ids.iter().enumerate() {
-            require!(
-                !token_ids[..i].contains(token_id),
-                format!("Sample {token_id} is listed twice")
-            );
+        require_unique(&token_ids);
+        for token_id in &token_ids {
             self.require_unsealed(token_id);
         }
-        let mut requests = token_ids
-            .iter()
-            .map(|token_id| self.ckd_request(sample_key_path(token_id), &app_public_key));
-        let first = requests
-            .next()
-            .unwrap_or_else(|| env::panic_str("No samples"));
-        let all = requests.fold(first, |all, next| all.and(next));
-        all.then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(GAS_FOR_SAMPLE_KEYS)
-                .on_sample_keys(token_ids),
-        )
+        self.sample_key_requests(token_ids, &app_public_key)
+    }
+
+    /// Has the MPC network derive each listed sample's key, encrypted to
+    /// `app_public_key`, for the training app that signed this transaction.
+    /// Each sample must be sealed and rented, with its use unspent, for that
+    /// app. The app checks that the renter's session asked for it;
+    /// `record_training` holds it to the renter. Resolves to
+    /// `on_sample_keys`' answer. Attach plenty of gas (300 Tgas): each
+    /// request gets a share of what is left.
+    pub fn request_sample_keys(
+        &mut self,
+        token_ids: Vec<TokenId>,
+        app_public_key: String,
+    ) -> Promise {
+        let app_id = self.require_signer_app("request sample keys");
+        self.require_dataset();
+        require!(
+            (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
+            format!("At most {MAX_INGEST_KEYS} keys per call")
+        );
+        require_unique(&token_ids);
+        for token_id in &token_ids {
+            self.require_rental(token_id, &app_id, None);
+            let sealed = self
+                .kats
+                .get(token_id)
+                .is_some_and(|kat| kat.context_version != 0);
+            require!(sealed, format!("Sample {token_id} is not sealed yet"));
+        }
+        self.sample_key_requests(token_ids, &app_public_key)
+    }
+
+    /// Records a training run by the app that signed this transaction, on
+    /// samples `renter_id` rented for it, and spends each rental. A run may
+    /// be recorded in parts: a later call with the same `run_id`, app, renter
+    /// and model adds its samples. The deposit pays the records' storage
+    /// (about 0.0013 NEAR a sample with a 64-character run_id, so up to 0.07
+    /// NEAR for 50); the rest is refunded.
+    #[payable]
+    pub fn record_training(
+        &mut self,
+        run_id: String,
+        renter_id: AccountId,
+        token_ids: Vec<TokenId>,
+        model_sha256: String,
+        accuracy_bps: u16,
+    ) -> RunView {
+        let app_id = self.require_signer_app("record training");
+        self.require_dataset();
+        require!(
+            (1..=MAX_RUN_ID_LEN).contains(&run_id.len())
+                && run_id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            "run_id is 1 to 64 lowercase letters, digits or -"
+        );
+        require!(
+            model_sha256.len() == 64 && model_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "model_sha256 is 64 hex characters"
+        );
+        let model_sha256 = model_sha256.to_lowercase();
+        require!(accuracy_bps <= 10_000, "accuracy_bps is at most 10000");
+        require!(
+            (1..=MAX_RUN_TOKENS).contains(&token_ids.len()),
+            format!("1 to {MAX_RUN_TOKENS} samples per call")
+        );
+        // Checked and spent one at a time, so a sample listed twice is
+        // refused as already used.
+        for token_id in &token_ids {
+            self.require_rental(token_id, &app_id, Some(&renter_id));
+            self.spend_rental(token_id);
+        }
+        let added = token_ids.len() as u32;
+        let before = env::storage_usage();
+        let run = match read_run(&run_id) {
+            Some(mut run) => {
+                require!(
+                    run.app_id == app_id
+                        && run.renter_id == renter_id
+                        && run.model_sha256 == model_sha256,
+                    format!("Run {run_id} was recorded for another app, renter or model")
+                );
+                run.token_count = run.token_count.saturating_add(added);
+                run
+            }
+            None => RunRecord {
+                app_id: app_id.clone(),
+                renter_id: renter_id.clone(),
+                model_sha256: model_sha256.clone(),
+                accuracy_bps,
+                token_count: added,
+                recorded_at: env::block_timestamp(),
+            },
+        };
+        write_raw(&slot(RUN_PREFIX, &run_id), &run);
+        let tokens_key = slot(RUN_TOKENS_PREFIX, &run_id);
+        let mut tokens: Vec<TokenId> = read_raw(&tokens_key).unwrap_or_default();
+        tokens.extend(token_ids.iter().cloned());
+        write_raw(&tokens_key, &tokens);
+        for token_id in &token_ids {
+            let mut runs = sample_runs(token_id);
+            runs.push(run_id.clone());
+            write_raw(&slot(SAMPLE_RUNS_PREFIX, token_id), &runs);
+        }
+        let bytes = env::storage_usage().saturating_sub(before);
+        let cost = env::storage_byte_cost().saturating_mul(u128::from(bytes));
+        let deposit = env::attached_deposit();
+        require!(
+            deposit >= cost,
+            format!("Attach at least {cost} for the run's storage")
+        );
+        let refund = deposit.saturating_sub(cost);
+        if !refund.is_zero() {
+            Promise::new(env::predecessor_account_id())
+                .transfer(refund)
+                .detach();
+        }
+        log_event(
+            "training_recorded",
+            near_sdk::serde_json::json!({
+                "run_id": run_id,
+                "app_id": app_id,
+                "renter_id": renter_id,
+                "model_sha256": model_sha256,
+                "accuracy_bps": accuracy_bps,
+                "token_ids": token_ids,
+            }),
+        );
+        run.view(&run_id)
+    }
+
+    pub fn get_run(&self, run_id: String) -> Option<RunView> {
+        read_run(&run_id).map(|run| run.view(&run_id))
+    }
+
+    /// A page of the run's samples, in the order recorded; at most 100.
+    pub fn get_run_tokens(&self, run_id: String, from: u32, limit: u32) -> Vec<TokenId> {
+        let tokens: Vec<TokenId> = read_raw(&slot(RUN_TOKENS_PREFIX, &run_id)).unwrap_or_default();
+        tokens
+            .into_iter()
+            .skip(from as usize)
+            .take(limit.min(MAX_RUN_TOKENS_PAGE) as usize)
+            .collect()
+    }
+
+    /// The runs that used a sample, oldest first.
+    pub fn get_sample_runs(&self, token_id: TokenId) -> Vec<String> {
+        sample_runs(&token_id)
     }
 
     /// One entry per token, in order: the MPC response, or None if that
@@ -189,6 +406,7 @@ impl Contract {
             owner_id,
             sample_hash: kat.context_hash.map(|h| h.to_vec().into()),
             sample_ref: kat.context_ref.clone(),
+            runs: sample_runs(&token_id).len() as u32,
         })
     }
 
@@ -201,6 +419,35 @@ impl Contract {
 }
 
 impl Contract {
+    /// One CKD request per sample, joined, then `on_sample_keys`.
+    fn sample_key_requests(&self, token_ids: Vec<TokenId>, app_public_key: &str) -> Promise {
+        let mut requests = token_ids
+            .iter()
+            .map(|token_id| self.ckd_request(sample_key_path(token_id), app_public_key));
+        let first = requests
+            .next()
+            .unwrap_or_else(|| env::panic_str("No samples"));
+        let all = requests.fold(first, |all, next| all.and(next));
+        all.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_SAMPLE_KEYS)
+                .on_sample_keys(token_ids),
+        )
+    }
+
+    /// The app of the key that signed this transaction; panics if none.
+    fn require_signer_app(&self, action: &str) -> String {
+        self.signer_app().unwrap_or_else(|| {
+            env::panic_str(&format!("Only a registered training app can {action}"))
+        })
+    }
+
+    fn require_rental(&self, token_id: &TokenId, app_id: &str, renter_id: Option<&AccountId>) {
+        if let Some(problem) = self.rental_problem(token_id, app_id, renter_id) {
+            env::panic_str(&format!("Sample {token_id}: {problem}"));
+        }
+    }
+
     pub(crate) fn require_dataset(&self) {
         require!(
             self.dataset_classes().is_some(),

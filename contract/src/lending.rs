@@ -62,7 +62,8 @@ pub struct LoanTraining {
     pub apps: Vec<String>,
     /// The app the borrower named; set when the loan starts.
     pub app_id: Option<String>,
-    /// Whether the one use has been spent (set when the key is released).
+    /// Whether the one use has been spent: set when the app records the
+    /// training run. Keys are released only before then.
     pub spent: bool,
 }
 
@@ -126,7 +127,7 @@ fn write_training(token_id: &TokenId, training: &LoanTraining) {
     env::storage_write(&training_key(token_id), &bytes);
 }
 
-fn log_event(event: &str, data: near_sdk::serde_json::Value) {
+pub(crate) fn log_event(event: &str, data: near_sdk::serde_json::Value) {
     env::log_str(&format!(
         "EVENT_JSON:{}",
         near_sdk::serde_json::json!({
@@ -518,6 +519,46 @@ impl Contract {
 }
 
 impl Contract {
+    /// Why `token_id` can't serve one training run by `app_id` for
+    /// `renter_id` (when given); None when it can. Checked in order: the loan
+    /// is active, for this app, unspent, and held by this renter.
+    pub(crate) fn rental_problem(
+        &self,
+        token_id: &TokenId,
+        app_id: &str,
+        renter_id: Option<&AccountId>,
+    ) -> Option<&'static str> {
+        let active = self.tokens.owner_by_id.get(token_id).and_then(|owner_id| {
+            read(token_id).filter(|loan| loan.status(&owner_id) == LoanStatus::Active)
+        });
+        let Some(loan) = active else {
+            return Some("rental ended");
+        };
+        let Some(training) = read_training(token_id) else {
+            return Some("rental ended");
+        };
+        if training.app_id.as_deref() != Some(app_id) {
+            return Some("rented for another app");
+        }
+        if training.spent {
+            return Some("already used");
+        }
+        if let Some(renter_id) = renter_id {
+            if loan.borrower_id.as_ref() != Some(renter_id) {
+                return Some("rented by someone else");
+            }
+        }
+        None
+    }
+
+    /// Marks a sample's rental used. Its record keeps its size.
+    pub(crate) fn spend_rental(&mut self, token_id: &TokenId) {
+        let mut training =
+            read_training(token_id).unwrap_or_else(|| env::panic_str("Loan record is missing"));
+        training.spent = true;
+        write_training(token_id, &training);
+    }
+
     /// Refuses a transfer while the token is rented out.
     pub(crate) fn assert_not_rented(&self, token_id: &TokenId) {
         let Some(owner_id) = self.tokens.owner_by_id.get(token_id) else {

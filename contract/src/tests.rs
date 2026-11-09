@@ -2272,4 +2272,342 @@ mod sample_loans {
             .sum();
         assert_eq!(back, kept);
     }
+
+    // ---- Training apps get keys for rented samples, and record runs ----
+
+    const TRAINER_DEPOSIT: NearToken = NearToken::from_millinear(100);
+    const SHA: &str = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233";
+
+    /// A call signed by an app's key, sent from `predecessor`.
+    fn as_app(key: &str, predecessor: &str, deposit: NearToken, timestamp: u64) {
+        let storage_usage = env::storage_usage();
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(acc(predecessor))
+            .signer_account_pk(pk(key))
+            .attached_deposit(deposit)
+            .storage_usage(storage_usage)
+            .block_timestamp(timestamp)
+            .build());
+    }
+
+    /// Samples 1 to 4 sealed, lent for 60 s to both apps; bob rents 1 to 3
+    /// for app one.
+    fn rented() -> Contract {
+        let mut c = setup();
+        ctx("keeper.near", NearToken::from_yoctonear(0));
+        c.set_samples(
+            (1..=4)
+                .map(|i| (i.to_string(), hash(i as u8), format!("ref{i}")))
+                .collect(),
+        );
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2", "3", "4"], 5, &["app-one", "app-two"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["1", "2", "3"]), "app-one".to_string());
+        c
+    }
+
+    fn record(c: &mut Contract, run_id: &str, tokens: &[&str]) -> crate::dataset::RunView {
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            run_id.to_string(),
+            acc("bob.near"),
+            ids(tokens),
+            SHA.to_string(),
+            9_250,
+        )
+    }
+
+    #[test]
+    fn a_rented_app_requests_keys_for_its_samples() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_sample_keys(ids(&["1", "2"]), APP_KEY.to_string());
+        let receipts = near_sdk::test_utils::get_created_receipts();
+        let paths: Vec<String> = receipts
+            .iter()
+            .filter(|r| r.receiver_id == acc("v1.signer"))
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::FunctionCallWeight { args, .. } => {
+                    let v: near_sdk::serde_json::Value =
+                        near_sdk::serde_json::from_slice(args).unwrap();
+                    Some(
+                        v["request"]["derivation_path"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            vec!["nearkat/samples/v1/1", "nearkat/samples/v1/2"],
+            "{receipts:?}"
+        );
+        let callbacks = receipts
+            .iter()
+            .flat_map(|r| r.actions.iter())
+            .filter(|a| {
+                matches!(a,
+                near_sdk::mock::MockAction::FunctionCallWeight { method_name, args, .. }
+                if method_name == b"on_sample_keys" && args == br#"{"token_ids":["1","2"]}"#)
+            })
+            .count();
+        assert_eq!(callbacks, 1, "{receipts:?}");
+        // Requesting keys does not spend the rental.
+        assert!(!c.get_loan_training("1".to_string()).unwrap().spent);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only a registered training app")]
+    fn others_get_no_sample_keys() {
+        let mut c = rented();
+        as_app(
+            "ed25519:DcA2MzgpJbrUATQLLceocVckhhAqrkingax4oJ9kZ847",
+            "bob.near",
+            NearToken::from_yoctonear(0),
+            0,
+        );
+        let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 2: rented for another app")]
+    fn sample_keys_follow_the_loans_app() {
+        let mut c = rented();
+        ctx("bob.near", YOCTO);
+        c.end_loan("2".to_string());
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["2"], 5, &["app-one", "app-two"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["2"]), "app-two".to_string());
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_sample_keys(ids(&["1", "2"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 4: rental ended")]
+    fn no_sample_keys_for_a_sample_nobody_rented() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_sample_keys(ids(&["1", "4"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 5 is not sealed yet")]
+    fn no_sample_keys_before_the_sample_is_sealed() {
+        let mut c = rented();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["5"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["5"]), "app-one".to_string());
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_sample_keys(ids(&["5"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    fn record_training_spends_each_rental_and_lists_the_run() {
+        let mut c = rented();
+        assert_eq!(c.get_sample("1".to_string()).unwrap().runs, 0);
+        let view = record(&mut c, "run-1", &["1", "2"]);
+        assert_eq!(view.run_id, "run-1");
+        assert_eq!(view.app_id, "app-one");
+        assert_eq!(view.renter_id, acc("bob.near"));
+        assert_eq!(view.model_sha256, SHA);
+        assert_eq!(view.accuracy_bps, 9_250);
+        assert_eq!(view.token_count, 2);
+        assert_eq!(c.get_run("run-1".to_string()), Some(view));
+        assert_eq!(c.get_run("run-2".to_string()), None);
+        assert_eq!(
+            c.get_run_tokens("run-1".to_string(), 0, 10),
+            ids(&["1", "2"])
+        );
+        assert_eq!(c.get_run_tokens("run-1".to_string(), 1, 10), ids(&["2"]));
+        assert_eq!(c.get_sample_runs("1".to_string()), ids(&["run-1"]));
+        assert_eq!(c.get_sample_runs("3".to_string()), Vec::<String>::new());
+        assert_eq!(c.get_sample("1".to_string()).unwrap().runs, 1);
+        assert!(c.get_loan_training("1".to_string()).unwrap().spent);
+        assert!(c.get_loan_training("2".to_string()).unwrap().spent);
+        assert!(!c.get_loan_training("3".to_string()).unwrap().spent);
+        let logs = get_logs();
+        let event = logs
+            .iter()
+            .find(|l| l.contains("\"training_recorded\""))
+            .expect("a training_recorded event");
+        assert!(event.contains(r#""token_ids":["1","2"]"#), "{event}");
+        assert!(event.contains(r#""renter_id":"bob.near""#), "{event}");
+        // The storage is charged, and the rest refunded to the trainer.
+        let refund: u128 = near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .filter(|r| r.receiver_id == acc("trainer.near"))
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                    Some(deposit.as_yoctonear())
+                }
+                _ => None,
+            })
+            .sum();
+        assert!(refund > 0 && refund < TRAINER_DEPOSIT.as_yoctonear());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 1: already used")]
+    fn record_training_refuses_a_spent_rental() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        record(&mut c, "run-2", &["1"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 1: rental ended")]
+    fn record_training_refuses_an_ended_rental() {
+        let mut c = rented();
+        as_app(
+            APP_KEY_A,
+            "trainer.near",
+            TRAINER_DEPOSIT,
+            61 * 1_000_000_000,
+        );
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 2: rented by someone else")]
+    fn record_training_names_the_renter() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("carol.near"),
+            ids(&["2"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 1: rented for another app")]
+    fn another_app_cannot_record_the_rental() {
+        let mut c = rented();
+        as_app(APP_KEY_B, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Only a registered training app")]
+    fn only_an_app_records_training() {
+        let mut c = rented();
+        ctx("bob.near", TRAINER_DEPOSIT);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 1: already used")]
+    fn no_sample_keys_after_the_rental_is_used() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    fn a_run_recorded_in_parts_adds_up() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1", "2"]);
+        let view = record(&mut c, "run-1", &["3"]);
+        assert_eq!(view.token_count, 3);
+        assert_eq!(c.get_run("run-1".to_string()).unwrap().token_count, 3);
+        assert_eq!(
+            c.get_run_tokens("run-1".to_string(), 0, 100),
+            ids(&["1", "2", "3"])
+        );
+        assert_eq!(c.get_sample_runs("3".to_string()), ids(&["run-1"]));
+    }
+
+    #[test]
+    #[should_panic(expected = "Run run-1 was recorded for another app, renter or model")]
+    fn a_run_continues_only_with_the_same_model() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["2"]),
+            "00".repeat(32),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach at least")]
+    fn recording_pays_for_its_storage() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    fn record_with(run_id: &str, sha: &str, bps: u16) {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            run_id.to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            sha.to_string(),
+            bps,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "run_id is 1 to 64")]
+    fn a_run_id_is_lowercase() {
+        record_with("Run_1", SHA, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "run_id is 1 to 64")]
+    fn a_run_id_is_short() {
+        record_with(&"r".repeat(65), SHA, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "model_sha256 is 64 hex")]
+    fn a_model_hash_is_a_sha256() {
+        record_with("run-1", "abc", 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "accuracy_bps is at most 10000")]
+    fn accuracy_is_at_most_one() {
+        record_with("run-1", SHA, 10_001);
+    }
 }
