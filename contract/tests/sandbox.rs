@@ -22,6 +22,7 @@ fn wasm() -> &'static [u8] {
 
 struct User {
     id: AccountId,
+    public_key: String,
     signer: Arc<Signer>,
 }
 
@@ -29,6 +30,7 @@ impl User {
     fn new(account: &GenesisAccount) -> TestResult<Self> {
         Ok(Self {
             id: account.account_id.clone(),
+            public_key: account.public_key.clone(),
             signer: Signer::from_secret_key(account.private_key.parse()?)?,
         })
     }
@@ -40,6 +42,8 @@ struct Env {
     rpc_url: String,
     network: NetworkConfig,
     contract: Contract,
+    /// Signs for the collection's own account.
+    owner_signer: Arc<Signer>,
     admin: User,
     keeper: User,
     treasury: User,
@@ -76,6 +80,7 @@ async fn setup_with_code(code: &[u8], tee: Value) -> TestResult<Env> {
         _sandbox: sandbox,
         network,
         contract: Contract(owner.id.clone()),
+        owner_signer: owner.signer.clone(),
         admin: User::new(&accounts[1])?,
         keeper: User::new(&accounts[2])?,
         treasury: User::new(&accounts[3])?,
@@ -480,10 +485,41 @@ async fn the_keeper_gets_the_context_key_from_the_mpc_network_through_the_collec
 }
 
 async fn setup_with_key_source() -> TestResult<Env> {
+    let (env, mpc_id, _) = key_source_world(&[]).await?;
+    Contract::deploy(env.contract.0.clone())
+        .use_code(wasm().to_vec())
+        .with_init_call(
+            "new",
+            json!({
+                "admin_id": env.admin.id,
+                "keeper_id": env.keeper.id,
+                "treasury_id": env.treasury.id,
+                "mint_price": PRICE,
+                "collection": {
+                    "name": "Nearkat",
+                    "symbol": "KAT",
+                    "base_uri": "",
+                    "key_source": { "mpc_contract_id": mpc_id, "domain_id": 2 },
+                    "wallet_code_hash": publish_token_wallet(&env).await?,
+                },
+            }),
+        )?
+        .with_signer(env.owner_signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+    Ok(env)
+}
+
+/// A sandbox with the mock MPC contract deployed at `mpc` (domain 2) and the
+/// usual accounts, plus one more per name in `extra`. The collection's own
+/// account exists but has nothing deployed.
+async fn key_source_world(extra: &[&str]) -> TestResult<(Env, AccountId, Vec<User>)> {
     let mpc = GenesisAccount::generate_with_name("mpc".parse()?);
     let names = ["nearkat", "admin", "keeper", "treasury", "alice", "bob"];
     let mut accounts = names
         .iter()
+        .chain(extra)
         .map(|name| Ok(GenesisAccount::generate_with_name(name.parse()?)))
         .collect::<TestResult<Vec<_>>>()?;
     accounts.push(mpc.clone());
@@ -512,35 +548,17 @@ async fn setup_with_key_source() -> TestResult<Env> {
         _sandbox: sandbox,
         network,
         contract: Contract(owner.id.clone()),
+        owner_signer: owner.signer.clone(),
         admin: User::new(&accounts[1])?,
         keeper: User::new(&accounts[2])?,
         treasury: User::new(&accounts[3])?,
         alice: User::new(&accounts[4])?,
         bob: User::new(&accounts[5])?,
     };
-    Contract::deploy(owner.id.clone())
-        .use_code(wasm().to_vec())
-        .with_init_call(
-            "new",
-            json!({
-                "admin_id": env.admin.id,
-                "keeper_id": env.keeper.id,
-                "treasury_id": env.treasury.id,
-                "mint_price": PRICE,
-                "collection": {
-                    "name": "Nearkat",
-                    "symbol": "KAT",
-                    "base_uri": "",
-                    "key_source": { "mpc_contract_id": mpc_user.id, "domain_id": 2 },
-                    "wallet_code_hash": publish_token_wallet(&env).await?,
-                },
-            }),
-        )?
-        .with_signer(owner.signer.clone())
-        .send_to(&env.network)
-        .await?
-        .assert_success();
-    Ok(env)
+    let more = (0..extra.len())
+        .map(|i| User::new(&accounts[6 + i]))
+        .collect::<TestResult<Vec<_>>>()?;
+    Ok((env, mpc_user.id, more))
 }
 
 fn token_wallet_wasm() -> &'static [u8] {
@@ -967,5 +985,380 @@ async fn a_token_rented_out_pays_its_owner_and_comes_back_when_its_time_is_up() 
     assert_eq!(loan(&env, &id).await?["status"], "over");
     transfer(&env, &env.alice, &env.treasury, &id).await??;
     assert_eq!(loan(&env, &id).await?, Value::Null);
+    Ok(())
+}
+
+// ---- Dataset collections ----
+
+const SAMPLES: u64 = 120;
+
+/// The BLS12-381 G1 key `secret·G`, as the MPC network wants it: a throwaway
+/// key an app makes for one request.
+fn app_keypair(seed: u8) -> (bls12_381::Scalar, String) {
+    use bls12_381::{G1Affine, G1Projective, Scalar};
+    let secret = Scalar::from_bytes_wide(&[seed; 64]);
+    let public = G1Affine::from(G1Projective::generator() * secret).to_compressed();
+    (
+        secret,
+        format!("bls12381g1:{}", bs58::encode(public).into_string()),
+    )
+}
+
+fn decode_g1(text: &str) -> bls12_381::G1Projective {
+    let raw: [u8; 48] = bs58::decode(text.strip_prefix("bls12381g1:").unwrap())
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    bls12_381::G1Projective::from(
+        Option::<bls12_381::G1Affine>::from(bls12_381::G1Affine::from_compressed(&raw)).unwrap(),
+    )
+}
+
+/// Decrypts an MPC response with the app's secret: `C - a·Y` is the derived key.
+fn decrypt(response: &Value, secret: bls12_381::Scalar) -> bls12_381::G1Affine {
+    let y = decode_g1(response["big_y"].as_str().unwrap());
+    let c = decode_g1(response["big_c"].as_str().unwrap());
+    bls12_381::G1Affine::from(c - y * secret)
+}
+
+/// Checks a derived key against the mock's derivation: it must be a valid
+/// BLS signature, under the MPC public key, on the app id for this collection
+/// and path.
+fn assert_is_the_key_for(
+    derived: bls12_381::G1Affine,
+    mpc_public_key: &str,
+    collection: &str,
+    path: &str,
+) {
+    use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+    use bls12_381::{G1Projective, G2Affine};
+    use sha3::{Digest, Sha3_256};
+    let pk_bytes: [u8; 96] = bs58::decode(mpc_public_key.strip_prefix("bls12381g2:").unwrap())
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let pk = Option::<G2Affine>::from(G2Affine::from_compressed(&pk_bytes)).unwrap();
+    let app_id = Sha3_256::digest(
+        format!("near-mpc v0.1.0 app_id derivation:{collection},{path}").as_bytes(),
+    );
+    let hashed = <G1Projective as HashToCurve<ExpandMsgXmd<sha2_09::Sha256>>>::hash_to_curve(
+        [pk.to_compressed().as_slice(), app_id.as_slice()].concat(),
+        b"NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_",
+    );
+    assert_eq!(
+        bls12_381::pairing(&derived, &G2Affine::generator()),
+        bls12_381::pairing(&bls12_381::G1Affine::from(hashed), &pk)
+    );
+}
+
+/// Like `call`, with the gas to attach.
+async fn call_gas(
+    env: &Env,
+    who: &User,
+    method: &str,
+    args: Value,
+    deposit: NearToken,
+    tgas: u64,
+) -> TestResult<Result<Value, String>> {
+    let outcome = env
+        .contract
+        .call_function(method, args)
+        .transaction()
+        .deposit(deposit)
+        .gas(near_api::types::NearGas::from_tgas(tgas))
+        .with_signer(who.id.clone(), who.signer.clone())
+        .send_to(&env.network)
+        .await?;
+    Ok(match outcome.into_result() {
+        Ok(success) => {
+            eprintln!("{method} burnt {} Tgas", success.total_gas_burnt.as_tgas());
+            Ok(success.json().unwrap_or(Value::Null))
+        }
+        Err(failure) => Err(format!("{failure:?}")),
+    })
+}
+
+async fn storage_usage(env: &Env, account: &str) -> TestResult<u64> {
+    let view = rpc(
+        env,
+        "query",
+        json!({ "request_type": "view_account", "finality": "optimistic", "account_id": account }),
+    )
+    .await?;
+    Ok(view["storage_usage"].as_u64().unwrap())
+}
+
+async fn minted(env: &Env) -> TestResult<u64> {
+    let info: Value = env
+        .contract
+        .call_function("get_collection", json!({}))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    Ok(info["minted"].as_str().unwrap().parse()?)
+}
+
+/// A sample opens only for the app it was rented to: the keeper gets the keys
+/// to seal 120 samples, an owner lends two for one app, a renter takes them,
+/// and that app (and no other) gets the same keys back, once.
+#[tokio::test]
+async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
+    let (env, mpc_id, extra) = key_source_world(&["trainer"]).await?;
+    let trainer = &extra[0];
+    let collection = env.contract.0.to_string();
+
+    // Deploy first, then initialise, to see what the premint costs in storage.
+    Contract::deploy(env.contract.0.clone())
+        .use_code(wasm().to_vec())
+        .without_init_call()
+        .with_signer(env.owner_signer.clone())
+        .send_to(&env.network)
+        .await?
+        .assert_success();
+    let before = storage_usage(&env, &collection).await?;
+    let new_outcome = env
+        .contract
+        .call_function(
+            "new",
+            json!({
+                "admin_id": env.admin.id,
+                "keeper_id": env.keeper.id,
+                "treasury_id": env.treasury.id,
+                "mint_price": PRICE,
+                "collection": {
+                    "name": "Hotdogs",
+                    "symbol": "HOT",
+                    "base_uri": "",
+                    "key_source": { "mpc_contract_id": mpc_id, "domain_id": 2 },
+                    "kind": { "Dataset": { "classes": ["hotdog", "not_hotdog"] } },
+                    "class_counts": ["60", "60"],
+                    "initial_supply": SAMPLES.to_string(),
+                },
+            }),
+        )
+        .transaction()
+        .gas(near_api::types::NearGas::from_tgas(300))
+        .with_signer(env.contract.0.clone(), env.owner_signer.clone())
+        .send_to(&env.network)
+        .await?;
+    let new_outcome = new_outcome.assert_success();
+    eprintln!("new burnt {} Tgas", new_outcome.total_gas_burnt.as_tgas());
+
+    // `new` mints a batch and chains the rest. The chain shares the gas of
+    // the one transaction, so it can fall short; the admin finishes it.
+    let mut premint = 0;
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let now = minted(&env).await?;
+        if now == premint && now > 0 {
+            break;
+        }
+        premint = now;
+    }
+    eprintln!("premint reached {premint} of {SAMPLES}");
+    let mut finishes = 0;
+    while minted(&env).await? < SAMPLES {
+        call_gas(&env, &env.admin, "finish_minting", json!({}), YOCTO, 300).await??;
+        finishes += 1;
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if minted(&env).await? == SAMPLES {
+                break;
+            }
+        }
+        eprintln!("finish_minting #{finishes}: minted {}", minted(&env).await?);
+        assert!(finishes <= 3);
+    }
+    assert_eq!(minted(&env).await?, SAMPLES);
+    let after_mint = storage_usage(&env, &collection).await?;
+    eprintln!(
+        "storage: {before} bytes before, {after_mint} after {SAMPLES} samples: {} bytes a sample, {} NEAR",
+        (after_mint - before) / SAMPLES,
+        ((after_mint - before) / SAMPLES) as f64 * 1e19 / 1e24 * SAMPLES as f64
+    );
+
+    let mpc_public_key = {
+        let view = Contract(mpc_id.clone())
+            .call_function("public_key", json!({}))
+            .read_only::<String>()
+            .fetch_from(&env.network)
+            .await?;
+        view.data
+    };
+
+    // The keeper gets two sample keys for the sealing, encrypted to its own throwaway key.
+    let (keeper_secret, keeper_public) = app_keypair(5);
+    let denied = call_gas(
+        &env,
+        &env.alice,
+        "request_ingest_keys",
+        json!({ "token_ids": ["1", "2"], "app_public_key": keeper_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(denied.unwrap_err().contains("Only the keeper"));
+    // One key a call: the mock MPC does the BLS math on-chain, about 125 Tgas
+    // a request, where the real network only queues the request.
+    let mut ingest_keys = Vec::new();
+    for token in ["1", "2"] {
+        let response = call_gas(
+            &env,
+            &env.keeper,
+            "request_ingest_keys",
+            json!({ "token_ids": [token], "app_public_key": keeper_public }),
+            NearToken::from_yoctonear(0),
+            300,
+        )
+        .await??;
+        assert_eq!(response.as_array().unwrap().len(), 1);
+        let key = decrypt(&response[0], keeper_secret);
+        assert_is_the_key_for(
+            key,
+            &mpc_public_key,
+            &collection,
+            &format!("nearkat/samples/v1/{token}"),
+        );
+        ingest_keys.push(key);
+    }
+    assert_ne!(ingest_keys[0], ingest_keys[1]);
+
+    // The keeper seals them.
+    call(
+        &env,
+        &env.keeper,
+        "set_samples",
+        json!({ "items": [
+            ["1", hash_b64(1), "fastfs://sample-1"],
+            ["2", hash_b64(2), "fastfs://sample-2"],
+        ] }),
+        NearToken::from_yoctonear(0),
+    )
+    .await??;
+    let after_seal = storage_usage(&env, &collection).await?;
+    eprintln!("storage: sealing 2 samples added {} bytes", after_seal - after_mint);
+    // A sealed sample isn't sealed twice, nor are its keys handed out as ingest keys again.
+    let again = call_gas(
+        &env,
+        &env.keeper,
+        "request_ingest_keys",
+        json!({ "token_ids": ["1"], "app_public_key": keeper_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(again.unwrap_err().contains("already sealed"));
+
+    // The admin trusts the trainer's key for "app-a".
+    call(
+        &env,
+        &env.admin,
+        "trust_app_key",
+        json!({ "public_key": trainer.public_key, "app_id": "app-a", "label": "Trainer A" }),
+        NearToken::from_millinear(100),
+    )
+    .await??;
+
+    // The admin made the samples, so Alice gets two, and lends them to app-a.
+    transfer(&env, &env.admin, &env.alice, "1").await??;
+    transfer(&env, &env.admin, &env.alice, "2").await??;
+    let offered = call(
+        &env,
+        &env.alice,
+        "lend_many",
+        json!({
+            "token_ids": ["1", "2"], "duration_s": null,
+            "fee": NearToken::from_millinear(100), "apps": ["app-a"],
+        }),
+        NearToken::from_millinear(100),
+    )
+    .await??;
+    assert_eq!(offered, json!(2));
+
+    // Not rented yet: the trainer can't open them.
+    let (trainer_secret, trainer_public) = app_keypair(7);
+    let unrented = call_gas(
+        &env,
+        trainer,
+        "request_sample_keys",
+        json!({ "token_ids": ["1", "2"], "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(unrented.unwrap_err().contains("rental ended"));
+
+    // Bob rents both; Alice is paid 0.1 NEAR for each.
+    let alice_before = balance(&env, env.alice.id.as_str()).await?;
+    let rented = call(
+        &env,
+        &env.bob,
+        "borrow_many",
+        json!({ "token_ids": ["1", "2"], "app_id": "app-a" }),
+        NearToken::from_millinear(300),
+    )
+    .await??;
+    assert_eq!(rented, json!(2));
+    assert_eq!(
+        balance(&env, env.alice.id.as_str()).await? - alice_before,
+        NearToken::from_millinear(200).as_yoctonear()
+    );
+
+    // Only the trusted app key opens them: Bob himself, or a key nobody trusts, can't.
+    let bob_asks = call_gas(
+        &env,
+        &env.bob,
+        "request_sample_keys",
+        json!({ "token_ids": ["1", "2"], "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(bob_asks
+        .unwrap_err()
+        .contains("Only a registered training app"));
+
+    // The trainer gets the very keys the keeper sealed them with.
+    for (token, expected) in ["1", "2"].into_iter().zip(&ingest_keys) {
+        let response = call_gas(
+            &env,
+            trainer,
+            "request_sample_keys",
+            json!({ "token_ids": [token], "app_public_key": trainer_public }),
+            NearToken::from_yoctonear(0),
+            300,
+        )
+        .await??;
+        assert_eq!(&decrypt(&response[0], trainer_secret), expected);
+    }
+
+    // The run is recorded, which spends the rentals; the keys don't come twice.
+    let run = call_gas(
+        &env,
+        trainer,
+        "record_training",
+        json!({
+            "run_id": "run-1", "renter_id": env.bob.id, "token_ids": ["1", "2"],
+            "model_sha256": "ab".repeat(32), "accuracy_bps": 9100,
+        }),
+        NearToken::from_millinear(100),
+        100,
+    )
+    .await??;
+    assert_eq!(run["token_count"], 2);
+    let twice = call_gas(
+        &env,
+        trainer,
+        "request_sample_keys",
+        json!({ "token_ids": ["1", "2"], "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(twice.unwrap_err().contains("already used"));
+
     Ok(())
 }
