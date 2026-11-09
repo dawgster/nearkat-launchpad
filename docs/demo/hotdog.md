@@ -42,8 +42,9 @@ Placeholders in `<angle brackets>` are filled in by the deploy step.
 
    It reads keys from `~/.near-credentials/testnet/<account>.json`. For another
    network, add `--network sandbox --rpc <url> --keys keys.json`, where
-   `keys.json` is `{ "<account>": "ed25519:<secret key>" }`. The last line must
-   read `Total: N of N samples on offer`; the exit code is 1 otherwise. It is
+   `keys.json` is `{ "<account>": "ed25519:<secret key>" }`. The last line reads
+   `Total: N of N samples on offer (N held by holders)`; the exit code is 1
+   if not every sample is on offer. It is
    safe to run again.
 6. Pre-download one trained model as `<model-file>` and record one full run at
    `<recorded-run-url>`.
@@ -65,7 +66,8 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    paid their fees. *Fallback:* if the wallet or rent fails, rent from the
    command line as the same account:
    `node scripts/demo-hotdog.ts --collection <collection> --renter <renter> --rent 150 --app <app-id>`
-   (it prints what each holder was paid), or skip to the recorded run.
+   (it prints what each holder was paid; run again after a failure and it only
+   tops up to 150), or skip to the recorded run.
 3. **Train.** Press "Train on 150 rented samples". Show the attestation and key
    requests on-chain, then the progress for under a minute. Accuracy appears,
    the run is recorded on-chain, and the model downloads. *Fallback:* if

@@ -9,7 +9,7 @@
 //   node scripts/demo-hotdog.ts --collection <id> --renter <acct> --rent 150 \
 //     --app <app_id> [--network ...] [--rpc ...] [--keys ...]
 // It rents the N cheapest offered samples for the app, spread across lenders,
-// in borrow_many calls of at most 40, each attaching exactly its fees.
+// in borrow_many calls of at most 50, each attaching exactly its fees.
 //
 // Credentials: on testnet, ~/.near-credentials/testnet/<account>.json
 // ({"private_key": "ed25519:..."}). With --keys, a JSON map of account id to
@@ -33,9 +33,7 @@ const { Near } = (await import(pathToFileURL(keeperRequire.resolve("near-kit")).
 
 const PAGE = 50; // tokens per view page, and per lend_many call
 const TRANSFERS_PER_TX = 10;
-// borrow_many logs one event per sample, and a log line may not pass 16384 bytes:
-// 50 samples came to 16503 in a sandbox run and failed, so rent in smaller calls.
-const RENT_CHUNK = 40;
+const RENT_CHUNK = 50;
 
 const { values } = parseArgs({
   options: {
@@ -129,6 +127,8 @@ interface Loan {
 }
 interface Training {
   apps: string[];
+  app_id?: string | null;
+  spent?: boolean;
 }
 
 async function tokensOf(account: string): Promise<string[]> {
@@ -179,7 +179,12 @@ async function alreadyListed(tokenId: string): Promise<boolean> {
   return loan.fee === feeYocto.toString() && !!training?.apps.includes(app);
 }
 
-// Rent mode: take N offered samples for the app, then stop.
+process.on("uncaughtException", (error) => {
+  console.error(`${error}\nNothing is lost: run the same command again to carry on.`);
+  process.exit(1);
+});
+
+// Rent mode: make sure the renter has N rentals for the app, then stop. samples for the app, then stop.
 if (renting) {
   const wanted = Number(values.rent);
   if (!Number.isInteger(wanted) || wanted <= 0) {
@@ -188,15 +193,25 @@ if (renting) {
   }
   const near = as(creator);
   const offers: Array<{ id: string; lender: string; fee: bigint }> = [];
+  let already = 0;
   const supply = Number(await near.view<string>(collection, "nft_total_supply", {}));
   for (let from = 0; from < supply; from += PAGE) {
     const page = await near.view<Token[]>(collection, "nft_tokens", { from_index: String(from), limit: PAGE });
     const found = await Promise.all(
       page.map(async ({ token_id: id }) => {
         const [loan, training] = await Promise.all([
-          near.view<(Loan & { lender_id: string }) | null>(collection, "get_loan", { token_id: id }),
+          near.view<(Loan & { lender_id: string; borrower_id?: string | null }) | null>(collection, "get_loan", { token_id: id }),
           near.view<Training | null>(collection, "get_loan_training", { token_id: id }),
         ]);
+        if (
+          loan?.status === "active" &&
+          loan.borrower_id === creator &&
+          training?.app_id === app &&
+          !training.spent
+        ) {
+          already++;
+          return null;
+        }
         return loan?.status === "offered" && loan.lender_id !== creator && training?.apps.includes(app)
           ? { id, lender: loan.lender_id, fee: BigInt(loan.fee) }
           : null;
@@ -204,22 +219,24 @@ if (renting) {
     );
     offers.push(...found.filter((o) => o !== null));
   }
+  console.log(`${creator} is already renting ${already} for ${app}`);
+  const need = Math.max(0, wanted - already);
   // Cheapest first; among equals, take one from each lender in turn.
   const queues = new Map<string, typeof offers>();
   for (const o of offers.sort((a, b) => (a.fee < b.fee ? -1 : a.fee > b.fee ? 1 : byNumber(a.id, b.id)))) {
     queues.set(o.lender, [...(queues.get(o.lender) ?? []), o]);
   }
   const picked: typeof offers = [];
-  while (picked.length < wanted && [...queues.values()].some((q) => q.length > 0)) {
+  while (picked.length < need && [...queues.values()].some((q) => q.length > 0)) {
     for (const q of queues.values()) {
       const next = q.shift();
-      if (next && picked.length < wanted) {
+      if (next && picked.length < need) {
         picked.push(next);
       }
     }
   }
-  if (picked.length < wanted) {
-    console.log(`Only ${picked.length} samples are on offer for ${app}; renting those.`);
+  if (picked.length < need) {
+    console.log(`Only ${picked.length} more samples are on offer for ${app}; renting those.`);
   }
   const paid = new Map<string, bigint>();
   let rented = 0;
@@ -236,17 +253,13 @@ if (renting) {
       paid.set(o.lender, (paid.get(o.lender) ?? 0n) + o.fee);
     }
   }
-  console.log(`${creator} rented ${rented} samples for ${app}`);
+  console.log(`${creator} rented ${rented} more samples for ${app}`);
   for (const [lender, yocto] of paid) {
-    console.log(`  paid ${lender}: ${Number(yocto) / 1e24} NEAR`);
+    console.log(`  paid ${lender}: ${Number(yocto / 10n ** 20n) / 1e4} NEAR`);
   }
-  process.exit(rented === wanted ? 0 : 1);
+  console.log(`${creator} now holds ${already + rented} of ${wanted} wanted rentals for ${app}`);
+  process.exit(already + rented >= wanted ? 0 : 1);
 }
-
-process.on("uncaughtException", (error) => {
-  console.error(`${error}\nNothing is lost: run the same command again to carry on.`);
-  process.exit(1);
-});
 
 // 1. Deal the creator's tokens out. Every token has a place by its position in
 //    the sorted list of tokens the creator and holders own, so a rerun deals
