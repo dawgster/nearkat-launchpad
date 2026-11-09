@@ -2,6 +2,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { type Offer, pickRentable, SAMPLE_SCAN_LIMIT } from "../lib/contract.ts";
 import { formatNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
+import { MIN_TRAIN_SAMPLES } from "../lib/trainer.ts";
 import { Icon } from "./Icon.tsx";
 
 export interface RentPanelProps {
@@ -20,7 +21,7 @@ export function RentPanel({ offers: all, renter, labels, borrow }: RentPanelProp
   const apps = useMemo(() => [...new Set(offers.flatMap((offer) => offer.apps))].sort(), [offers]);
   const [chosen, setApp] = useState("");
   const appId = apps.includes(chosen) ? chosen : (apps[0] ?? "");
-  const [count, setCount] = useState("1");
+  const [count, setCount] = useState(String(MIN_TRAIN_SAMPLES));
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -109,6 +110,11 @@ export function RentPanel({ offers: all, renter, labels, borrow }: RentPanelProp
           </button>
           {valid && picked.length < wanted && (
             <p className="text-xs text-mist">Only {picked.length} are on offer for this app.</p>
+          )}
+          {valid && wanted < MIN_TRAIN_SAMPLES && (
+            <p className="text-xs text-mist">
+              A training run needs at least {MIN_TRAIN_SAMPLES} samples rented for the same app.
+            </p>
           )}
         </form>
       )}

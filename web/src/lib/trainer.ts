@@ -1,5 +1,8 @@
 import { KeeperError, type Session, type SignedMessage } from "./keeper.ts";
 
+/** The fewest samples a training app trains on: it refuses a run on fewer. */
+export const MIN_TRAIN_SAMPLES = 2;
+
 export type Stage = "checking" | "keys" | "loading" | "training" | "recording" | "done" | "failed";
 
 /** A training run as the training app reports it. It never holds samples or keys. */

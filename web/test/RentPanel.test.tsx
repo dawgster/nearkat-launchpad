@@ -49,3 +49,12 @@ test("says how far it looks", () => {
   render(<RentPanel offers={offers} labels={labels} borrow={vi.fn()} />);
   expect(screen.getByText(/first 200 samples/)).toBeTruthy();
 });
+
+test("starts at the fewest a run takes, and says so when asked for fewer", async () => {
+  render(<RentPanel offers={offers} labels={labels} borrow={vi.fn()} />);
+  expect((screen.getByLabelText("How many samples") as HTMLInputElement).value).toBe("2");
+  expect(screen.queryByText(/needs at least 2 samples/)).toBeNull();
+  await userEvent.clear(screen.getByLabelText("How many samples"));
+  await userEvent.type(screen.getByLabelText("How many samples"), "1");
+  expect(screen.getByText(/A training run needs at least 2 samples/)).toBeTruthy();
+});

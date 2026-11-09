@@ -5,7 +5,13 @@ import type { AppKeyView, Rental, RunView } from "../lib/contract.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import type { Classifier, Picture } from "../lib/model.ts";
 import { describeProblem } from "../lib/problems.ts";
-import type { RunState, Stage, TokenSession, Trainer } from "../lib/trainer.ts";
+import {
+  MIN_TRAIN_SAMPLES,
+  type RunState,
+  type Stage,
+  type TokenSession,
+  type Trainer,
+} from "../lib/trainer.ts";
 import { Icon } from "./Icon.tsx";
 import { TryModel } from "./TryModel.tsx";
 
@@ -268,7 +274,13 @@ export function TrainPanel({
               {labels[appId] || "(no label)"}{" "}
               <span className="font-mono text-xs text-mist">({appId})</span>
             </p>
-            {trainers[appId] ? (
+            {trainers[appId] && tokenIds.length < MIN_TRAIN_SAMPLES ? (
+              <p className="mt-2 text-xs text-mist">
+                You have {plural(tokenIds.length, "rented sample")} for it. A run needs at least{" "}
+                {MIN_TRAIN_SAMPLES}: rent {MIN_TRAIN_SAMPLES - tokenIds.length} more for this app to
+                train.
+              </p>
+            ) : trainers[appId] ? (
               <button
                 type="button"
                 className="button mt-3 w-full"

@@ -248,3 +248,11 @@ test("when the rentals can't be read, says so and reads them again on Retry", as
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(retry).toHaveBeenCalledTimes(1);
 });
+
+test("says a run needs more than one rented sample instead of offering it", () => {
+  const trainer = fakeTrainer([{}]);
+  setup(trainer, { rentals: [{ appId: "local-trainer", tokenIds: ["1"] }] });
+  expect(screen.queryByRole("button", { name: /^Train on/ })).toBeNull();
+  expect(screen.getByText(/A run needs at least 2: rent 1 more for this app/)).toBeTruthy();
+  expect(trainer.train).not.toHaveBeenCalled();
+});
