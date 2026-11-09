@@ -31,6 +31,15 @@ for c in "${CLASSES[@]}"; do
   cp "$SRC"/train/"$c"/*.jpg "$TRAIN/$c/"
   cp "$SRC"/val/"$c"/*.jpg "$HELD_TRAINER/$c/"
   cp "$SRC"/val/"$c"/*.jpg "$HELD_WEB/$c/"
+  # Every source image must have arrived (and there must be some).
+  for pair in "train:$TRAIN" "val:$HELD_TRAINER" "val:$HELD_WEB"; do
+    want=$(find "$SRC/${pair%%:*}/$c" -name '*.jpg' | wc -l)
+    got=$(find "${pair#*:}/$c" -name '*.jpg' | wc -l)
+    if [ "$want" -eq 0 ] || [ "$want" -ne "$got" ]; then
+      echo "fetch-hotdog: $c: copied $got of $want images to ${pair#*:}" >&2
+      exit 1
+    fi
+  done
 done
 
 # Manifest for the browser.

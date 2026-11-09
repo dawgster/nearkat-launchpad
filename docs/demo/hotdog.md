@@ -44,8 +44,7 @@ Placeholders in `<angle brackets>` are filled in by the deploy step.
    network, add `--network sandbox --rpc <url> --keys keys.json`, where
    `keys.json` is `{ "<account>": "ed25519:<secret key>" }`. The last line reads
    `Total: N of N samples on offer (N held by holders)`; the exit code is 1
-   if not every sample is on offer. It is
-   safe to run again.
+   if not every sample is on offer. It is safe to run again.
 6. Pre-download one trained model as `<model-file>` and record one full run at
    `<recorded-run-url>`.
    *Fallback:* if no run completes, record the stage steps with the last good

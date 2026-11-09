@@ -184,7 +184,7 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-// Rent mode: make sure the renter has N rentals for the app, then stop. samples for the app, then stop.
+// Rent mode: make sure the renter has N rentals for the app, then stop.
 if (renting) {
   const wanted = Number(values.rent);
   if (!Number.isInteger(wanted) || wanted <= 0) {
@@ -273,19 +273,30 @@ const target = new Map(all.map((id, i) => [id, holders[i % holders.length] as st
 const moved = new Map<string, string[]>(holders.map((h) => [h, []]));
 const stuck: string[] = [];
 const toMove: Array<[string, string]> = [];
-for (const id of held.get(creator) as string[]) {
-  if (await isRented(id)) {
-    stuck.push(id);
-  } else {
-    toMove.push([id, target.get(id) as string]);
-  }
+const creatorTokens = held.get(creator) as string[];
+for (const ids of chunked(creatorTokens, PAGE)) {
+  const rented = await Promise.all(ids.map(isRented));
+  ids.forEach((id, i) => {
+    if (rented[i]) {
+      stuck.push(id);
+    } else {
+      toMove.push([id, target.get(id) as string]);
+    }
+  });
 }
+let movedCount = 0;
 for (const chunk of chunked(toMove, TRANSFERS_PER_TX)) {
   const tx = as(creator).transaction(creator);
   for (const [id, receiver] of chunk) {
     tx.functionCall(collection, "nft_transfer", { receiver_id: receiver, token_id: id }, { gas: "25 Tgas", attachedDeposit: "1 yocto" });
   }
-  report("transfer batch", await tx.send({ waitUntil: "FINAL" }), chunk.length);
+  try {
+    report("transfer batch", await tx.send({ waitUntil: "FINAL" }), chunk.length);
+  } catch (error) {
+    console.error(`Moved ${movedCount} of ${toMove.length} samples before a transfer batch of ${chunk.length} failed.`);
+    throw error;
+  }
+  movedCount += chunk.length;
   for (const [id, receiver] of chunk) {
     moved.get(receiver)?.push(id);
   }
@@ -297,10 +308,9 @@ const summary: Array<{ holder: string; held: number; received: number; offered: 
 for (const holder of holders) {
   const mine = (await tokensOf(holder)).sort(byNumber);
   const todo: string[] = [];
-  for (const id of mine) {
-    if (!(await alreadyListed(id))) {
-      todo.push(id);
-    }
+  for (const ids of chunked(mine, PAGE)) {
+    const listed = await Promise.all(ids.map(alreadyListed));
+    todo.push(...ids.filter((_, i) => !listed[i]));
   }
   let offered = 0;
   for (const chunk of chunked(todo, PAGE)) {
