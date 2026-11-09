@@ -96,6 +96,9 @@ deploying to Phala (not done yet) is in `docs/demo/phala.md`.
   trainer image (`deploy/trainer.Dockerfile`) and the web image
   (`deploy/web.Dockerfile`) do contain the held-out images, so pushing either
   image distributes them under the AGPL.
+- **The keeper's data volume is outside the TEE's memory encryption.** In the
+  Phala deployment the `keeper-data` volume holds only ciphertext and public
+  records, never keys, but the host can read, copy or delete it.
 - **What was tested against what.** Most tests run against stand-ins: a local
   NEAR sandbox and a mock MPC contract that does the real key maths. The key
   derivation is also checked live against testnet's MPC (`npm run live-check`

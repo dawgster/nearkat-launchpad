@@ -170,8 +170,9 @@ unset RUSTC_WRAPPER
 strings contract/target/near/*.wasm launchpad/target/near/*.wasm | grep -i -e "$USER" -e nearkat
 ```
 
-(The previous deployment's notes say the wrapper must be the rustc wrapper
-form above; confirm that it still applies. Some method names and error strings
+(The wrapper has to be the rustc wrapper form above: cargo-near overrides
+`RUSTFLAGS`. Re-run the `strings` check after every build. Some method names
+and error strings
 still contain "kat"; testnet is relaxed, mainnet is not.)
 
 Deploy following `contract/README.md` and `launchpad/README.md`: deploy the
