@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { KeyProof } from "../src/chain.ts";
+import { isDatasetKind } from "../src/collection.ts";
 import { Collections } from "../src/collections.ts";
 import { KatService } from "../src/kats.ts";
 import { keysFromRootSecret } from "../src/keys.ts";
@@ -298,5 +299,14 @@ describe("Collections, context keys from NEAR's MPC network", () => {
     };
     expect(await collections.add("vault.near")).toBe(true);
     expect(attestedWhenAsked).toBe(true);
+  });
+});
+
+describe("isDatasetKind", () => {
+  test("a dataset is known by its kind alone", () => {
+    expect(isDatasetKind({ Dataset: { classes: ["cat"] } })).toBe(true);
+    expect(isDatasetKind("Character")).toBe(false);
+    expect(isDatasetKind(undefined)).toBe(false);
+    expect(isDatasetKind(null)).toBe(false);
   });
 });

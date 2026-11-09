@@ -42,6 +42,10 @@ export interface CollectionInfo extends Persona {
 
 export type CollectionKind = "Character" | { Dataset: { classes: string[] } };
 
+/** Whether a collection holds training samples rather than characters. */
+export const isDatasetKind = (kind: CollectionKind | null | undefined): boolean =>
+  typeof kind === "object" && kind !== null && "Dataset" in kind;
+
 /** Amounts are yoctoNEAR strings. */
 export interface Terms {
   royalty_bps: number;

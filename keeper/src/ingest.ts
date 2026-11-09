@@ -78,12 +78,13 @@ export class Ingest {
 
     const skipped: string[] = [];
     const todo: Array<{ tokenId: string; label: string; jpeg: string }> = [];
-    for (const { token_id: tokenId, sealed } of samples) {
-      const existing = await chain.getSample(tokenId);
-      if (!existing) {
+    const existing = await Promise.all(samples.map((s) => chain.getSample(s.token_id)));
+    for (const [i, { token_id: tokenId, sealed }] of samples.entries()) {
+      const sample = existing[i];
+      if (!sample) {
         throw bad(`Token ${tokenId} does not exist`);
       }
-      if (existing.sample_ref) {
+      if (sample.sample_ref) {
         skipped.push(tokenId);
         continue;
       }

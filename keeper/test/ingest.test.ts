@@ -115,7 +115,9 @@ describe("Ingest", () => {
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(HttpError);
     expect((error as HttpError).status).toBe(400);
-    expect((error as HttpError).message).toMatch(/2/);
+    expect((error as HttpError).message).toBe(
+      "Sample 2 has a label that is not one of the classes",
+    );
     expect((error as HttpError).message).not.toContain(JPEG);
   });
 
@@ -148,7 +150,7 @@ describe("Ingest", () => {
       .seal("admin.near", [{ token_id: "2", sealed: sealed("cat", jpeg) }])
       .catch((e: unknown) => e);
     expect((error as HttpError).status).toBe(400);
-    expect((error as HttpError).message).toMatch(/2/);
+    expect((error as HttpError).message).toBe("Sample 2's picture is over 96 KB");
     expect((error as HttpError).message).not.toContain(jpeg.slice(0, 40));
   });
 

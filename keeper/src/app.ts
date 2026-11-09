@@ -231,11 +231,11 @@ export function createApp(options: AppOptions): Hono<Env> {
 
   /** Datasets hold pictures, not minds: nothing to chat with, read, export or teach. */
   const talkable = (contractId: string | undefined): KatService => {
-    const kats = serving(contractId);
+    const service = serving(contractId);
     if (options.isDataset?.(contractId ?? options.homeContractId ?? "")) {
       throw new HttpError(409, "not_talkable", "Samples can't be talked to");
     }
-    return kats;
+    return service;
   };
 
   app.post("/c/:contract/samples", async (c) => {

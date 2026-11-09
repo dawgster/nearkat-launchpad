@@ -619,7 +619,8 @@ describe("dataset collections", () => {
       attestation: async () => ({}),
       info: { chat_price: "1", save_price: "1", model: "m" },
       webOrigins: ["http://localhost:3000"],
-      collection: (id) => (id === "set.near" ? kats : undefined),
+      // char.near: a character collection, served by the same service for brevity.
+      collection: (id) => (id === "set.near" || id === "char.near" ? kats : undefined),
       isDataset: (id) => id === "set.near",
       ingest: (id) => (id === "set.near" ? ingest : undefined),
     });
@@ -679,6 +680,9 @@ describe("dataset collections", () => {
     expect((await app.request("/c/other.near/samples", as(token, { samples: [] }))).status).toBe(
       404,
     );
+    const character = await app.request("/c/char.near/samples", as(token, { samples: [] }));
+    expect(character.status).toBe(409);
+    expect(await character.json()).toMatchObject({ error: "not_a_dataset" });
     expect((await app.request("/c/set.near/samples", { method: "POST", body: "{}" })).status).toBe(
       401,
     );

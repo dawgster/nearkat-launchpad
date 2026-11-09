@@ -9,6 +9,7 @@ import { stageOf } from "../../art/traits.ts";
 import { createApp } from "./app.ts";
 import { Auth } from "./auth.ts";
 import { type Chain, NearChain, transactionArgsFrom } from "./chain.ts";
+import { isDatasetKind } from "./collection.ts";
 import { Collections } from "./collections.ts";
 import { loadConfig } from "./config.ts";
 import { FastfsStore } from "./fastfs.ts";
@@ -108,7 +109,7 @@ const collections = new Collections({
     });
     // A dataset's samples come in through the keeper, sealed to its attested key.
     const ingest =
-      info.kind && typeof info.kind === "object" && info.key_source
+      isDatasetKind(info.kind) && info.key_source
         ? new Ingest({
             contractId,
             chain,
@@ -174,7 +175,8 @@ const app = createApp({
     }
     return served;
   },
-  isDataset: (contractId) => collections.get(contractId)?.ingest !== undefined,
+  // From the collection's kind, so chat is refused even if its samples can't be taken in.
+  isDataset: (contractId) => isDatasetKind(collections.get(contractId)?.info.kind),
   ingest: (contractId) => collections.get(contractId)?.ingest,
   collections: () => ({
     home: config.contractId ?? null,
@@ -258,7 +260,7 @@ const forEach =
       collections
         .all()
         // Datasets have no minds to wake or consolidate.
-        .filter(({ ingest }) => !(characters && ingest))
+        .filter(({ info }) => !(characters && isDatasetKind(info.kind)))
         .map(({ contractId, kats, meter }) =>
           job(kats, meter).catch((error) =>
             console.error(`${name} failed for ${contractId}:`, error),
