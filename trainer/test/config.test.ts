@@ -63,7 +63,19 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ ...base, TRAINER_MODE: "phala", TRAINER_ROOT_SECRET: SECRET }),
     ).toThrow(/TRAINER_ROOT_SECRET must not be set in phala mode/);
-    expect(loadConfig({ ...base, TRAINER_MODE: "phala" }).rootSecretHex).toBeUndefined();
+    expect(
+      loadConfig({ ...base, TRAINER_MODE: "phala", TRAINER_LAUNCHPAD_ID: "launch.testnet" })
+        .rootSecretHex,
+    ).toBeUndefined();
+  });
+
+  test("trains only on a named launchpad's collections; phala mode must name one", () => {
+    const local = { ...base, TRAINER_ROOT_SECRET: SECRET };
+    expect(loadConfig(local).launchpadId).toBeNull();
+    expect(loadConfig({ ...local, TRAINER_LAUNCHPAD_ID: "launch.testnet" }).launchpadId).toBe(
+      "launch.testnet",
+    );
+    expect(() => loadConfig({ ...base, TRAINER_MODE: "phala" })).toThrow(/TRAINER_LAUNCHPAD_ID/);
   });
 
   test("local mode needs a root secret of 64 hex characters", () => {

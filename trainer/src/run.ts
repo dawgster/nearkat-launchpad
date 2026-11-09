@@ -84,6 +84,12 @@ async function mapLimit<T, R>(
 }
 
 export interface RunsOptions {
+  /**
+   * The launchpad whose collections this app trains on. A collection must
+   * say it came from it, and the launchpad must list it as live. Null: any
+   * collection (local mode only).
+   */
+  launchpadId?: string | null;
   /** The app id the contract knows this app by (the dstack app id from its event log). */
   appId: string;
   /** The NEAR key the app signs with. */
@@ -266,6 +272,16 @@ export class Runs {
   async #check(contract: string, renter: string, tokenIds: string[]) {
     const { chain, appId } = this.#o;
     const collection = await chain.getCollection(contract);
+    // A collection is code its deployer chose: one a renter wrote could
+    // relay this app's signed calls elsewhere. Only the launchpad's are
+    // known to run the published collection code.
+    const launchpad = this.#o.launchpadId;
+    if (
+      launchpad &&
+      (collection.factory_id !== launchpad || !(await chain.isLaunched(launchpad, contract)))
+    ) {
+      throw new BadRequest(`This trainer only trains on collections from ${launchpad}`);
+    }
     if (!collection.classes) {
       throw new BadRequest(`${contract} is not a dataset`);
     }

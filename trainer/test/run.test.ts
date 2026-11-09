@@ -4,13 +4,22 @@ import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
 import { ensureRegistered } from "../src/register.ts";
 import { type RunState, Runs } from "../src/run.ts";
-import { APP_ID, CONTRACT, FakePython, FakeTrainerChain, jpegFor, RENTER } from "./fakes.ts";
+import {
+  APP_ID,
+  CONTRACT,
+  FakePython,
+  FakeTrainerChain,
+  jpegFor,
+  LAUNCHPAD,
+  RENTER,
+} from "./fakes.ts";
 
-function setup() {
+function setup(launchpadId: string | null = null) {
   const chain = new FakeTrainerChain();
   const python = new FakePython();
   const ensureRegistered = vi.fn(async (_contract: string) => {});
   const runs = new Runs({
+    launchpadId,
     appId: APP_ID,
     appPublicKey: () => "ed25519:trainer",
     chain,
@@ -108,6 +117,35 @@ describe("Runs", () => {
     expect(chain.keyRequests.flat().sort()).toEqual([...ids].sort());
     expect(chain.records.map((r) => r.token_ids.length)).toEqual([50, 10]);
     expect(new Set(chain.records.map((r) => r.run_id))).toEqual(new Set([id]));
+  });
+
+  test("trains on a live collection its launchpad launched", async () => {
+    const { chain, runs } = setup(LAUNCHPAD);
+    await chain.addRentedSample("1", "cat");
+    const done = await settle(runs, (await runs.start(CONTRACT, RENTER, ["1"])).id);
+    expect(done.stage).toBe("done");
+  });
+
+  test("refuses a collection another launchpad, or nobody, launched", async () => {
+    const { chain, runs, ensureRegistered } = setup(LAUNCHPAD);
+    await chain.addRentedSample("1", "cat");
+    const refusal = {
+      status: 400,
+      message: `This trainer only trains on collections from ${LAUNCHPAD}`,
+    };
+    // A renter's own contract, claiming to be a dataset.
+    chain.factoryId = null;
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject(refusal);
+    chain.factoryId = "other-launch.near";
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject(refusal);
+    // Claims the launchpad, but the launchpad doesn't list it as live.
+    chain.factoryId = LAUNCHPAD;
+    chain.launched.delete(CONTRACT);
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject(refusal);
+    chain.launched.set(CONTRACT, false);
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject(refusal);
+    expect(chain.keyRequests).toEqual([]);
+    expect(ensureRegistered).not.toHaveBeenCalled();
   });
 
   test("refuses tokens whose rental is spent or not the caller's", async () => {

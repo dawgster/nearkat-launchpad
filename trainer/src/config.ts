@@ -10,6 +10,11 @@ export interface Config {
   rootSecretHex: string | undefined;
   /** Local mode only; in phala mode the app id comes from dstack. */
   appId: string;
+  /**
+   * The launchpad whose collections this app trains on; null trains on any
+   * (local mode only). Required in phala mode.
+   */
+  launchpadId: string | null;
   /** What the collection lists this app as. */
   label: string;
   /** The held-out images, `<dir>/<class>/*.jpg`. */
@@ -75,6 +80,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (mode === "local" && !/^[0-9a-fA-F]{64}$/.test(env.TRAINER_ROOT_SECRET ?? "")) {
     throw new Error("TRAINER_ROOT_SECRET must be 64 hex characters in local mode");
   }
+  if (mode === "phala" && !env.TRAINER_LAUNCHPAD_ID) {
+    throw new Error("TRAINER_LAUNCHPAD_ID is required in phala mode");
+  }
   const port = Number(env.PORT ?? "8790");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be a port number");
@@ -86,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     rpcUrl: env.NEAR_RPC_URL || undefined,
     trainerAccountId: required(env, "TRAINER_ACCOUNT_ID"),
     rootSecretHex: env.TRAINER_ROOT_SECRET || undefined,
+    launchpadId: env.TRAINER_LAUNCHPAD_ID || null,
     appId: env.TRAINER_APP_ID || "local-trainer",
     label: env.TRAINER_LABEL || "Hotdog CNN",
     heldoutDir: env.HELDOUT_DIR ?? "./data/heldout",

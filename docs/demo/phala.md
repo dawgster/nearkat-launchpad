@@ -53,8 +53,10 @@ NEAR_AI_API_KEY=<secret, encrypted at deploy>
 ```
 
 and `.phala-trainer.env` with `TRAINER_IMAGE`, `NEAR_RPC_URL`,
-`NEAR_ARCHIVAL_RPC_URL`, `TRAINER_ACCOUNT_ID=<trainer-account>`, `WEB_ORIGINS`,
-`AUTH_RECIPIENT`. Then **(to verify)**:
+`NEAR_ARCHIVAL_RPC_URL`, `TRAINER_ACCOUNT_ID=<trainer-account>`,
+`LAUNCHPAD_ID=<launchpad>` (the trainer trains only on collections that
+launchpad launched and lists as live; it refuses any other contract, which
+could relay its signed calls), `WEB_ORIGINS`, `AUTH_RECIPIENT`. Then **(to verify)**:
 
 ```bash
 phala auth login <api-key>

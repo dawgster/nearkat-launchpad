@@ -54,6 +54,7 @@ const chain = new NearTrainerChain(near, {
 });
 
 const runs = new Runs({
+  launchpadId: config.launchpadId,
   appId,
   appPublicKey: () => publicKey,
   chain,
@@ -112,6 +113,11 @@ console.log(
     : "Running in local mode; the operator holds the keys",
 );
 console.log(`${heldout} held-out images in ${config.heldoutDir}`);
+console.log(
+  config.launchpadId
+    ? `Training only on collections launched by ${config.launchpadId}`
+    : "Training on any collection (local mode, no TRAINER_LAUNCHPAD_ID)",
+);
 console.log(
   `Trainer account ${config.trainerAccountId} must hold the full-access key ${publicKey}`,
 );

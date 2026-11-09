@@ -192,6 +192,7 @@ export default async function globalSetup() {
     TRAINER_ACCOUNT_ID: names.trainer,
     TRAINER_ROOT_SECRET: "09".repeat(32),
     TRAINER_APP_ID,
+    TRAINER_LAUNCHPAD_ID: names.launchpad,
     HELDOUT_DIR: resolve("e2e/fixtures/heldout"),
     SAMPLE_KEYS_PER_CALL: "1",
     TRAINER_EPOCHS: "3",

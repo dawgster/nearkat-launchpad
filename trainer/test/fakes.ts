@@ -18,6 +18,7 @@ export const KEY_SOURCE: KeySource = { mpc_contract_id: "v1.signer", domain_id: 
 export const CONTRACT = "cats-vs-dogs.launch.near";
 export const APP_ID = "a".repeat(64);
 export const RENTER = "renter.near";
+export const LAUNCHPAD = "launch.near";
 
 const G1 = bls.G1.Point;
 const DST = "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_";
@@ -31,6 +32,10 @@ export const jpegFor = (tokenId: string) => Buffer.from(`jpeg of sample ${tokenI
 export class FakeTrainerChain implements TrainerChain {
   readonly mpcSecret = 0x5eed_cafen;
   classes: string[] | null = ["cat", "dog"];
+  /** The launchpad the collection says it came from. */
+  factoryId: string | null = LAUNCHPAD;
+  /** The launchpad's listing: each collection it launched, and whether it is live. */
+  readonly launched = new Map<string, boolean>([[CONTRACT, true]]);
   readonly loans = new Map<string, LoanView>();
   readonly training = new Map<string, LoanTraining>();
   readonly samples = new Map<string, SampleView>();
@@ -103,7 +108,11 @@ export class FakeTrainerChain implements TrainerChain {
   }
 
   async getCollection(_contract: string) {
-    return { classes: this.classes, key_source: KEY_SOURCE };
+    return { classes: this.classes, key_source: KEY_SOURCE, factory_id: this.factoryId };
+  }
+
+  async isLaunched(launchpad: string, contract: string) {
+    return launchpad === LAUNCHPAD && this.launched.get(contract) === true;
   }
 
   async getLoan(_contract: string, id: string) {

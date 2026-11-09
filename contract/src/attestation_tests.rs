@@ -379,6 +379,26 @@ fn register_app_key_passes_proof_of_possession_then_checks_the_quote() {
     );
 }
 
+#[test]
+#[should_panic(expected = "Call this directly, not through another contract")]
+fn an_app_key_is_registered_directly() {
+    let mut c = tee_collection();
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(acc("relay.near"))
+        .signer_account_id(acc("anyone.near"))
+        .signer_account_pk(key(KEY))
+        .attached_deposit(NearToken::from_near(1))
+        .build());
+    c.register_app_key(
+        key(KEY),
+        SEAL.to_string(),
+        "trainer".to_string(),
+        hex::encode(INTEL_QUOTE),
+        INTEL_COLLATERAL.to_string(),
+        "[]".to_string(),
+    );
+}
+
 fn entry(app: &str, label: &str) -> crate::apps::AppKey {
     crate::apps::AppKey {
         app_id: app.to_string(),

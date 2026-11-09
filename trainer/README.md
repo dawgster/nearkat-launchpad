@@ -28,6 +28,7 @@ Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
 | `NEAR_RPC_URL` | network default | Required for `sandbox`. |
 | `TRAINER_ACCOUNT_ID` | required | The NEAR account that signs `record_training` and `register_app_key`. |
 | `TRAINER_ROOT_SECRET` | required in local mode | 64 hex characters. Refused in phala mode. |
+| `TRAINER_LAUNCHPAD_ID` | required in phala mode | The launchpad whose collections this app trains on. A collection must name it as its `factory_id`, and the launchpad must list it as live; others get 400 "This trainer only trains on collections from …". Unset in local mode: any collection. |
 | `TRAINER_APP_ID` | `local-trainer` | Local mode only; in phala mode it is `dstack.info().app_id`. |
 | `TRAINER_LABEL` | `Hotdog CNN` | The name the collection lists this app under. |
 | `HELDOUT_DIR` | `./data/heldout` | Held-out images, `<dir>/<class>/*.jpg`. |

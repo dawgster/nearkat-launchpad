@@ -20,6 +20,8 @@ services:
       NEAR_RPC_URL: ${NEAR_RPC_URL}
       ARCHIVAL_RPC_URL: ${NEAR_ARCHIVAL_RPC_URL}
       TRAINER_ACCOUNT_ID: ${TRAINER_ACCOUNT_ID}
+      # Only this launchpad's collections get the app's signed calls.
+      TRAINER_LAUNCHPAD_ID: ${LAUNCHPAD_ID}
       TRAINER_LABEL: Hotdog CNN
       SAMPLE_KEYS_PER_CALL: "10"
       WEB_ORIGINS: ${WEB_ORIGINS}

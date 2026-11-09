@@ -15,6 +15,7 @@ fn ctx(predecessor: &str, deposit: NearToken) {
     let storage_usage = env::storage_usage();
     testing_env!(VMContextBuilder::new()
         .predecessor_account_id(acc(predecessor))
+        .signer_account_id(acc(predecessor))
         .attached_deposit(deposit)
         .storage_usage(storage_usage)
         .build());
@@ -1201,6 +1202,7 @@ fn ctx_at(predecessor: &str, deposit: NearToken, timestamp: u64) {
     testing_env!(VMContextBuilder::new()
         .current_account_id(acc("lantern.near"))
         .predecessor_account_id(acc(predecessor))
+        .signer_account_id(acc(predecessor))
         .attached_deposit(deposit)
         .storage_usage(storage_usage)
         .block_timestamp(timestamp)
@@ -1946,6 +1948,38 @@ fn ingest_keys_are_limited_per_call() {
     let _ = c.request_ingest_keys(all, APP_KEY.to_string());
 }
 
+/// A call that reached the collection through another contract:
+/// `signer` signed the transaction, `predecessor` made the call.
+fn relayed(predecessor: &str, signer: &str, signer_pk: Option<&str>, deposit: NearToken) {
+    let storage_usage = env::storage_usage();
+    let mut builder = VMContextBuilder::new();
+    builder
+        .predecessor_account_id(acc(predecessor))
+        .signer_account_id(acc(signer))
+        .attached_deposit(deposit)
+        .storage_usage(storage_usage);
+    if let Some(key) = signer_pk {
+        builder.signer_account_pk(pk(key));
+    }
+    testing_env!(builder.build());
+}
+
+#[test]
+#[should_panic(expected = "Call this directly, not through another contract")]
+fn ingest_keys_are_requested_directly() {
+    let mut c = sample_dataset();
+    relayed("keeper.near", "mallory.near", None, NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["1"]), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "Call this directly, not through another contract")]
+fn samples_are_sealed_directly() {
+    let mut c = sample_dataset();
+    relayed("keeper.near", "mallory.near", None, NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
+}
+
 #[test]
 fn set_samples_seals_each_sample_once() {
     let mut c = sample_dataset();
@@ -2333,6 +2367,7 @@ mod sample_loans {
         let storage_usage = env::storage_usage();
         testing_env!(VMContextBuilder::new()
             .predecessor_account_id(acc(predecessor))
+            .signer_account_id(acc(predecessor))
             .signer_account_pk(pk(key))
             .attached_deposit(deposit)
             .storage_usage(storage_usage)
@@ -2580,6 +2615,34 @@ mod sample_loans {
         record(&mut c, "run-1", &["1"]);
         as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
         let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Call this directly, not through another contract")]
+    fn sample_keys_go_only_to_a_direct_call() {
+        // The trainer signed a call to a renter's contract, which relays it.
+        let mut c = rented();
+        relayed(
+            "relay.near",
+            "trainer.near",
+            Some(APP_KEY_A),
+            NearToken::from_yoctonear(0),
+        );
+        let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Call this directly, not through another contract")]
+    fn training_is_recorded_only_by_a_direct_call() {
+        let mut c = rented();
+        relayed("relay.near", "trainer.near", Some(APP_KEY_A), TRAINER_DEPOSIT);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["1"]),
+            SHA.to_string(),
+            9_250,
+        );
     }
 
     #[test]

@@ -44,6 +44,17 @@ fn read_apps() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Refuses a call that reached the collection through another contract. A
+/// training app is known only by the key that signed the transaction, so a
+/// contract the app was led to call could otherwise relay its signature here
+/// with arguments of its own.
+pub(crate) fn require_direct_call() {
+    require!(
+        env::predecessor_account_id() == env::signer_account_id(),
+        "Call this directly, not through another contract"
+    );
+}
+
 fn require_label(label: &str) {
     require!(
         (1..=MAX_LABEL_LEN).contains(&label.chars().count())
@@ -68,6 +79,7 @@ impl Contract {
         collateral: String,
         event_log: String,
     ) -> AppKey {
+        require_direct_call();
         require!(
             env::signer_account_pk() == public_key,
             "Sign the registration with the key being registered"

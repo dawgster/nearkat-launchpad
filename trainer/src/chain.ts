@@ -27,8 +27,17 @@ export interface TrainingRecord {
 
 /** What the training app needs from the dataset collections it trains on. */
 export interface TrainerChain {
-  /** The dataset's classes (null for a character collection) and where its keys come from. */
-  getCollection(contract: string): Promise<{ classes: string[] | null; key_source: KeySource }>;
+  /**
+   * The dataset's classes (null for a character collection), where its keys
+   * come from, and the launchpad it says launched it (null if none).
+   */
+  getCollection(contract: string): Promise<{
+    classes: string[] | null;
+    key_source: KeySource;
+    factory_id: string | null;
+  }>;
+  /** Whether `launchpad` lists `contract` as a collection it launched, and live. */
+  isLaunched(launchpad: string, contract: string): Promise<boolean>;
   getLoan(contract: string, id: string): Promise<LoanView | null>;
   getLoanTraining(contract: string, id: string): Promise<LoanTraining | null>;
   getSample(contract: string, id: string): Promise<SampleView | null>;
@@ -95,11 +104,11 @@ export class NearTrainerChain implements TrainerChain {
   }
 
   async getCollection(contract: string) {
-    const view = await this.#view<{ kind?: CollectionKind; key_source: KeySource }>(
-      contract,
-      "get_collection",
-      {},
-    );
+    const view = await this.#view<{
+      kind?: CollectionKind;
+      key_source: KeySource;
+      factory_id?: string | null;
+    }>(contract, "get_collection", {});
     if (!view) {
       throw new Error(`Contract ${contract} returned no collection`);
     }
@@ -107,7 +116,15 @@ export class NearTrainerChain implements TrainerChain {
     return {
       classes: typeof kind === "object" ? kind.Dataset.classes : null,
       key_source: view.key_source,
+      factory_id: view.factory_id ?? null,
     };
+  }
+
+  async isLaunched(launchpad: string, contract: string) {
+    const entry = await this.#view<{ live?: boolean }>(launchpad, "get_collection", {
+      account_id: contract,
+    });
+    return entry?.live === true;
   }
 
   getLoan(contract: string, id: string) {

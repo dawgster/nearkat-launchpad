@@ -8,6 +8,7 @@ use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{Base64VecU8, U64};
 use near_sdk::{env, near, require, AccountId, Gas, GasWeight, NearToken, Promise};
 
+use crate::apps::require_direct_call;
 use crate::ckd::sample_key_path;
 use crate::kat::{CollectionKind, Kat};
 use crate::lending::log_event;
@@ -207,6 +208,7 @@ impl Contract {
         token_ids: Vec<TokenId>,
         app_public_key: String,
     ) -> Promise {
+        require_direct_call();
         self.assert_keeper();
         self.require_dataset();
         require!(
@@ -221,7 +223,8 @@ impl Contract {
     }
 
     /// Has the MPC network derive each listed sample's key, encrypted to
-    /// `app_public_key`, for the training app that signed this transaction.
+    /// `app_public_key`, for the training app that signed this transaction
+    /// and called the collection directly.
     /// Each sample must be sealed and rented, with its use unspent, for that
     /// app. The app checks that the renter's session asked for it;
     /// `record_training` holds it to the renter. Resolves to
@@ -232,6 +235,7 @@ impl Contract {
         token_ids: Vec<TokenId>,
         app_public_key: String,
     ) -> Promise {
+        require_direct_call();
         let app_id = self.require_signer_app("request sample keys");
         self.require_dataset();
         require!(
@@ -265,6 +269,7 @@ impl Contract {
         model_sha256: String,
         accuracy_bps: u16,
     ) -> RunView {
+        require_direct_call();
         let app_id = self.require_signer_app("record training");
         self.require_dataset();
         require!(
@@ -388,6 +393,7 @@ impl Contract {
     /// Records each sample's encrypted blob: its sha256 and FastFS ref. A
     /// sample is sealed once. Keeper only; dataset only.
     pub fn set_samples(&mut self, items: Vec<(TokenId, Base64VecU8, String)>) {
+        require_direct_call();
         self.assert_keeper();
         self.require_dataset();
         require!(
