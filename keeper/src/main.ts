@@ -116,6 +116,7 @@ const collections = new Collections({
             sealing: keys.sealing(),
             keySource: info.key_source,
             mpcPublicKey: () => chain.mpcPublicKey(info.key_source),
+            keysPerCall: config.sampleKeysPerCall,
           })
         : undefined;
     return { meter, kats, ingest };

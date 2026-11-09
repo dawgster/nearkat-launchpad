@@ -59,6 +59,7 @@ const runs = new Runs({
   chain,
   python: runPython,
   heldoutDir: config.heldoutDir,
+  keysPerCall: config.sampleKeysPerCall,
   ensureRegistered: ensureRegistered({
     chain,
     mode: config.mode,

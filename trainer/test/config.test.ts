@@ -20,6 +20,17 @@ describe("loadConfig", () => {
     });
   });
 
+  test("asks for 10 sample keys per call unless told otherwise", () => {
+    const local = { ...base, TRAINER_ROOT_SECRET: SECRET };
+    expect(loadConfig(local).sampleKeysPerCall).toBe(10);
+    expect(loadConfig({ ...local, SAMPLE_KEYS_PER_CALL: "1" }).sampleKeysPerCall).toBe(1);
+    for (const bad of ["0", "11", "2.5", "x"]) {
+      expect(() => loadConfig({ ...local, SAMPLE_KEYS_PER_CALL: bad }), bad).toThrow(
+        /SAMPLE_KEYS_PER_CALL/,
+      );
+    }
+  });
+
   test("reads overrides", () => {
     const config = loadConfig({
       ...base,

@@ -70,6 +70,41 @@ describe("samples", () => {
     expect(keys.get("1")?.equals(keys.get("2") as Buffer)).toBe(false);
   });
 
+  test("fetchSampleKeys asks in chunks of perCall", async () => {
+    const chain = new FakeChain();
+    const ids = Array.from({ length: 23 }, (_, i) => String(i + 1));
+    const sizes: number[] = [];
+    const keys = await fetchSampleKeys(
+      chain.contractId,
+      KEY_SOURCE,
+      async (tokenIds, appPublicKey) => {
+        sizes.push(tokenIds.length);
+        return chain.requestIngestKeys(tokenIds, appPublicKey);
+      },
+      await chain.mpcPublicKey(KEY_SOURCE),
+      ids,
+      1,
+    );
+    expect(sizes).toEqual(Array(23).fill(1));
+    expect(keys.size).toBe(23);
+  });
+
+  test("fetchSampleKeys asks for 1 to 10 keys per call", async () => {
+    const chain = new FakeChain();
+    for (const perCall of [0, 11, 1.5]) {
+      await expect(
+        fetchSampleKeys(
+          chain.contractId,
+          KEY_SOURCE,
+          async () => [],
+          await chain.mpcPublicKey(KEY_SOURCE),
+          ["1"],
+          perCall,
+        ),
+      ).rejects.toThrow(/1 to 10/);
+    }
+  });
+
   test("a missing answer names the sample", async () => {
     const chain = new FakeChain();
     await expect(

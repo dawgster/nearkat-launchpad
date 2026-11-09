@@ -24,6 +24,16 @@ describe("loadConfig", () => {
     });
   });
 
+  test("asks for 10 sample keys per call unless told otherwise", () => {
+    expect(loadConfig(base).sampleKeysPerCall).toBe(10);
+    expect(loadConfig({ ...base, SAMPLE_KEYS_PER_CALL: "1" }).sampleKeysPerCall).toBe(1);
+    for (const bad of ["0", "11", "2.5", "x"]) {
+      expect(() => loadConfig({ ...base, SAMPLE_KEYS_PER_CALL: bad }), bad).toThrow(
+        /SAMPLE_KEYS_PER_CALL/,
+      );
+    }
+  });
+
   test("reads overrides", () => {
     const config = loadConfig({
       ...base,

@@ -17,6 +17,8 @@ export interface Config {
   archivalRpcUrl: string;
   /** Serves FastFS files over HTTP; `{uploader}` is filled in. Null: read from the chain only. */
   fastfsGateway: string | null;
+  /** Sample keys asked for per call to the collection, 1 to 10. 1 for the sandbox's mock MPC. */
+  sampleKeysPerCall: number;
   port: number;
   authRecipient: string;
   /** Origins the web app is served from, for CORS. */
@@ -27,6 +29,15 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) {
     throw new Error(`Missing environment variable ${name}`);
+  }
+  return value;
+}
+
+/** Sample keys asked for per call: 1 to 10. Use 1 with the sandbox's mock MPC, which costs ~120 Tgas per key. */
+function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
+  const value = Number(env.SAMPLE_KEYS_PER_CALL ?? "10");
+  if (!Number.isInteger(value) || value < 1 || value > 10) {
+    throw new Error("SAMPLE_KEYS_PER_CALL must be a whole number from 1 to 10");
   }
   return value;
 }
@@ -75,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
         : network === "mainnet"
           ? "https://{uploader}.fastfs.io"
           : null,
+    sampleKeysPerCall: sampleKeysPerCall(env),
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
     webOrigins: (env.WEB_ORIGINS ?? "http://localhost:3000")

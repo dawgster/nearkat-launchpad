@@ -167,6 +167,8 @@ export default async function globalSetup() {
     STORAGE: "fastfs",
     NEAR_ARCHIVAL_RPC_URL: sandbox.rpcUrl,
     FASTFS_GATEWAY: "",
+    // The mock MPC does the key maths in wasm, about 120 Tgas a key: one key per call fits.
+    SAMPLE_KEYS_PER_CALL: "1",
   });
   const attestation = await (await waitFor(`http://127.0.0.1:${KEEPER_PORT}/attestation`)).json();
 

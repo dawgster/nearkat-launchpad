@@ -23,6 +23,8 @@ export interface IngestOptions {
   sealing: SealingKey;
   keySource: KeySource;
   mpcPublicKey: () => Promise<string>;
+  /** Sample keys asked for per call, 1 to 10. Defaults to 10. */
+  keysPerCall?: number;
 }
 
 const bad = (message: string) => new HttpError(400, "invalid_input", message);
@@ -98,6 +100,7 @@ export class Ingest {
       (ids, appPublicKey) => chain.requestIngestKeys(ids, appPublicKey),
       await this.#o.mpcPublicKey(),
       todo.map((t) => t.tokenId),
+      this.#o.keysPerCall,
     );
     const blobs = todo.map(({ tokenId, label, jpeg }) =>
       sealSample(keys.get(tokenId) as Buffer, { v: 1, token_id: tokenId, label, jpeg }),

@@ -111,12 +111,14 @@ export function sampleKey(derivedKey: Uint8Array, tokenId: string): Buffer {
   );
 }
 
-const SAMPLE_KEYS_PER_REQUEST = 10;
+/** The most keys one call asks for: what the contract allows. */
+export const MAX_SAMPLE_KEYS_PER_CALL = 10;
 
 /**
- * Every listed sample's key. Asks the collection in chunks of ten, in
- * parallel, each with its own throwaway key, and checks every answer is the
- * network's signature on that sample's app id.
+ * Every listed sample's key. Asks the collection in chunks of `perCall` (up
+ * to ten), in parallel, each with its own throwaway key, and checks every
+ * answer is the network's signature on that sample's app id. Use 1 with the
+ * sandbox's mock MPC, which spends about 120 Tgas on each key.
  */
 export async function fetchSampleKeys(
   collectionId: string,
@@ -127,10 +129,14 @@ export async function fetchSampleKeys(
   ) => Promise<Array<{ big_y: string; big_c: string } | null>>,
   mpcPublicKey: string,
   tokenIds: string[],
+  perCall = MAX_SAMPLE_KEYS_PER_CALL,
 ): Promise<Map<string, Buffer>> {
+  if (!Number.isInteger(perCall) || perCall < 1 || perCall > MAX_SAMPLE_KEYS_PER_CALL) {
+    throw new Error(`Ask for 1 to ${MAX_SAMPLE_KEYS_PER_CALL} sample keys per call`);
+  }
   const chunks: string[][] = [];
-  for (let i = 0; i < tokenIds.length; i += SAMPLE_KEYS_PER_REQUEST) {
-    chunks.push(tokenIds.slice(i, i + SAMPLE_KEYS_PER_REQUEST));
+  for (let i = 0; i < tokenIds.length; i += perCall) {
+    chunks.push(tokenIds.slice(i, i + perCall));
   }
   const keys = new Map<string, Buffer>();
   await Promise.all(

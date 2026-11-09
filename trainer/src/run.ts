@@ -92,6 +92,8 @@ export interface RunsOptions {
   heldoutDir: string;
   /** Registers the app's key with the collection if it isn't yet. */
   ensureRegistered(contract: string): Promise<void>;
+  /** Sample keys asked for per call, 1 to 10. Defaults to 10. */
+  keysPerCall?: number;
   /** The clock, in ms; for tests. */
   now?: () => number;
 }
@@ -314,6 +316,7 @@ export class Runs {
         (ids, appPublicKey) => chain.requestSampleKeys(contract, ids, appPublicKey),
         mpcPublicKey,
         tokenIds,
+        this.#o.keysPerCall,
       ).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : "";
         throw /^No key for sample \S+$/.test(message) ? new RunFailure(message) : error;

@@ -100,6 +100,12 @@ gateway (`https://<uploader>.fastfs.io` on mainnet), then any archival RPC
 node (`NEAR_ARCHIVAL_RPC_URL`), checking the hash each time. `STORAGE=file`
 keeps contexts only on disk.
 
+A dataset collection's samples (`POST /c/:contract/samples`) are each sealed
+under their own key from the MPC network, asked for through the collection's
+`request_ingest_keys`. `SAMPLE_KEYS_PER_CALL` (default `10`, 1 to 10) sets how
+many keys one call asks for: 1 for the sandbox's mock MPC, which costs ~120
+Tgas per key.
+
 If a collection names a Phala app (`tee`), the keeper refuses to serve it
 unless it runs as exactly that app. In that case it first proves its key to
 the contract: it fetches Intel's collateral for its quote from Phala's PCCS

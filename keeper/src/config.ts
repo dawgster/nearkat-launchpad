@@ -32,6 +32,8 @@ export interface Config {
   meterJournal: string;
   /** Upper bound on reply length, in tokens. */
   maxTokens: number;
+  /** Sample keys asked for per call to the collection, 1 to 10. 1 for the sandbox's mock MPC. */
+  sampleKeysPerCall: number;
   port: number;
   authRecipient: string;
   /** Origins the web app is served from, for CORS. */
@@ -70,6 +72,15 @@ function yocto(env: NodeJS.ProcessEnv, name: string, fallback: string): bigint {
     throw new Error(`${name} must be a non-negative whole number of yoctoNEAR`);
   }
   return BigInt(value);
+}
+
+/** Sample keys asked for per call: 1 to 10. Use 1 with the sandbox's mock MPC, which costs ~120 Tgas per key. */
+function sampleKeysPerCall(env: NodeJS.ProcessEnv): number {
+  const value = Number(env.SAMPLE_KEYS_PER_CALL ?? "10");
+  if (!Number.isInteger(value) || value < 1 || value > 10) {
+    throw new Error("SAMPLE_KEYS_PER_CALL must be a whole number from 1 to 10");
+  }
+  return value;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -133,6 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
         : `https://archival-rpc.${network}.fastnear.com`),
     meterJournal: env.METER_JOURNAL ?? "./data/meter.json",
     maxTokens,
+    sampleKeysPerCall: sampleKeysPerCall(env),
     port,
     authRecipient: env.AUTH_RECIPIENT ?? "nearkat.xyz",
     webOrigins: (env.WEB_ORIGIN ?? "http://localhost:3000")
