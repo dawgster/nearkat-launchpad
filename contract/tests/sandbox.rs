@@ -991,6 +991,11 @@ async fn a_token_rented_out_pays_its_owner_and_comes_back_when_its_time_is_up() 
 // ---- Dataset collections ----
 
 const SAMPLES: u64 = 120;
+/// What `new` mints itself before chaining the rest (`SAMPLE_MINT_BATCH`).
+const SAMPLE_MINT_BATCH: u64 = 50;
+/// The storage the web launch pays per sample: SAMPLE_STORAGE_DEPOSIT in
+/// web/src/lib/launchpad.ts, 0.008 NEAR, at 10^19 yoctoNEAR a byte.
+const SAMPLE_STORAGE_BYTES: u64 = 800;
 
 /// The BLS12-381 G1 key `secret·G`, as the MPC network wants it: a throwaway
 /// key an app makes for one request.
@@ -1044,7 +1049,7 @@ fn assert_is_the_key_for(
         format!("near-mpc v0.1.0 app_id derivation:{collection},{path}").as_bytes(),
     );
     let hashed = <G1Projective as HashToCurve<ExpandMsgXmd<sha2_09::Sha256>>>::hash_to_curve(
-        [pk.to_compressed().as_slice(), app_id.as_slice()].concat(),
+        [pk.to_compressed().as_slice(), &app_id[..]].concat(),
         b"NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_",
     );
     assert_eq!(
@@ -1184,17 +1189,15 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     eprintln!("new burnt {} Tgas", new_outcome.total_gas_burnt.as_tgas());
 
     // `new` mints a batch and chains the rest. The chain shares the gas of
-    // the one transaction, so it can fall short; the admin finishes it.
-    let mut premint = 0;
-    for _ in 0..20 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let now = minted(&env).await?;
-        if now == premint && now > 0 {
-            break;
-        }
-        premint = now;
-    }
+    // the one transaction, so it can fall short; the admin finishes it. A
+    // call returns once its whole receipt chain is final (near-api waits for
+    // FINAL), so no continuation is still in flight when this reads.
+    let premint = minted(&env).await?;
     eprintln!("premint reached {premint} of {SAMPLES}");
+    assert!(
+        premint >= SAMPLE_MINT_BATCH,
+        "only {premint} minted at launch"
+    );
     let mut finishes = 0;
     while minted(&env).await? < SAMPLES {
         call_gas(
@@ -1207,21 +1210,15 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
         )
         .await??;
         finishes += 1;
-        for _ in 0..40 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if minted(&env).await? == SAMPLES {
-                break;
-            }
-        }
         eprintln!("finish_minting #{finishes}: minted {}", minted(&env).await?);
         assert!(finishes <= 3);
     }
     assert_eq!(minted(&env).await?, SAMPLES);
     let after_mint = storage_usage(&env, &collection).await?;
+    let mint_bytes = (after_mint - before).div_ceil(SAMPLES);
     eprintln!(
-        "storage: {before} bytes before, {after_mint} after {SAMPLES} samples: {} bytes a sample, {} NEAR",
-        (after_mint - before) / SAMPLES,
-        ((after_mint - before) / SAMPLES) as f64 * 1e19 / 1e24 * SAMPLES as f64
+        "storage: {before} bytes before, {after_mint} after {SAMPLES} samples: {mint_bytes} bytes a sample, {} NEAR in all",
+        (after_mint - before) as f64 * 1e19 / 1e24
     );
 
     let mpc_public_key = {
@@ -1283,9 +1280,14 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     )
     .await??;
     let after_seal = storage_usage(&env, &collection).await?;
-    eprintln!(
-        "storage: sealing 2 samples added {} bytes",
-        after_seal - after_mint
+    let seal_bytes = (after_seal - after_mint).div_ceil(2);
+    eprintln!("storage: sealing adds {seal_bytes} bytes a sample");
+    // The web launch funds each sample with SAMPLE_STORAGE_DEPOSIT, 0.008
+    // NEAR: 800 bytes, for minting and sealing it.
+    assert!(
+        mint_bytes + seal_bytes <= SAMPLE_STORAGE_BYTES,
+        "a sample takes {} bytes, more than the {SAMPLE_STORAGE_BYTES} the launch pays for",
+        mint_bytes + seal_bytes
     );
     // A sealed sample isn't sealed twice, nor are its keys handed out as ingest keys again.
     let again = call_gas(
