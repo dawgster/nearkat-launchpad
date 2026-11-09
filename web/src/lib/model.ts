@@ -175,7 +175,11 @@ export async function heldoutAccuracy(
   } = {},
 ): Promise<number> {
   const fetchImpl = options.fetch ?? fetch;
-  const decode = options.decode ?? ((blob: Blob) => createImageBitmap(blob));
+  // The training app scores these files as they are: no EXIF rotation, no colour-profile conversion.
+  const decode =
+    options.decode ??
+    ((blob: Blob) =>
+      createImageBitmap(blob, { imageOrientation: "none", colorSpaceConversion: "none" }));
   const base = options.base ?? "/heldout";
   const missing = () => new Error("The held-out set isn't available here");
   let manifest: Manifest;

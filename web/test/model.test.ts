@@ -118,6 +118,30 @@ describe("heldoutAccuracy", () => {
     ]);
   });
 
+  test("decodes held-out pictures as they are, without EXIF rotation or colour conversion", async () => {
+    const manifest = JSON.stringify({ files: [{ path: "hotdog/a.jpg", label: "hotdog" }] });
+    const fetchImpl = async (url: string) =>
+      url.endsWith("manifest.json") ? new Response(manifest) : new Response(new Blob(["x"]));
+    const bitmap = { width: 1, height: 1, close: vi.fn() };
+    const create = vi.fn(async () => bitmap);
+    vi.stubGlobal("createImageBitmap", create);
+    try {
+      await heldoutAccuracy(
+        { classify: async () => ({ label: "hotdog", confidence: 1 }) },
+        ["hotdog"],
+        {
+          fetch: fetchImpl as unknown as typeof fetch,
+        },
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(create).toHaveBeenCalledWith(expect.any(Blob), {
+      imageOrientation: "none",
+      colorSpaceConversion: "none",
+    });
+  });
+
   test("says so when there is no held-out set", async () => {
     const fetchImpl = async () => new Response("nope", { status: 404 });
     await expect(

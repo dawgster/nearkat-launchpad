@@ -4,6 +4,23 @@ import { Near, type PrivateKey } from "near-kit";
 import { ALICE_URL, BOB_URL, TRAINER_APP_ID } from "./global-setup.ts";
 
 const FIXTURES = resolve(import.meta.dirname, "fixtures/dataset");
+const HELDOUT = resolve(import.meta.dirname, "fixtures/heldout");
+
+/** The public held-out set is fetched by a script and not committed; the test serves its own. */
+async function serveHeldout(page: Page) {
+  const files = ["hotdog/1.jpg", "hotdog/2.jpg", "not_hotdog/1.jpg", "not_hotdog/2.jpg"];
+  await page.route("**/heldout/**", (route) => {
+    const name = new URL(route.request().url()).pathname.replace(/^.*\/heldout\//, "");
+    return name === "manifest.json"
+      ? route.fulfill({
+          json: {
+            classes: ["hotdog", "not_hotdog"],
+            files: files.map((path) => ({ path, label: path.split("/")[0] })),
+          },
+        })
+      : route.fulfill({ path: resolve(HELDOUT, name), contentType: "image/jpeg" });
+  });
+}
 
 /** Opens a page connected: the dev wallet stays connected across visits in one tab. */
 async function connect(page: Page, url: string) {
@@ -60,6 +77,7 @@ test("trains and tries a model", async ({ page, browser }) => {
 
   // Someone else rents 4 of them for the app, and trains on them.
   const renter = await browser.newPage();
+  await serveHeldout(renter);
   await connect(renter, `${BOB_URL}/c/${contract}`);
   const rent = renter.getByRole("region", { name: "Rent samples" });
   await rent.getByLabel("Training app").selectOption(TRAINER_APP_ID);
@@ -86,10 +104,9 @@ test("trains and tries a model", async ({ page, browser }) => {
   expect(download.suggestedFilename()).toMatch(
     new RegExp(`^${contract.replaceAll(".", "\\.")}-run-[0-9a-f]{12}\\.onnx$`),
   );
-  // The public held-out set is fetched by a script and not committed; without it, it says so.
-  await expect(
-    train.getByText(/Held-out accuracy in your browser: \d+%|held-out set isn't available/),
-  ).toBeVisible({ timeout: 60_000 });
+  await expect(train.getByText(/Held-out accuracy in your browser: \d+%/)).toBeVisible({
+    timeout: 60_000,
+  });
 
   await train.getByLabel("Choose a photo").setInputFiles(resolve(FIXTURES, "hotdog/1.jpg"));
   const verdict = train.getByRole("status", { name: "Verdict" });
