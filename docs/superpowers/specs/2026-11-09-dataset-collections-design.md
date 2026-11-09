@@ -335,6 +335,16 @@ The launch itself can also be shown live with a small folder, if time allows.
   latency, gas, deposit and how many fit in one transaction on testnet. If it's
   too slow for the stage, request keys at rent time (`borrow_many` triggers
   them), so they are ready before Train is pressed.
+  - Measured on testnet (`keeper/scripts/ckd-throughput.ts`, domain 2, 15 Tgas,
+    1 yocto): one request takes 6.9-8.3 s to final and burns about 8.7 Tgas
+    (1 yocto deposit); all decrypt. A single transaction with 10 requests did
+    not work: the MPC contract panicked "Request has timed out" after about
+    125 s, and 2 in one transaction also timed out (HTTP 408), so one request
+    per transaction is the largest working batch. Separate transactions
+    from one account run in parallel without trouble: 5 in parallel took 7.8 s,
+    10 in parallel 7.8 s, all decrypt. Verdict by the rule (10 in one
+    transaction over 20 s): `KEYS_AT_RENT_TIME = true`; parallel single
+    transactions (about 8 s for 10) would support false for small counts.
 - The Phala CVM has not been deployed before (no CVM in `deploy/` yet). Plan time
   for two apps, including the trainer's image size and the whole compose being
   attested. Run `npm run live-check` against them.
