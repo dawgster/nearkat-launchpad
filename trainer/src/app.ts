@@ -8,7 +8,7 @@ import type { SignedMessage } from "near-kit";
 import type { Auth } from "../../keeper/src/auth.ts";
 import { HttpError } from "../../keeper/src/errors.ts";
 import { RateLimiter } from "../../keeper/src/ratelimit.ts";
-import { BadRequest, type RunState, type Runs } from "./run.ts";
+import { BadRequest, MIN_RUN_SAMPLES, type RunState, type Runs } from "./run.ts";
 
 export interface AppOptions {
   auth: Auth;
@@ -167,6 +167,10 @@ export function createApp(options: AppOptions): Hono<Env> {
       !ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH)
     ) {
       throw new BadRequest("contract and a non-empty list of token_ids are required");
+    }
+    // Refused before any key is asked for: train.py can't train on fewer.
+    if (ids.length < MIN_RUN_SAMPLES) {
+      throw new BadRequest(`Train on at least ${MIN_RUN_SAMPLES} samples`);
     }
     // Charged only for a well-formed request: a malformed one costs nothing to refuse.
     limit(limits.train, c.get("accountId"));

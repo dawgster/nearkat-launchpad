@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
 import { ensureRegistered } from "../src/register.ts";
-import { MODEL_TTL_MS, type RunState, Runs } from "../src/run.ts";
+import { MIN_RUN_SAMPLES, MODEL_TTL_MS, type RunState, Runs } from "../src/run.ts";
 import {
   APP_ID,
   CONTRACT,
@@ -558,4 +558,9 @@ describe("Runs and registration", () => {
     const started = await runs.start(CONTRACT, RENTER, ["1"]);
     expect((await settle(runs, started.id)).error).toBe("Could not get the samples' keys");
   });
+});
+
+test("the service and train.py agree on the fewest samples a run takes", () => {
+  const script = readFileSync(new URL("../py/train.py", import.meta.url), "utf8");
+  expect(script).toMatch(new RegExp(`^MIN_SAMPLES = ${MIN_RUN_SAMPLES}$`, "m"));
 });

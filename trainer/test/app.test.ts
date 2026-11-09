@@ -113,7 +113,7 @@ describe("trainer HTTP API", () => {
     }
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
-      const body = { contract: CONTRACT, token_ids: ["9"] };
+      const body = { contract: CONTRACT, token_ids: ["9", "1"] };
       statuses.push((await ctx.app.request("/train", ctx.as(token, body))).status);
     }
     // Five well-formed tries (refused: sample 9 isn't rented), then the limit.
@@ -178,10 +178,22 @@ describe("trainer HTTP API", () => {
     const token = await ctx.signIn(RENTER);
     const response = await ctx.app.request(
       "/train",
-      ctx.as(token, { contract: CONTRACT, token_ids: ["9"] }),
+      ctx.as(token, { contract: CONTRACT, token_ids: ["9", "1"] }),
     );
     expect(response.status).toBe(400);
     expect((await response.json()).message).toBe("Sample 9: not rented");
+  });
+
+  test("refuses a run on one sample before asking for any key", async () => {
+    const ctx = setup();
+    const token = await ctx.signIn(RENTER);
+    const response = await ctx.app.request(
+      "/train",
+      ctx.as(token, { contract: CONTRACT, token_ids: ["1"] }),
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toBe("Train on at least 2 samples");
+    expect(ctx.chain.keyRequests).toEqual([]);
   });
 
   test("refuses a malformed train request", async () => {

@@ -50,6 +50,8 @@ export class NotFoundError extends HttpError {
 /** A failure whose message is safe to show the renter. */
 export class RunFailure extends Error {}
 
+/** The fewest samples a run trains on; train.py's MIN_SAMPLES matches. */
+export const MIN_RUN_SAMPLES = 2;
 export const MAX_RUN_SAMPLES = 200;
 /** The most samples one `record_training` call takes. */
 const RECORD_CHUNK = 50;

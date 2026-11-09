@@ -141,7 +141,7 @@ def test_refuses_a_single_sample(tmp_path):
     one = json.dumps({"label": "hotdog", "jpeg": base64.b64encode(jpeg((1, 2, 3))).decode()})
     proc, out = run(tmp_path, "--epochs", "1", stdin=one + "\n")
     assert proc.returncode == 2
-    assert "at least two samples" in proc.stderr
+    assert "at least 2 samples" in proc.stderr
     assert not out.exists()
 
 

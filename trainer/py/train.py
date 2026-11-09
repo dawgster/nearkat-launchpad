@@ -34,6 +34,8 @@ CONV3_OUT_CHANNELS = 48
 MLP_HIDDEN_SIZE = 9432
 
 BATCH_SIZE = 16
+# The fewest samples a run trains on; MIN_RUN_SAMPLES in trainer/src/run.ts matches.
+MIN_SAMPLES = 2
 LEARNING_RATE = 2e-3
 WEIGHT_DECAY = 1e-4
 CROP_SCALE_MIN = 0.65
@@ -241,8 +243,8 @@ def main() -> int:
     # Checked first: a run without a held-out set can't report its accuracy.
     heldout_files = heldout_paths(args.heldout, classes)
     samples = read_samples(sys.stdin, classes)
-    if len(samples) < 2:
-        raise Fail("training needs at least two samples")
+    if len(samples) < MIN_SAMPLES:
+        raise Fail(f"training needs at least {MIN_SAMPLES} samples")
     emit({"stage": "loaded", "count": len(samples)})
 
     model = train(samples, classes, args.epochs, args.seconds)

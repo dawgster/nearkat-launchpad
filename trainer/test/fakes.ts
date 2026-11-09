@@ -141,7 +141,7 @@ export class FakeTrainerChain implements TrainerChain {
     await new Promise((resolve) => setTimeout(resolve, this.keyDelayMs));
     this.#keyCallsNow -= 1;
     if (ids.length > 10) {
-      throw new Error("At most 10 keys per call");
+      throw new Error("1 to 10 keys per call");
     }
     return ids.map((id) => {
       const training = this.training.get(id);
