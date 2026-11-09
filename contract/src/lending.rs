@@ -21,6 +21,9 @@ use near_sdk::{assert_one_yocto, env, near, require, AccountId, NearToken, Promi
 use crate::{Contract, ContractExt};
 
 const LOAN_PREFIX: &[u8] = b"loan:";
+const TRAINING_PREFIX: &[u8] = b"loantrain:";
+const MAX_SAMPLES_PER_CALL: usize = 50;
+const MAX_APPS_PER_LOAN: usize = 8;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 /// The longest a loan may last: a year.
 const MAX_LOAN_SECONDS: u64 = 365 * 86_400;
@@ -48,6 +51,19 @@ pub struct Loan {
     pub ends_at: Option<U64>,
     /// What the record's storage cost the lender; refunded when it goes.
     pub storage: NearToken,
+}
+
+/// Extra record of a dataset sample's loan, under its own key so `Loan` stays
+/// as it was. Lives and dies with the loan; its storage is part of `Loan::storage`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoanTraining {
+    /// The training apps the lender allows.
+    pub apps: Vec<String>,
+    /// The app the borrower named; set when the loan starts.
+    pub app_id: Option<String>,
+    /// Whether the one use has been spent (set when the key is released).
+    pub spent: bool,
 }
 
 #[near(serializers = [json])]
@@ -91,6 +107,23 @@ fn read(token_id: &TokenId) -> Option<Loan> {
 fn write(token_id: &TokenId, loan: &Loan) {
     let bytes = near_sdk::borsh::to_vec(loan).unwrap_or_else(|_| env::panic_str("Can't encode"));
     env::storage_write(&key(token_id), &bytes);
+}
+
+fn training_key(token_id: &TokenId) -> Vec<u8> {
+    [TRAINING_PREFIX, token_id.as_bytes()].concat()
+}
+
+fn read_training(token_id: &TokenId) -> Option<LoanTraining> {
+    env::storage_read(&training_key(token_id)).map(|bytes| {
+        near_sdk::borsh::from_slice(&bytes)
+            .unwrap_or_else(|_| env::panic_str("Loan record is corrupt"))
+    })
+}
+
+fn write_training(token_id: &TokenId, training: &LoanTraining) {
+    let bytes =
+        near_sdk::borsh::to_vec(training).unwrap_or_else(|_| env::panic_str("Can't encode"));
+    env::storage_write(&training_key(token_id), &bytes);
 }
 
 fn log_event(event: &str, data: near_sdk::serde_json::Value) {
@@ -151,6 +184,169 @@ impl Contract {
         read(&token_id).map(|loan| loan.view(&token_id, &owner_id))
     }
 
+    /// The training record of a sample's loan; None if it has none.
+    pub fn get_loan_training(&self, token_id: TokenId) -> Option<LoanTraining> {
+        read_training(&token_id)
+    }
+
+    /// Offers samples of a dataset for one training use each, to the named
+    /// training apps. Owner of every sample only. Attach enough for the
+    /// records' storage; the rest comes back. Replaces an offer or a loan that
+    /// is over, not an active one. Returns how many were offered.
+    #[payable]
+    pub fn lend_many(
+        &mut self,
+        token_ids: Vec<TokenId>,
+        duration_s: Option<U64>,
+        fee: NearToken,
+        apps: Vec<String>,
+    ) -> u32 {
+        self.require_dataset();
+        require!(
+            (1..=MAX_SAMPLES_PER_CALL).contains(&token_ids.len()),
+            "Lend 1 to 50 samples at a time"
+        );
+        require!(
+            (1..=MAX_APPS_PER_LOAN).contains(&apps.len()),
+            "Name 1 to 8 training apps"
+        );
+        let registered = self.training_apps();
+        for (i, app) in apps.iter().enumerate() {
+            require!(
+                registered.iter().any(|(id, _)| id == app),
+                format!("{app} is not a registered training app")
+            );
+            require!(!apps[..i].contains(app), "Name each app once");
+        }
+        if let Some(seconds) = duration_s {
+            require!(
+                seconds.0 > 0 && seconds.0 <= MAX_LOAN_SECONDS,
+                "A loan lasts from a second to a year"
+            );
+        }
+        let owner_id = env::predecessor_account_id();
+        let mut total = NearToken::from_yoctonear(0);
+        for (i, token_id) in token_ids.iter().enumerate() {
+            require!(
+                !token_ids[..i].contains(token_id),
+                format!("Sample {token_id} is listed twice")
+            );
+            require!(
+                self.owner_of(token_id) == owner_id,
+                "Only the owner can lend a sample"
+            );
+            if let Some(previous) = read(token_id) {
+                require!(
+                    previous.status(&owner_id) != LoanStatus::Active,
+                    "It is already on loan; end that loan first"
+                );
+                self.remove_loan(token_id, previous);
+            }
+            let mut loan = Loan {
+                lender_id: owner_id.clone(),
+                borrower_id: None,
+                duration_s,
+                messages: Some(1),
+                sees_memory: false,
+                learns: false,
+                fee,
+                started_at: None,
+                ends_at: None,
+                storage: NearToken::from_yoctonear(0),
+            };
+            let training = LoanTraining {
+                apps: apps.clone(),
+                app_id: None,
+                spent: false,
+            };
+            // Both records are measured as stored, then the loan is stored
+            // again with their joint cost.
+            let before = env::storage_usage();
+            write(token_id, &loan);
+            write_training(token_id, &training);
+            let bytes = env::storage_usage().saturating_sub(before);
+            let cost = env::storage_byte_cost().saturating_mul(u128::from(bytes));
+            loan.storage = cost;
+            write(token_id, &loan);
+            total = total.saturating_add(cost);
+            log_event(
+                "loan_offered",
+                near_sdk::serde_json::to_value(loan.view(token_id, &owner_id)).unwrap_or_default(),
+            );
+        }
+        let deposit = env::attached_deposit();
+        require!(
+            deposit >= total,
+            format!("Attach at least {total} for the loans' storage")
+        );
+        let refund = deposit.saturating_sub(total);
+        if !refund.is_zero() {
+            Promise::new(owner_id).transfer(refund).detach();
+        }
+        token_ids.len() as u32
+    }
+
+    /// Takes samples on offer for one training app, paying each lender its
+    /// fees. All or nothing. Anything attached beyond the fees comes back.
+    #[payable]
+    pub fn borrow_many(&mut self, token_ids: Vec<TokenId>, app_id: String) -> u32 {
+        self.require_dataset();
+        require!(
+            (1..=MAX_SAMPLES_PER_CALL).contains(&token_ids.len()),
+            "Rent 1 to 50 samples at a time"
+        );
+        let borrower = env::predecessor_account_id();
+        let mut owed: Vec<(AccountId, NearToken)> = Vec::new();
+        let mut total = NearToken::from_yoctonear(0);
+        for (i, token_id) in token_ids.iter().enumerate() {
+            require!(
+                !token_ids[..i].contains(token_id),
+                format!("Sample {token_id} is listed twice")
+            );
+            let owner_id = self.owner_of(token_id);
+            require!(borrower != owner_id, "You already own it");
+            let not_offered = || format!("Sample {token_id} isn't offered for app {app_id}");
+            let mut loan = read(token_id).unwrap_or_else(|| env::panic_str(&not_offered()));
+            let mut training =
+                read_training(token_id).unwrap_or_else(|| env::panic_str(&not_offered()));
+            require!(
+                loan.status(&owner_id) == LoanStatus::Offered && training.apps.contains(&app_id),
+                not_offered()
+            );
+            loan.start(borrower.clone());
+            write(token_id, &loan);
+            training.app_id = Some(app_id.clone());
+            write_training(token_id, &training);
+            total = total.saturating_add(loan.fee);
+            match owed
+                .iter_mut()
+                .find(|(lender, _)| lender == &loan.lender_id)
+            {
+                Some((_, sum)) => *sum = sum.saturating_add(loan.fee),
+                None => owed.push((loan.lender_id.clone(), loan.fee)),
+            }
+            log_event(
+                "loan_started",
+                near_sdk::serde_json::to_value(loan.view(token_id, &owner_id)).unwrap_or_default(),
+            );
+        }
+        let deposit = env::attached_deposit();
+        require!(
+            !deposit.is_zero() && deposit >= total,
+            format!("Attach the fees, {total}, to borrow them")
+        );
+        for (lender, sum) in owed {
+            if !sum.is_zero() {
+                Promise::new(lender).transfer(sum).detach();
+            }
+        }
+        let refund = deposit.saturating_sub(total);
+        if !refund.is_zero() {
+            Promise::new(borrower).transfer(refund).detach();
+        }
+        token_ids.len() as u32
+    }
+
     /// Offers the token on loan. Owner only. Attach enough for the record's
     /// storage (0.01 NEAR is plenty); the rest comes back. Replaces an offer
     /// or a loan that is over, but not one that is active.
@@ -166,6 +362,10 @@ impl Contract {
         learns: bool,
         fee: Option<NearToken>,
     ) -> LoanView {
+        require!(
+            self.dataset_classes().is_none(),
+            "Lend samples with lend_many, naming training apps"
+        );
         let owner_id = self.owner_of(&token_id);
         require!(
             env::predecessor_account_id() == owner_id,
@@ -245,6 +445,10 @@ impl Contract {
     /// beyond the fee comes back.
     #[payable]
     pub fn borrow(&mut self, token_id: TokenId) -> LoanView {
+        require!(
+            self.dataset_classes().is_none(),
+            "Rent samples with borrow_many, naming a training app"
+        );
         let owner_id = self.owner_of(&token_id);
         let mut loan = read(&token_id).unwrap_or_else(|| env::panic_str("It isn't on loan"));
         require!(
@@ -336,6 +540,8 @@ impl Contract {
 
     fn remove_loan(&mut self, token_id: &TokenId, loan: Loan) {
         env::storage_remove(&key(token_id));
+        // Its storage cost is already part of `loan.storage`.
+        env::storage_remove(&training_key(token_id));
         if !loan.storage.is_zero() {
             Promise::new(loan.lender_id).transfer(loan.storage).detach();
         }

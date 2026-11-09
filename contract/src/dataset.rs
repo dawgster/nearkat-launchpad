@@ -201,7 +201,7 @@ impl Contract {
 }
 
 impl Contract {
-    fn require_dataset(&self) {
+    pub(crate) fn require_dataset(&self) {
         require!(
             self.dataset_classes().is_some(),
             "This is not a dataset collection"

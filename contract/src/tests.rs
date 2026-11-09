@@ -2065,3 +2065,211 @@ fn only_the_admin_removes_apps() {
     ctx("alice.near", YOCTO);
     c.remove_training_app("app-one".to_string());
 }
+
+mod sample_loans {
+    use super::*;
+    use crate::lending::LoanStatus;
+
+    const STORAGE: NearToken = NearToken::from_millinear(50);
+
+    fn register_apps(c: &mut Contract) {
+        ctx("admin.near", NearToken::from_millinear(10));
+        c.trust_app_key(pk(APP_KEY_A), "app-one".to_string(), "One".to_string());
+        c.trust_app_key(pk(APP_KEY_B), "app-two".to_string(), "Two".to_string());
+    }
+
+    /// Five samples, all owned by admin; apps one and two registered.
+    fn setup() -> Contract {
+        let mut c = sample_dataset();
+        register_apps(&mut c);
+        c
+    }
+
+    fn give(c: &mut Contract, id: &str, to: &str) {
+        ctx("admin.near", YOCTO);
+        c.nft_transfer(acc(to), id.to_string(), None, None);
+    }
+
+    fn lend(c: &mut Contract, tokens: &[&str], fee: u128, apps: &[&str]) -> u32 {
+        c.lend_many(
+            ids(tokens),
+            Some(60.into()),
+            NearToken::from_yoctonear(fee),
+            ids(apps),
+        )
+    }
+
+    #[test]
+    fn lend_many_offers_each_sample_for_one_use() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        assert_eq!(lend(&mut c, &["1", "2"], 5, &["app-one", "app-two"]), 2);
+        for id in ["1", "2"] {
+            let loan = c.get_loan(id.to_string()).unwrap();
+            assert_eq!(loan.status, LoanStatus::Offered);
+            assert_eq!(loan.messages, Some(1));
+            assert!(!loan.sees_memory && !loan.learns);
+            assert_eq!(loan.borrower_id, None);
+            let t = c.get_loan_training(id.to_string()).unwrap();
+            assert_eq!(t.apps, ids(&["app-one", "app-two"]));
+            assert_eq!(t.app_id, None);
+            assert!(!t.spent);
+        }
+        assert_eq!(
+            get_logs()
+                .iter()
+                .filter(|l| l.contains("loan_offered"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a registered training app")]
+    fn lend_many_names_only_registered_apps() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one", "rogue"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Lend samples with lend_many")]
+    fn plain_lend_is_refused_for_samples() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        c.lend("1".to_string(), None, None, Some(1), false, false, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Rent samples with borrow_many")]
+    fn plain_borrow_is_refused_for_samples() {
+        let mut c = setup();
+        ctx("bob.near", STORAGE);
+        c.borrow("1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the owner can lend")]
+    fn lend_many_needs_every_sample_owned() {
+        let mut c = setup();
+        give(&mut c, "2", "carol.near");
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2"], 5, &["app-one"]);
+    }
+
+    #[test]
+    fn borrow_many_pays_each_lender_once() {
+        let mut c = setup();
+        give(&mut c, "3", "carol.near");
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2"], 100, &["app-one"]);
+        ctx("carol.near", STORAGE);
+        lend(&mut c, &["3"], 40, &["app-one", "app-two"]);
+        ctx("bob.near", NearToken::from_yoctonear(1000));
+        assert_eq!(
+            c.borrow_many(ids(&["1", "2", "3"]), "app-one".to_string()),
+            3
+        );
+        let receipts = near_sdk::test_utils::get_created_receipts();
+        let paid = |who: &str| -> Vec<u128> {
+            receipts
+                .iter()
+                .filter(|r| r.receiver_id == acc(who))
+                .flat_map(|r| r.actions.iter())
+                .filter_map(|a| match a {
+                    near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                        Some(deposit.as_yoctonear())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(paid("admin.near"), vec![200]);
+        assert_eq!(paid("carol.near"), vec![40]);
+        assert_eq!(paid("bob.near"), vec![760]);
+        for id in ["1", "2", "3"] {
+            let t = c.get_loan_training(id.to_string()).unwrap();
+            assert_eq!(t.app_id.as_deref(), Some("app-one"));
+            assert!(!t.spent);
+            let loan = c.get_loan(id.to_string()).unwrap();
+            assert_eq!(loan.status, LoanStatus::Active);
+            assert_eq!(loan.borrower_id, Some(acc("bob.near")));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 3 isn't offered for app")]
+    fn borrow_many_fails_whole_if_one_is_not_on_offer() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["1", "2", "3"]), "app-one".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 2 isn't offered for app app-two")]
+    fn borrow_many_needs_the_app_to_be_named() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one", "app-two"]);
+        lend(&mut c, &["2"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["1", "2"]), "app-two".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach the fees")]
+    fn borrow_many_needs_the_fees() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2"], 50, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(99));
+        c.borrow_many(ids(&["1", "2"]), "app-one".to_string());
+    }
+
+    #[test]
+    fn the_training_record_goes_with_its_loan() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one"]);
+        assert!(c.get_loan_training("1".to_string()).is_some());
+        give(&mut c, "1", "carol.near");
+        assert_eq!(c.get_loan("1".to_string()), None);
+        assert_eq!(c.get_loan_training("1".to_string()), None);
+    }
+
+    #[test]
+    fn the_lender_gets_the_whole_storage_back() {
+        let mut c = setup();
+        let before = env::storage_usage();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one"]);
+        let receipts = near_sdk::test_utils::get_created_receipts();
+        let refund: u128 = receipts
+            .iter()
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                    Some(deposit.as_yoctonear())
+                }
+                _ => None,
+            })
+            .sum();
+        let kept = STORAGE.as_yoctonear() - refund;
+        ctx("admin.near", YOCTO);
+        c.end_loan("1".to_string());
+        assert_eq!(env::storage_usage(), before);
+        let back: u128 = near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                    Some(deposit.as_yoctonear())
+                }
+                _ => None,
+            })
+            .sum();
+        assert_eq!(back, kept);
+    }
+}
