@@ -55,6 +55,7 @@ function publicRun(run: RunState): RunState {
     ...(run.accuracy !== undefined && { accuracy: run.accuracy }),
     ...(run.modelSha256 !== undefined && { modelSha256: run.modelSha256 }),
     ...(run.recordedTokens !== undefined && { recordedTokens: run.recordedTokens }),
+    ...(run.recordTx !== undefined && { recordTx: run.recordTx }),
     ...(run.partial !== undefined && { partial: run.partial }),
     ...(run.error !== undefined && { error: run.error }),
   };

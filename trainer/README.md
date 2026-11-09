@@ -69,7 +69,7 @@ Before a run, the app reads `get_app_key` for its key on the collection:
 - `GET /attestation`: `{ mode, app_id, public_key, seal_public_key, quote?, event_log?, compose_hash? }`
 - `POST /auth/challenge`, `POST /auth/session`: NEP-413 sign-in, as the keeper.
 - `POST /train { contract, token_ids }` (session): 202 and the run, or 400 with the reason.
-- `GET /runs/:id`: the run's state (stage, epoch, accuracy, ...). Public; it holds no samples or keys.
+- `GET /runs/:id`: the run's state (stage, epoch, accuracy, `recordTx`, ...). Public; it holds no samples or keys.
 - `GET /runs/:id/model` (session): the ONNX model; 403 unless the session is the renter, 404 until the run is done.
 
 At most 20 runs are kept (the oldest finished one is dropped first), and a model

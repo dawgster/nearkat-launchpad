@@ -83,7 +83,13 @@ describe("Runs", () => {
         accuracy_bps: 8750,
       },
     ]);
-    expect(done).toMatchObject({ accuracy: 0.875, modelSha256: sha, recordedTokens: 3 });
+    expect(done).toMatchObject({
+      accuracy: 0.875,
+      modelSha256: sha,
+      recordedTokens: 3,
+      // The first record_training transaction, for the renter to look up.
+      recordTx: "tx-1",
+    });
     expect(done.partial).toBeUndefined();
     expect(runs.model(started.id, RENTER)).toEqual(python.model);
     // Nothing secret is kept in what the web sees.

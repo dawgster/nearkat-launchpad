@@ -142,7 +142,7 @@ export class FakeTrainerChain implements TrainerChain {
     });
   }
 
-  async recordTraining(_contract: string, run: TrainingRecord): Promise<void> {
+  async recordTraining(_contract: string, run: TrainingRecord): Promise<string | null> {
     this.recordCalls += 1;
     const scripted = this.recordScript.shift();
     if (scripted) {
@@ -165,6 +165,7 @@ export class FakeTrainerChain implements TrainerChain {
       this.landedButLost -= 1;
       throw new Error("fetch failed");
     }
+    return `tx-${this.recordCalls}`;
   }
 
   async getRunTokens(_contract: string, runId: string): Promise<string[]> {

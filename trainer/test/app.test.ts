@@ -20,6 +20,7 @@ const RUN_FIELDS = [
   "accuracy",
   "modelSha256",
   "recordedTokens",
+  "recordTx",
   "partial",
   "error",
 ];
@@ -133,6 +134,7 @@ describe("trainer HTTP API", () => {
     const { run } = await train(ctx, token);
     const state = await finished(ctx, run.id);
     expect(Object.keys(state).every((key) => RUN_FIELDS.includes(key))).toBe(true);
+    expect(state.recordTx).toBe("tx-1");
     const text = JSON.stringify(state);
     expect(text).not.toContain(jpegFor("1").toString("base64"));
     expect(text).not.toContain(token);

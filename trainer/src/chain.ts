@@ -38,8 +38,8 @@ export interface TrainerChain {
     ids: string[],
     appPublicKey: string,
   ): Promise<Array<{ big_y: string; big_c: string } | null>>;
-  /** Records a run on at most 50 samples and spends their rentals. */
-  recordTraining(contract: string, run: TrainingRecord): Promise<void>;
+  /** Records a run on at most 50 samples and spends their rentals; the transaction's hash, if known. */
+  recordTraining(contract: string, run: TrainingRecord): Promise<string | null>;
   /** Every sample a run is recorded for, in the order recorded; empty if there is no such run. */
   getRunTokens(contract: string, runId: string): Promise<string[]>;
   /** The app a public key is registered to on the collection, or null if it isn't. */
@@ -145,11 +145,13 @@ export class NearTrainerChain implements TrainerChain {
     );
   }
 
-  async recordTraining(contract: string, run: TrainingRecord): Promise<void> {
-    await this.#call(contract, "record_training", run, {
+  async recordTraining(contract: string, run: TrainingRecord): Promise<string | null> {
+    const outcome = (await this.#call(contract, "record_training", run, {
       gas: "300 Tgas",
       attachedDeposit: RECORD_DEPOSIT,
-    });
+    })) as { transaction?: { hash?: unknown }; transaction_outcome?: { id?: unknown } } | undefined;
+    const hash = outcome?.transaction?.hash ?? outcome?.transaction_outcome?.id;
+    return typeof hash === "string" ? hash : null;
   }
 
   async getRunTokens(contract: string, runId: string): Promise<string[]> {

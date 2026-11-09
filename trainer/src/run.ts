@@ -20,6 +20,8 @@ export interface RunState {
   modelSha256?: string;
   /** How many samples the run is recorded on-chain for; set when done. */
   recordedTokens?: number;
+  /** The first `record_training` transaction, when its hash is known. */
+  recordTx?: string;
   /** Set when only part of the run could be recorded; says why. */
   partial?: string;
   error?: string;
@@ -230,24 +232,24 @@ export class Runs {
    * asked whether it landed, and only if it didn't is the call tried again,
    * once; a refused or lost repeat is checked the same way.
    */
-  async #record(contract: string, run: TrainingRecord): Promise<void> {
+  async #record(contract: string, run: TrainingRecord): Promise<string | null> {
     try {
-      await this.#o.chain.recordTraining(contract, run);
-      return;
+      return await this.#o.chain.recordTraining(contract, run);
     } catch (error) {
       if (error instanceof ContractRefusal) {
         throw error;
       }
       if (await this.#landed(contract, run)) {
-        return;
+        return null;
       }
     }
     try {
-      await this.#o.chain.recordTraining(contract, run);
+      return await this.#o.chain.recordTraining(contract, run);
     } catch (error) {
       if (!(await this.#landed(contract, run))) {
         throw error;
       }
+      return null;
     }
   }
 
@@ -392,13 +394,16 @@ export class Runs {
       for (let i = 0; i < tokenIds.length; i += RECORD_CHUNK) {
         const chunk = tokenIds.slice(i, i + RECORD_CHUNK);
         try {
-          await this.#record(contract, {
+          const tx = await this.#record(contract, {
             run_id: state.id,
             renter_id: renter,
             token_ids: chunk,
             model_sha256: modelSha256,
             accuracy_bps: accuracyBps,
           });
+          if (tx && state.recordTx === undefined) {
+            state.recordTx = tx;
+          }
         } catch (error) {
           const ended = /rental ended/.test(error instanceof Error ? error.message : String(error));
           if (recorded === 0) {
