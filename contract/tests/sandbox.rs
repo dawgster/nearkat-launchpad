@@ -1168,7 +1168,8 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
             json!({}),
             NearToken::from_yoctonear(0),
             300,
-        ).await??;
+        )
+        .await??;
         finishes += 1;
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -1246,7 +1247,10 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     )
     .await??;
     let after_seal = storage_usage(&env, &collection).await?;
-    eprintln!("storage: sealing 2 samples added {} bytes", after_seal - after_mint);
+    eprintln!(
+        "storage: sealing 2 samples added {} bytes",
+        after_seal - after_mint
+    );
     // A sealed sample isn't sealed twice, nor are its keys handed out as ingest keys again.
     let again = call_gas(
         &env,
@@ -1366,6 +1370,34 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     )
     .await?;
     assert!(twice.unwrap_err().contains("already used"));
+
+    // A whole batch of 50 is lent and rented in one call each: the events fit
+    // NEAR's log limit.
+    let batch: Vec<String> = (3..=52).map(|i| i.to_string()).collect();
+    for id in &batch {
+        transfer(&env, &env.admin, &env.alice, id).await??;
+    }
+    let offered = call(
+        &env,
+        &env.alice,
+        "lend_many",
+        json!({
+            "token_ids": batch, "duration_s": null,
+            "fee": NearToken::from_millinear(1), "apps": ["app-a"],
+        }),
+        NearToken::from_near(1),
+    )
+    .await??;
+    assert_eq!(offered, json!(50));
+    let rented = call(
+        &env,
+        &env.bob,
+        "borrow_many",
+        json!({ "token_ids": batch, "app_id": "app-a" }),
+        NearToken::from_millinear(100),
+    )
+    .await??;
+    assert_eq!(rented, json!(50));
 
     Ok(())
 }

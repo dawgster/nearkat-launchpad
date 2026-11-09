@@ -128,13 +128,18 @@ fn write_training(token_id: &TokenId, training: &LoanTraining) {
 }
 
 pub(crate) fn log_event(event: &str, data: near_sdk::serde_json::Value) {
+    log_events(event, vec![data]);
+}
+
+/// One log line with several records, as NEP-297 allows.
+fn log_events(event: &str, data: Vec<near_sdk::serde_json::Value>) {
     env::log_str(&format!(
         "EVENT_JSON:{}",
         near_sdk::serde_json::json!({
             "standard": "nearkat",
             "version": "1.0.0",
             "event": event,
-            "data": [data],
+            "data": data,
         })
     ));
 }
@@ -227,6 +232,7 @@ impl Contract {
         }
         let owner_id = env::predecessor_account_id();
         let mut total = NearToken::from_yoctonear(0);
+        let mut events = Vec::new();
         for (i, token_id) in token_ids.iter().enumerate() {
             require!(
                 !token_ids[..i].contains(token_id),
@@ -270,11 +276,17 @@ impl Contract {
             loan.storage = cost;
             write(token_id, &loan);
             total = total.saturating_add(cost);
-            log_event(
-                "loan_offered",
-                near_sdk::serde_json::to_value(loan.view(token_id, &owner_id)).unwrap_or_default(),
-            );
+            // Slim records in one line: 50 full views, or 50 envelopes, would
+            // pass NEAR's 16 KiB log limit per receipt.
+            events.push(near_sdk::serde_json::json!({
+                    "token_id": token_id,
+                    "lender_id": owner_id,
+                    "fee": fee,
+                    "duration_s": duration_s,
+                    "apps": apps,
+            }));
         }
+        log_events("loan_offered", events);
         let deposit = env::attached_deposit();
         require!(
             deposit >= total,
@@ -299,6 +311,7 @@ impl Contract {
         let borrower = env::predecessor_account_id();
         let mut owed: Vec<(AccountId, NearToken)> = Vec::new();
         let mut total = NearToken::from_yoctonear(0);
+        let mut events = Vec::new();
         for (i, token_id) in token_ids.iter().enumerate() {
             require!(
                 !token_ids[..i].contains(token_id),
@@ -326,11 +339,16 @@ impl Contract {
                 Some((_, sum)) => *sum = sum.saturating_add(loan.fee),
                 None => owed.push((loan.lender_id.clone(), loan.fee)),
             }
-            log_event(
-                "loan_started",
-                near_sdk::serde_json::to_value(loan.view(token_id, &owner_id)).unwrap_or_default(),
-            );
+            events.push(near_sdk::serde_json::json!({
+                    "token_id": token_id,
+                    "lender_id": loan.lender_id,
+                    "borrower_id": borrower,
+                    "app_id": app_id,
+                    "fee": loan.fee,
+                    "ends_at": loan.ends_at,
+            }));
         }
+        log_events("loan_started", events);
         let deposit = env::attached_deposit();
         require!(
             !deposit.is_zero() && deposit >= total,

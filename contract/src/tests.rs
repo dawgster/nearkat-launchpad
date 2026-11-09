@@ -2168,9 +2168,9 @@ mod sample_loans {
         assert_eq!(
             get_logs()
                 .iter()
-                .filter(|l| l.contains("loan_offered"))
+                .filter(|l| l.contains("loan_offered") && l.matches("token_id").count() == 2)
                 .count(),
-            2
+            1
         );
     }
 
@@ -2659,5 +2659,35 @@ mod sample_loans {
     #[should_panic(expected = "accuracy_bps is at most 10000")]
     fn accuracy_is_at_most_one() {
         record_with("run-1", SHA, 10_001);
+    }
+
+    #[test]
+    fn fifty_sample_batches_fit_the_log_limit() {
+        let owner = "a".repeat(64);
+        let renter = "b".repeat(64);
+        let app_a = "c".repeat(64);
+        let app_b = "d".repeat(64);
+        let mut c = deploy_with(dataset(&["a", "b"], &[50, 50], 100));
+        ctx("admin.near", NearToken::from_millinear(10));
+        c.trust_app_key(pk(APP_KEY_A), app_a.clone(), "One".to_string());
+        c.trust_app_key(pk(APP_KEY_B), app_b.clone(), "Two".to_string());
+        ctx("admin.near", YOCTO);
+        for i in 1..=50 {
+            c.nft_transfer(acc(&owner), i.to_string(), None, None);
+        }
+        let all: Vec<String> = (1..=50).map(|i| i.to_string()).collect();
+        ctx(&owner, NearToken::from_near(5));
+        c.lend_many(
+            all.clone(),
+            Some(86_400.into()),
+            NearToken::from_millinear(10),
+            vec![app_a.clone(), app_b],
+        );
+        let bytes: usize = get_logs().iter().map(|l| l.len()).sum();
+        assert!(bytes < 16_384, "lend_many logged {bytes} bytes");
+        ctx(&renter, NearToken::from_near(5));
+        c.borrow_many(all, app_a);
+        let bytes: usize = get_logs().iter().map(|l| l.len()).sum();
+        assert!(bytes < 16_384, "borrow_many logged {bytes} bytes");
     }
 }
