@@ -74,6 +74,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (mode === "local" && !/^[0-9a-fA-F]{64}$/.test(env.TRAINER_ROOT_SECRET ?? "")) {
     throw new Error("TRAINER_ROOT_SECRET must be 64 hex characters in local mode");
   }
+  if (mode === "phala" && env.TRAINER_APP_ID) {
+    // The app id is dstack's: one from the environment would be ignored, so say so.
+    throw new Error("TRAINER_APP_ID must not be set in phala mode; the app id comes from dstack");
+  }
   if (mode === "phala" && !env.TRAINER_LAUNCHPAD_ID) {
     throw new Error("TRAINER_LAUNCHPAD_ID is required in phala mode");
   }
@@ -95,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     launchpadId: env.TRAINER_LAUNCHPAD_ID || null,
     appId: env.TRAINER_APP_ID || "local-trainer",
     label: env.TRAINER_LABEL || "Hotdog CNN",
-    heldoutDir: env.HELDOUT_DIR ?? "./data/heldout",
+    heldoutDir: env.HELDOUT_DIR || "./data/heldout",
     archivalRpcUrl:
       env.ARCHIVAL_RPC_URL ||
       (network === "sandbox"

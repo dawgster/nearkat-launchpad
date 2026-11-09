@@ -73,6 +73,25 @@ describe("loadConfig", () => {
     ).toBeUndefined();
   });
 
+  test("refuses an app id in phala mode, where dstack gives it", () => {
+    const phala = {
+      ...base,
+      TRAINER_MODE: "phala",
+      TRAINER_LAUNCHPAD_ID: "launch.testnet",
+      AUTH_RECIPIENT: "train.example",
+    };
+    expect(() => loadConfig({ ...phala, TRAINER_APP_ID: "mine" })).toThrow(
+      /TRAINER_APP_ID must not be set in phala mode/,
+    );
+    expect(() => loadConfig(phala)).not.toThrow();
+  });
+
+  test("an empty HELDOUT_DIR means the default, not the working directory", () => {
+    expect(loadConfig({ ...base, TRAINER_ROOT_SECRET: SECRET, HELDOUT_DIR: "" }).heldoutDir).toBe(
+      "./data/heldout",
+    );
+  });
+
   test("trains only on a named launchpad's collections; phala mode must name one", () => {
     const local = { ...base, TRAINER_ROOT_SECRET: SECRET };
     expect(loadConfig(local).launchpadId).toBeNull();

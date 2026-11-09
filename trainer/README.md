@@ -29,9 +29,9 @@ Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
 | `TRAINER_ACCOUNT_ID` | required | The NEAR account that signs `record_training` and `register_app_key`. |
 | `TRAINER_ROOT_SECRET` | required in local mode | 64 hex characters. Refused in phala mode. |
 | `TRAINER_LAUNCHPAD_ID` | required in phala mode | The launchpad whose collections this app trains on. A collection must name it as its `factory_id`, and the launchpad must list it as live; others get 400 "This trainer only trains on collections from …". Unset in local mode: any collection. |
-| `TRAINER_APP_ID` | `local-trainer` | Local mode only; in phala mode it is `dstack.info().app_id`. |
+| `TRAINER_APP_ID` | `local-trainer` | Local mode only; in phala mode it is `dstack.info().app_id`, and setting it is refused. |
 | `TRAINER_LABEL` | `Hotdog CNN` | The name the collection lists this app under. |
-| `HELDOUT_DIR` | `./data/heldout` | Held-out images, `<dir>/<class>/*.jpg`. |
+| `HELDOUT_DIR` | `./data/heldout` | Held-out images, `<dir>/<class>/*.jpg` (or `.jpeg`); every class a dataset has needs some. |
 | `ARCHIVAL_RPC_URL` | fastnear archival | Reads back FastFS files from old transactions. |
 | `FASTFS_GATEWAY` | none (mainnet: fastfs.io) | Gateway URL with `{uploader}`. |
 | `SAMPLE_KEYS_PER_CALL` | `10` | Sample keys asked for in one `request_sample_keys` call, 1 to 10. 1 for the sandbox's mock MPC, which costs ~120 Tgas per key. |

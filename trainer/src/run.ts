@@ -123,7 +123,11 @@ export class Runs {
   readonly #o: RunsOptions;
   readonly #runs = new Map<string, RunState>();
   readonly #models = new Map<string, Buffer>();
-  /** When each finished run finished, oldest first. */
+  /**
+   * When each finished run finished, oldest first. An entry outlives its
+   * model: it is also the order the run itself is evicted in, so it goes
+   * with the run, and there are at most MAX_RUNS of them.
+   */
   readonly #finishedAt = new Map<string, number>();
   /** `contract:token` of every sample in a run that has not finished. */
   readonly #busy = new Set<string>();
@@ -207,6 +211,8 @@ export class Runs {
 
   #finish(id: string): void {
     this.#finishedAt.set(id, (this.#o.now ?? Date.now)());
+    // Dropped on time even if no request comes along to sweep it.
+    setTimeout(() => this.#models.delete(id), MODEL_TTL_MS).unref();
     this.#evict();
   }
 

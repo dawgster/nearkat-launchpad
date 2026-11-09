@@ -58,6 +58,15 @@ describe("ensureRegistered", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  test("a failed registration is forgotten, so the next run tries again", async () => {
+    const { chain, register } = setup("phala");
+    const spy = vi.spyOn(chain, "registerAppKey").mockRejectedValueOnce(new Error("RPC timed out"));
+    await expect(register(CONTRACT)).rejects.toThrow("RPC timed out");
+    await register(CONTRACT);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(chain.appKeys.get(PK)).toBe(APP_ID);
+  });
+
   test("in local mode, says the admin must trust the key", async () => {
     const { register } = setup("local");
     await expect(register(CONTRACT)).rejects.toThrow(

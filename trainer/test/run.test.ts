@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
 import { ensureRegistered } from "../src/register.ts";
-import { type RunState, Runs } from "../src/run.ts";
+import { MODEL_TTL_MS, type RunState, Runs } from "../src/run.ts";
 import {
   APP_ID,
   CONTRACT,
@@ -476,6 +476,35 @@ describe("Runs memory bounds", () => {
     now += 2 * 3_600_000;
     expect(() => runs.model(done.id, RENTER)).toThrow(/no model/);
     expect(runs.get(done.id)?.stage).toBe("done");
+  });
+});
+
+describe("Runs, on the clock", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("drops a model after 24 hours with no request to sweep it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
+    const chain = new FakeTrainerChain();
+    const python = new FakePython();
+    // The clock the sweep reads stands still: only the timer can drop the model.
+    const runs = new Runs({
+      appId: APP_ID,
+      chain,
+      python: python.run,
+      heldoutDir: HELDOUT,
+      ensureRegistered: async () => {},
+      now: () => 0,
+    });
+    await chain.addRentedSample("1", "cat");
+    const done = await settle(runs, (await runs.start(CONTRACT, RENTER, ["1"])).id);
+    expect(done).toMatchObject({ stage: "done" });
+    // A minute either side: the fake clock also moves with real time while the run goes.
+    vi.advanceTimersByTime(MODEL_TTL_MS - 60_000);
+    expect(runs.model(done.id, RENTER)).toEqual(python.model);
+    vi.advanceTimersByTime(120_000);
+    expect(() => runs.model(done.id, RENTER)).toThrow(/no model/);
   });
 });
 

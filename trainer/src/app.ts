@@ -156,7 +156,6 @@ export function createApp(options: AppOptions): Hono<Env> {
   });
 
   app.post("/train", async (c) => {
-    limit(limits.train, c.get("accountId"));
     const body = await jsonBody(c.req.raw);
     const ids = body.token_ids;
     if (
@@ -169,6 +168,8 @@ export function createApp(options: AppOptions): Hono<Env> {
     ) {
       throw new BadRequest("contract and a non-empty list of token_ids are required");
     }
+    // Charged only for a well-formed request: a malformed one costs nothing to refuse.
+    limit(limits.train, c.get("accountId"));
     const run = await runs.start(body.contract, c.get("accountId"), ids as string[]);
     return c.json(publicRun(run), 202);
   });

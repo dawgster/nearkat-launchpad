@@ -104,6 +104,22 @@ describe("trainer HTTP API", () => {
     expect((await finished(ctx, run.id)).stage).toBe("done");
   });
 
+  test("a malformed /train request is refused without using up the renter's runs", async () => {
+    const ctx = setup();
+    const token = await ctx.signIn("renter.near");
+    for (let i = 0; i < 10; i++) {
+      const bad = await ctx.app.request("/train", ctx.as(token, { contract: CONTRACT }));
+      expect(bad.status).toBe(400);
+    }
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const body = { contract: CONTRACT, token_ids: ["9"] };
+      statuses.push((await ctx.app.request("/train", ctx.as(token, body))).status);
+    }
+    // Five well-formed tries (refused: sample 9 isn't rented), then the limit.
+    expect(statuses).toEqual([400, 400, 400, 400, 400, 429]);
+  });
+
   test("serves the model only to the renter", async () => {
     const ctx = setup();
     const renter = await ctx.signIn(RENTER);

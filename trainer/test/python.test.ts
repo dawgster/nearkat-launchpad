@@ -51,9 +51,19 @@ describe("runPython", () => {
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PythonError);
     expect(String((error as Error).message)).toBe("Training failed");
-    expect(JSON.stringify(error)).not.toContain(
-      Buffer.from("secret-image-bytes").toString("base64"),
-    );
+    // Python printed the sample's base64; nothing the error carries may hold it.
+    const leaked = Buffer.from("secret-image-bytes").toString("base64");
+    const carried = [
+      (error as Error).message,
+      (error as Error).stack ?? "",
+      ...Object.getOwnPropertyNames(error).map((name) =>
+        String((error as Record<string, unknown>)[name]),
+      ),
+      String((error as Error).cause ?? ""),
+    ];
+    for (const text of carried) {
+      expect(text).not.toContain(leaked);
+    }
   });
 
   test("fails when Python exits without a result", async () => {
