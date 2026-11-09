@@ -30,8 +30,11 @@ const GAS_TO_STOP_MINTING: Gas = Gas::from_tgas(30);
 /// more, in later transactions.
 const GAS_TO_CONTINUE_MINTING: Gas = Gas::from_tgas(60);
 
-/// Keys per `request_ingest_keys` call, to stay within gas.
+/// Keys per `request_ingest_keys` or `request_sample_keys` call, to stay
+/// within gas.
 const MAX_INGEST_KEYS: usize = 10;
+/// Longest FastFS ref `set_samples` stores.
+const MAX_SAMPLE_REF_LEN: usize = 256;
 /// Samples sealed per `set_samples` call.
 const MAX_SEAL_BATCH: usize = 50;
 /// Samples one `record_training` call may list.
@@ -121,7 +124,8 @@ pub struct SampleView {
 }
 
 /// A training run, as an app recorded it. Lives under `run:<run_id>`; its
-/// tokens are under `runtok:<run_id>`.
+/// tokens are under `runtok:<run_id>`. Run ids are one namespace for every
+/// app (views name a run by its id alone), so apps pick random ids.
 #[derive(BorshSerialize, BorshDeserialize)]
 #[borsh(crate = "near_sdk::borsh")]
 struct RunRecord {
@@ -170,7 +174,7 @@ fn slot(prefix: &[u8], id: &str) -> Vec<u8> {
 
 fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
     env::storage_read(key).map(|raw| {
-        T::try_from_slice(&raw).unwrap_or_else(|_| env::panic_str("Run record is corrupt"))
+        T::try_from_slice(&raw).unwrap_or_else(|_| env::panic_str("Stored record is corrupt"))
     })
 }
 
@@ -185,6 +189,31 @@ fn read_run(run_id: &str) -> Option<RunRecord> {
 
 fn sample_runs(token_id: &str) -> Vec<String> {
     read_raw(&slot(SAMPLE_RUNS_PREFIX, token_id)).unwrap_or_default()
+}
+
+/// How many runs used a sample, read from the list's length prefix (borsh
+/// writes a `Vec`'s length first, as a little-endian u32) so the ids aren't
+/// decoded.
+fn sample_run_count(token_id: &str) -> u32 {
+    env::storage_read(&slot(SAMPLE_RUNS_PREFIX, token_id)).map_or(0, |raw| {
+        let prefix: [u8; 4] = raw
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .unwrap_or_else(|| env::panic_str("Stored record is corrupt"));
+        u32::from_le_bytes(prefix)
+    })
+}
+
+fn require_key_count(token_ids: &[TokenId]) {
+    require!(
+        (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
+        format!("1 to {MAX_INGEST_KEYS} keys per call")
+    );
+}
+
+/// Whether this is a dataset collection, without decoding its record.
+pub(crate) fn is_dataset() -> bool {
+    env::storage_has_key(DATASET_KEY)
 }
 
 fn require_unique(token_ids: &[TokenId]) {
@@ -211,10 +240,7 @@ impl Contract {
         require_direct_call();
         self.assert_keeper();
         self.require_dataset();
-        require!(
-            (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
-            format!("At most {MAX_INGEST_KEYS} keys per call")
-        );
+        require_key_count(&token_ids);
         require_unique(&token_ids);
         for token_id in &token_ids {
             self.require_unsealed(token_id);
@@ -238,10 +264,7 @@ impl Contract {
         require_direct_call();
         let app_id = self.require_signer_app("request sample keys");
         self.require_dataset();
-        require!(
-            (1..=MAX_INGEST_KEYS).contains(&token_ids.len()),
-            format!("At most {MAX_INGEST_KEYS} keys per call")
-        );
+        require_key_count(&token_ids);
         require_unique(&token_ids);
         for token_id in &token_ids {
             self.require_rental(token_id, &app_id, None);
@@ -256,8 +279,9 @@ impl Contract {
 
     /// Records a training run by the app that signed this transaction, on
     /// samples `renter_id` rented for it, and spends each rental. A run may
-    /// be recorded in parts: a later call with the same `run_id`, app, renter
-    /// and model adds its samples. The deposit pays the records' storage
+    /// be recorded in parts: a later call with the same `run_id`, app,
+    /// renter, model and accuracy adds its samples. Run ids are shared by
+    /// every app, so an app should use random ones. The deposit pays the records' storage
     /// (about 0.0013 NEAR a sample with a 64-character run_id, so up to 0.07
     /// NEAR for 50); the rest is refunded.
     #[payable]
@@ -302,8 +326,9 @@ impl Contract {
                 require!(
                     run.app_id == app_id
                         && run.renter_id == renter_id
-                        && run.model_sha256 == model_sha256,
-                    format!("Run {run_id} was recorded for another app, renter or model")
+                        && run.model_sha256 == model_sha256
+                        && run.accuracy_bps == accuracy_bps,
+                    format!("Run {run_id} was recorded for another app, renter, model or accuracy")
                 );
                 run.token_count = run.token_count.saturating_add(added);
                 run
@@ -374,7 +399,8 @@ impl Contract {
     }
 
     /// One entry per token, in order: the MPC response, or None if that
-    /// request failed.
+    /// request failed. None also stands for a response that isn't JSON:
+    /// either way the caller has no key for that token and asks again.
     #[private]
     pub fn on_sample_keys(
         &self,
@@ -406,7 +432,7 @@ impl Contract {
                 .try_into()
                 .unwrap_or_else(|_| env::panic_str("sample hash must be 32 bytes"));
             require!(
-                !sample_ref.is_empty() && sample_ref.len() <= 256,
+                (1..=MAX_SAMPLE_REF_LEN).contains(&sample_ref.len()),
                 "sample ref must be 1 to 256 bytes"
             );
             self.require_unsealed(&token_id);
@@ -425,7 +451,7 @@ impl Contract {
             owner_id,
             sample_hash: kat.context_hash.map(|h| h.to_vec().into()),
             sample_ref: kat.context_ref.clone(),
-            runs: sample_runs(&token_id).len() as u32,
+            runs: sample_run_count(&token_id),
         })
     }
 
@@ -483,10 +509,7 @@ impl Contract {
     }
 
     pub(crate) fn require_dataset(&self) {
-        require!(
-            self.dataset_classes().is_some(),
-            "This is not a dataset collection"
-        );
+        require!(is_dataset(), "This is not a dataset collection");
     }
 
     fn require_unsealed(&self, token_id: &TokenId) {

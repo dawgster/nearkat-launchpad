@@ -19,7 +19,7 @@ impl Contract {
     ) {
         self.assert_keeper();
         require!(
-            self.dataset_classes().is_none(),
+            !crate::dataset::is_dataset(),
             "Samples are sealed with set_samples"
         );
         require!(

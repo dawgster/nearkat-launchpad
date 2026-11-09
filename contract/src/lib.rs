@@ -261,7 +261,7 @@ impl Contract {
     pub fn mint(&mut self) -> Token {
         let deposit = env::attached_deposit();
         require!(
-            self.dataset_classes().is_none(),
+            !crate::dataset::is_dataset(),
             "This collection's samples were all minted at launch"
         );
         require!(

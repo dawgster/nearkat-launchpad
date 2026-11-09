@@ -6,7 +6,7 @@
 use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::{env, near, require, NearToken, Promise, PublicKey};
 
-use crate::attestation::{check_app_registration, verify_quote};
+use crate::attestation::{check_app_registration, verify_quote, VerifiedTd};
 use crate::{Contract, ContractExt};
 
 /// At most this many distinct apps in the registry.
@@ -55,11 +55,32 @@ pub(crate) fn require_direct_call() {
     );
 }
 
+/// Characters that print as nothing or reorder the text around them, so a
+/// label with them could pass for another app's: zero-width characters,
+/// bidirectional controls and Unicode tags.
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}'
+        | '\u{17B5}' | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FEFF}'
+        | '\u{FFA0}' | '\u{FFF0}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
+}
+
 fn require_label(label: &str) {
     require!(
         (1..=MAX_LABEL_LEN).contains(&label.chars().count())
-            && label.chars().all(|c| !c.is_control()),
+            && label.chars().all(|c| !c.is_control() && !is_invisible(c)),
         "A label is 1 to 48 printable characters"
+    );
+}
+
+fn require_app_id(app_id: &str) {
+    require!(
+        (1..=MAX_APP_ID_LEN).contains(&app_id.len())
+            && app_id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        "app_id is 1 to 64 lowercase letters, digits or -"
     );
 }
 
@@ -67,7 +88,8 @@ fn require_label(label: &str) {
 impl Contract {
     /// Registers a key proven, by a TDX quote, to live inside the Phala app
     /// its event log names. Anyone may call; the deposit pays the storage
-    /// and the rest is refunded. `quote` is hex, `collateral` is
+    /// and the rest is refunded. `label` becomes the name lenders see for the
+    /// app: each registration replaces it, so the app's latest key names it. `quote` is hex, `collateral` is
     /// `QuoteCollateralV3` JSON, `event_log` is dstack's event log JSON.
     #[payable]
     pub fn register_app_key(
@@ -93,18 +115,9 @@ impl Contract {
         let quote = hex::decode(quote.trim_start_matches("0x"))
             .unwrap_or_else(|_| env::panic_str("quote must be hex"));
         let now_secs = env::block_timestamp() / 1_000_000_000;
-        let key = String::from(&public_key);
-        let app_id = verify_quote(&quote, &collateral, now_secs)
-            .and_then(|td| check_app_registration(&key, &seal_public_key, &td, &event_log))
+        let td = verify_quote(&quote, &collateral, now_secs)
             .unwrap_or_else(|problem| env::panic_str(&problem));
-        let entry = AppKey {
-            app_id,
-            label,
-            seal_public_key,
-            attested_at: env::block_timestamp(),
-            trusted_by_admin: false,
-        };
-        self.store_app_key(public_key, entry, NearToken::from_yoctonear(0))
+        self.store_attested_app_key(public_key, seal_public_key, label, &td, &event_log)
     }
 
     /// Admin only, and only for a collection with no TEE requirement: trusts
@@ -125,13 +138,7 @@ impl Contract {
             self.tee.is_none(),
             "A TEE collection only accepts attested training apps"
         );
-        require!(
-            (1..=MAX_APP_ID_LEN).contains(&app_id.len())
-                && app_id
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-            "app_id is 1 to 64 lowercase letters, digits or -"
-        );
+        require_app_id(&app_id);
         require_label(&label);
         let entry = AppKey {
             app_id,
@@ -144,11 +151,16 @@ impl Contract {
     }
 
     /// Admin only: takes an app off the list offered to lenders. Key records
-    /// stay, and so do loans; only `training_apps` changes.
+    /// stay, and so do loans; only `training_apps` changes. The freed bytes
+    /// stay with the collection: the app paid for them, not the admin.
     #[payable]
     pub fn remove_training_app(&mut self, app_id: String) {
         self.assert_admin();
         let mut apps = read_apps();
+        require!(
+            apps.contains(&app_id),
+            format!("{app_id} is not a listed training app")
+        );
         apps.retain(|a| a != &app_id);
         env::storage_write(
             APPS_KEY,
@@ -177,6 +189,31 @@ impl Contract {
 }
 
 impl Contract {
+    /// The rest of `register_app_key`, once the quote has passed Intel's
+    /// checks: holds the quote to these keys, reads the app id its event log
+    /// measured, and stores the key under it.
+    pub(crate) fn store_attested_app_key(
+        &mut self,
+        public_key: PublicKey,
+        seal_public_key: String,
+        label: String,
+        td: &VerifiedTd,
+        event_log: &str,
+    ) -> AppKey {
+        let key = String::from(&public_key);
+        let app_id = check_app_registration(&key, &seal_public_key, td, event_log)
+            .unwrap_or_else(|problem| env::panic_str(&problem));
+        require_app_id(&app_id);
+        let entry = AppKey {
+            app_id,
+            label,
+            seal_public_key,
+            attested_at: env::block_timestamp(),
+            trusted_by_admin: false,
+        };
+        self.store_app_key(public_key, entry, NearToken::from_yoctonear(0))
+    }
+
     /// The app id of the key that signed this transaction, if registered.
     pub(crate) fn signer_app(&self) -> Option<String> {
         self.get_app_key(env::signer_account_pk())

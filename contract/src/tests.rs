@@ -1784,7 +1784,7 @@ fn a_dataset_over_fifty_schedules_the_rest() {
     assert_eq!(c.get_collection().minted.0, 50);
     let receipts = near_sdk::test_utils::get_created_receipts();
     assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].receiver_id, acc("alice.near")); // the test context's own account
+    assert_eq!(receipts[0].receiver_id, env::current_account_id());
     match receipts[0].actions.as_slice() {
         [near_sdk::mock::MockAction::FunctionCallWeight {
             method_name, args, ..
@@ -1870,6 +1870,35 @@ fn dataset_class_names_are_checked() {
 }
 
 #[test]
+#[should_panic(expected = "class names must be unique")]
+fn dataset_class_names_are_unique() {
+    deploy_with(dataset(&["hotdog", "hotdog"], &[3, 2], 5));
+}
+
+#[test]
+#[should_panic(expected = "initial_supply must be 1 to 1000")]
+fn a_dataset_holds_at_most_a_thousand_samples() {
+    deploy_with(dataset(&["a", "b"], &[1000, 1], 1001));
+}
+
+#[test]
+#[should_panic(expected = "A dataset needs an initial_supply")]
+fn a_dataset_needs_an_initial_supply() {
+    deploy_with(Collection {
+        initial_supply: None,
+        ..dataset(&["a", "b"], &[3, 2], 5)
+    });
+}
+
+#[test]
+#[should_panic(expected = "This is not a dataset collection")]
+fn a_character_collection_has_nothing_to_finish_minting() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_yoctonear(0));
+    c.finish_minting();
+}
+
+#[test]
 #[should_panic(expected = "This collection's samples were all minted at launch")]
 fn nobody_mints_from_a_dataset() {
     let mut c = deploy_with(dataset(&["a", "b"], &[3, 2], 5));
@@ -1940,12 +1969,44 @@ fn only_the_keeper_requests_ingest_keys() {
 }
 
 #[test]
-#[should_panic(expected = "At most 10 keys per call")]
+#[should_panic(expected = "1 to 10 keys per call")]
 fn ingest_keys_are_limited_per_call() {
     let mut c = deploy_with(dataset(&["a", "b"], &[6, 6], 12));
     ctx("keeper.near", NearToken::from_yoctonear(0));
     let all: Vec<String> = (1..=11).map(|i| i.to_string()).collect();
     let _ = c.request_ingest_keys(all, APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "1 to 10 keys per call")]
+fn ingest_keys_are_asked_for_at_least_one_sample() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(Vec::new(), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "Sample 2 is listed twice")]
+fn ingest_keys_are_asked_for_once_per_sample() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["2", "1", "2"]), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "This is not a dataset collection")]
+fn a_character_collection_has_no_ingest_keys() {
+    let mut c = deploy();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["1"]), APP_KEY.to_string());
+}
+
+#[test]
+#[should_panic(expected = "Kat not found")]
+fn no_ingest_key_for_a_sample_that_does_not_exist() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    let _ = c.request_ingest_keys(ids(&["6"]), APP_KEY.to_string());
 }
 
 /// A call that reached the collection through another contract:
@@ -2033,8 +2094,79 @@ fn set_context_refuses_samples() {
 }
 
 #[test]
+#[should_panic(expected = "sample hash must be 32 bytes")]
+fn a_sample_hash_is_a_sha256() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![(
+        "1".to_string(),
+        vec![1; 31].into(),
+        "ref".to_string(),
+    )]);
+}
+
+#[test]
+#[should_panic(expected = "sample ref must be 1 to 256 bytes")]
+fn a_sample_ref_is_not_empty() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), String::new())]);
+}
+
+#[test]
+#[should_panic(expected = "sample ref must be 1 to 256 bytes")]
+fn a_sample_ref_is_short() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "r".repeat(257))]);
+}
+
+#[test]
+fn a_sample_ref_may_be_256_bytes() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "r".repeat(256))]);
+    assert_eq!(
+        c.get_sample("1".to_string())
+            .unwrap()
+            .sample_ref
+            .unwrap()
+            .len(),
+        256
+    );
+}
+
+#[test]
+#[should_panic(expected = "Kat not found")]
+fn no_seal_for_a_sample_that_does_not_exist() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("6".to_string(), hash(1), "ref".to_string())]);
+}
+
+#[test]
+#[should_panic(expected = "Sample 1 is already sealed")]
+fn a_sample_listed_twice_in_one_batch_is_sealed_once() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![
+        ("1".to_string(), hash(1), "ref1".to_string()),
+        ("1".to_string(), hash(2), "ref2".to_string()),
+    ]);
+}
+
+#[test]
+#[should_panic(expected = "1 to 50 samples per call")]
+fn set_samples_needs_a_sample() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(Vec::new());
+}
+
+/// `set_context` refuses every sample of a dataset, so a sealed one too.
+#[test]
 #[should_panic(expected = "Samples are sealed with set_samples")]
-fn set_context_cannot_overwrite_a_sealed_sample() {
+fn set_context_refuses_a_sealed_sample_too() {
     let mut c = sample_dataset();
     ctx("keeper.near", NearToken::from_yoctonear(0));
     c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
@@ -2105,6 +2237,34 @@ fn app_key_labels_are_checked() {
 }
 
 #[test]
+fn app_key_labels_cant_hide_characters() {
+    // Zero-width and bidirectional characters would let one app's label
+    // read as another's.
+    for label in [
+        "Dev\u{200B}",
+        "\u{202E}veD",
+        "D\u{2066}ev",
+        "\u{FEFF}Dev",
+        "Dev\u{E0041}",
+    ] {
+        let mut c = deploy();
+        ctx("admin.near", NearToken::from_millinear(10));
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), label.to_string());
+        }));
+        assert!(refused.is_err(), "{label:?} was accepted");
+    }
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    let entry = c.trust_app_key(
+        pk(APP_KEY_A),
+        "dev".to_string(),
+        "Café trainer ✨".to_string(),
+    );
+    assert_eq!(entry.label, "Café trainer ✨");
+}
+
+#[test]
 #[should_panic(expected = "A TEE collection only accepts attested training apps")]
 fn trust_app_key_refused_for_tee_collections() {
     let mut c = tee_deploy();
@@ -2153,6 +2313,16 @@ fn the_admin_takes_an_app_off_the_list() {
 }
 
 #[test]
+#[should_panic(expected = "app-two is not a listed training app")]
+fn removing_an_unknown_app_is_refused() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "app-one".to_string(), "One".to_string());
+    ctx("admin.near", YOCTO);
+    c.remove_training_app("app-two".to_string());
+}
+
+#[test]
 #[should_panic(expected = "Only the admin can call this method")]
 fn only_the_admin_removes_apps() {
     let mut c = deploy();
@@ -2182,6 +2352,21 @@ mod sample_loans {
     fn give(c: &mut Contract, id: &str, to: &str) {
         ctx("admin.near", YOCTO);
         c.nft_transfer(acc(to), id.to_string(), None, None);
+    }
+
+    /// The yoctoNEAR of each transfer the last call made, to `to` (or to anyone).
+    fn transfers(to: Option<&str>) -> Vec<u128> {
+        near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .filter(|r| to.is_none_or(|who| r.receiver_id == acc(who)))
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
+                    Some(deposit.as_yoctonear())
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn lend(c: &mut Contract, tokens: &[&str], fee: u128, apps: &[&str]) -> u32 {
@@ -2264,23 +2449,9 @@ mod sample_loans {
             c.borrow_many(ids(&["1", "2", "3"]), "app-one".to_string()),
             3
         );
-        let receipts = near_sdk::test_utils::get_created_receipts();
-        let paid = |who: &str| -> Vec<u128> {
-            receipts
-                .iter()
-                .filter(|r| r.receiver_id == acc(who))
-                .flat_map(|r| r.actions.iter())
-                .filter_map(|a| match a {
-                    near_sdk::mock::MockAction::Transfer { deposit, .. } => {
-                        Some(deposit.as_yoctonear())
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        assert_eq!(paid("admin.near"), vec![200]);
-        assert_eq!(paid("carol.near"), vec![40]);
-        assert_eq!(paid("bob.near"), vec![760]);
+        assert_eq!(transfers(Some("admin.near")), vec![200]);
+        assert_eq!(transfers(Some("carol.near")), vec![40]);
+        assert_eq!(transfers(Some("bob.near")), vec![760]);
         for id in ["1", "2", "3"] {
             let t = c.get_loan_training(id.to_string()).unwrap();
             assert_eq!(t.app_id.as_deref(), Some("app-one"));
@@ -2339,32 +2510,138 @@ mod sample_loans {
         let before = env::storage_usage();
         ctx("admin.near", STORAGE);
         lend(&mut c, &["1"], 5, &["app-one"]);
-        let receipts = near_sdk::test_utils::get_created_receipts();
-        let refund: u128 = receipts
-            .iter()
-            .flat_map(|r| r.actions.iter())
-            .filter_map(|a| match a {
-                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
-                    Some(deposit.as_yoctonear())
-                }
-                _ => None,
-            })
-            .sum();
+        let refund: u128 = transfers(None).iter().sum();
         let kept = STORAGE.as_yoctonear() - refund;
         ctx("admin.near", YOCTO);
         c.end_loan("1".to_string());
         assert_eq!(env::storage_usage(), before);
-        let back: u128 = near_sdk::test_utils::get_created_receipts()
-            .iter()
-            .flat_map(|r| r.actions.iter())
-            .filter_map(|a| match a {
-                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
-                    Some(deposit.as_yoctonear())
-                }
-                _ => None,
-            })
-            .sum();
+        let back: u128 = transfers(None).iter().sum();
         assert_eq!(back, kept);
+    }
+
+    #[test]
+    fn the_lender_pays_for_what_the_loan_grows_to_when_taken() {
+        // The longest renter, and the longest app it may name.
+        let renter = "r".repeat(64);
+        let app = "a".repeat(64);
+        let mut c = setup();
+        ctx("admin.near", NearToken::from_millinear(10));
+        c.trust_app_key(
+            pk("ed25519:8fWHD35Rjd78yeowbGCfY5zXqmQzy56Dg9d6xRqVnRYX"),
+            app.clone(),
+            "Long".to_string(),
+        );
+        let before = env::storage_usage();
+        ctx("admin.near", STORAGE);
+        c.lend_many(
+            ids(&["1"]),
+            Some(60.into()),
+            NearToken::from_yoctonear(5),
+            vec!["app-one".to_string(), app.clone()],
+        );
+        let kept = STORAGE.as_yoctonear() - transfers(None).iter().sum::<u128>();
+        ctx(&renter, NearToken::from_yoctonear(5));
+        c.borrow_many(ids(&["1"]), app);
+        let used =
+            u128::from(env::storage_usage() - before) * env::storage_byte_cost().as_yoctonear();
+        assert!(
+            used <= kept,
+            "the loan uses {used} but the lender paid {kept}"
+        );
+    }
+
+    #[test]
+    fn an_offer_whose_time_is_up_can_be_replaced() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(5));
+        c.borrow_many(ids(&["1"]), "app-one".to_string());
+        // 61 s later the 60 s rental is over, though its use was never spent.
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(acc("admin.near"))
+            .signer_account_id(acc("admin.near"))
+            .attached_deposit(STORAGE)
+            .storage_usage(env::storage_usage())
+            .block_timestamp(61 * 1_000_000_000)
+            .build());
+        assert_eq!(
+            c.get_loan("1".to_string()).unwrap().status,
+            LoanStatus::Over
+        );
+        assert_eq!(lend(&mut c, &["1"], 7, &["app-two"]), 1);
+        let loan = c.get_loan("1".to_string()).unwrap();
+        assert_eq!(loan.status, LoanStatus::Offered);
+        assert_eq!(loan.fee, NearToken::from_yoctonear(7));
+        assert_eq!(
+            c.get_loan_training("1".to_string()).unwrap().apps,
+            ids(&["app-two"])
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "It is already on loan; end that loan first")]
+    fn an_active_rental_is_not_replaced() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(5));
+        c.borrow_many(ids(&["1"]), "app-one".to_string());
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 2 is listed twice")]
+    fn lend_many_lists_each_sample_once() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2", "2"], 5, &["app-one"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Name each app once")]
+    fn lend_many_names_each_app_once() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1"], 5, &["app-one", "app-one"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample 1 is listed twice")]
+    fn borrow_many_lists_each_sample_once() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        lend(&mut c, &["1", "2"], 5, &["app-one"]);
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        c.borrow_many(ids(&["1", "2", "1"]), "app-one".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Lend 1 to 50 samples at a time")]
+    fn lend_many_takes_at_most_fifty() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        let many: Vec<String> = (1..=51).map(|i| i.to_string()).collect();
+        c.lend_many(many, None, NearToken::from_yoctonear(5), ids(&["app-one"]));
+    }
+
+    #[test]
+    #[should_panic(expected = "Name 1 to 8 training apps")]
+    fn lend_many_names_at_most_eight_apps() {
+        let mut c = setup();
+        ctx("admin.near", STORAGE);
+        let apps: Vec<String> = (1..=9).map(|i| format!("app-{i}")).collect();
+        c.lend_many(ids(&["1"]), None, NearToken::from_yoctonear(5), apps);
+    }
+
+    #[test]
+    #[should_panic(expected = "Rent 1 to 50 samples at a time")]
+    fn borrow_many_takes_at_most_fifty() {
+        let mut c = setup();
+        ctx("bob.near", NearToken::from_yoctonear(100));
+        let many: Vec<String> = (1..=51).map(|i| i.to_string()).collect();
+        c.borrow_many(many, "app-one".to_string());
     }
 
     // ---- Training apps get keys for rented samples, and record runs ----
@@ -2484,6 +2761,22 @@ mod sample_loans {
     }
 
     #[test]
+    #[should_panic(expected = "Only a registered training app")]
+    fn the_keeper_gets_no_sample_keys_for_rentals() {
+        let mut c = rented();
+        ctx("keeper.near", NearToken::from_yoctonear(0));
+        let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Only a registered training app")]
+    fn the_admin_gets_no_sample_keys_for_rentals() {
+        let mut c = rented();
+        ctx("admin.near", NearToken::from_yoctonear(0));
+        let _ = c.request_sample_keys(ids(&["1"]), APP_KEY.to_string());
+    }
+
+    #[test]
     #[should_panic(expected = "Sample 4: rental ended")]
     fn no_sample_keys_for_a_sample_nobody_rented() {
         let mut c = rented();
@@ -2535,17 +2828,7 @@ mod sample_loans {
         assert!(event.contains(r#""token_ids":["1","2"]"#), "{event}");
         assert!(event.contains(r#""renter_id":"bob.near""#), "{event}");
         // The storage is charged, and the rest refunded to the trainer.
-        let refund: u128 = near_sdk::test_utils::get_created_receipts()
-            .iter()
-            .filter(|r| r.receiver_id == acc("trainer.near"))
-            .flat_map(|r| r.actions.iter())
-            .filter_map(|a| match a {
-                near_sdk::mock::MockAction::Transfer { deposit, .. } => {
-                    Some(deposit.as_yoctonear())
-                }
-                _ => None,
-            })
-            .sum();
+        let refund: u128 = transfers(Some("trainer.near")).iter().sum();
         assert!(refund > 0 && refund < TRAINER_DEPOSIT.as_yoctonear());
     }
 
@@ -2742,7 +3025,7 @@ mod sample_loans {
     }
 
     #[test]
-    #[should_panic(expected = "Run run-1 was recorded for another app, renter or model")]
+    #[should_panic(expected = "Run run-1 was recorded for another app, renter, model or accuracy")]
     fn a_run_continues_only_with_the_same_model() {
         let mut c = rented();
         record(&mut c, "run-1", &["1"]);
@@ -2752,6 +3035,57 @@ mod sample_loans {
             acc("bob.near"),
             ids(&["2"]),
             "00".repeat(32),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Run run-1 was recorded for another app, renter, model or accuracy")]
+    fn a_run_continues_only_with_the_same_accuracy() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["2"]),
+            SHA.to_string(),
+            9_000,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Run run-1 was recorded for another app, renter, model or accuracy")]
+    fn a_run_continues_only_for_the_same_app() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        // Bob rents sample 4 for app two, which then names app one's run.
+        ctx("bob.near", NearToken::from_yoctonear(5));
+        c.borrow_many(ids(&["4"]), "app-two".to_string());
+        as_app(APP_KEY_B, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("bob.near"),
+            ids(&["4"]),
+            SHA.to_string(),
+            9_250,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Run run-1 was recorded for another app, renter, model or accuracy")]
+    fn a_run_continues_only_for_the_same_renter() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        // Carol rents sample 4 for the same app, which adds it to Bob's run.
+        ctx("carol.near", NearToken::from_yoctonear(5));
+        c.borrow_many(ids(&["4"]), "app-one".to_string());
+        as_app(APP_KEY_A, "trainer.near", TRAINER_DEPOSIT, 0);
+        c.record_training(
+            "run-1".to_string(),
+            acc("carol.near"),
+            ids(&["4"]),
+            SHA.to_string(),
             9_250,
         );
     }

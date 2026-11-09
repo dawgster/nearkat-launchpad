@@ -311,22 +311,18 @@ fn registration_runs_the_quote_through_intels_checks() {
 #[test]
 fn an_app_key_registers_under_the_app_its_quote_measures() {
     // The recorded fixtures are not one matching quote and collateral set, so
-    // the quote's checks run here on the dstack fixture's TD data, then the
-    // contract stores the app id the event log measured.
+    // Intel's checks are skipped: `register_app_key` goes on from here with
+    // the TD data the quote attested, which is the dstack fixture's.
     let (_, _, log) = dstack();
-    let app =
-        crate::attestation::check_app_registration(KEY, SEAL, &td("UpToDate", KEY), &log).unwrap();
-    assert_eq!(app, DSTACK_APP);
     let mut c = tee_collection();
     ctx("anyone.near", OPERATOR_KEY, NearToken::from_near(1));
-    let entry = crate::apps::AppKey {
-        app_id: app,
-        label: "trainer".to_string(),
-        seal_public_key: SEAL.to_string(),
-        attested_at: 0,
-        trusted_by_admin: false,
-    };
-    c.store_app_key(key(KEY), entry, NearToken::from_yoctonear(0));
+    c.store_attested_app_key(
+        key(KEY),
+        SEAL.to_string(),
+        "trainer".to_string(),
+        &td("UpToDate", KEY),
+        &log,
+    );
     let stored = c.get_app_key(key(KEY)).unwrap();
     assert_eq!(stored.app_id, DSTACK_APP);
     assert!(!stored.trusted_by_admin);
@@ -437,4 +433,42 @@ fn a_key_can_be_re_registered_by_its_own_app() {
         c.training_apps(),
         vec![("app-x".to_string(), "new".to_string())]
     );
+}
+
+#[test]
+#[should_panic(expected = "app_id is 1 to 64 lowercase letters, digits or -")]
+fn an_app_id_from_the_event_log_is_checked_like_any_other() {
+    // A log whose one event names an app id longer than any app's (the
+    // payload is hex, so only its length can be off), replayed into the
+    // RTMR3 the quote attests.
+    let mut event = DstackEvent {
+        imr: 3,
+        event_type: 0x0800_0001,
+        digest: String::new(),
+        event: "app-id".to_string(),
+        event_payload: "ab".repeat(40),
+        version: Some(2),
+    };
+    let digest = event_digest(&event).unwrap();
+    event.digest = hex::encode(digest);
+    let mut hasher = Sha384::new();
+    hasher.update([0u8; 48]);
+    hasher.update(digest);
+    let log = near_sdk::serde_json::json!([{
+        "imr": event.imr,
+        "event_type": event.event_type,
+        "digest": event.digest,
+        "event": event.event,
+        "event_payload": event.event_payload,
+        "version": 2,
+    }])
+    .to_string();
+    let td = VerifiedTd {
+        status: "UpToDate".to_string(),
+        rtmr3: hasher.finalize().into(),
+        report_data: expected_report_data(KEY, SEAL),
+    };
+    let mut c = tee_collection();
+    ctx("anyone.near", KEY, NearToken::from_near(1));
+    c.store_attested_app_key(key(KEY), SEAL.to_string(), "trainer".to_string(), &td, &log);
 }

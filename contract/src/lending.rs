@@ -96,6 +96,13 @@ pub struct LoanView {
     pub ends_at: Option<U64>,
 }
 
+/// An account id as long as NEAR allows, to measure a loan once borrowed.
+fn longest_account_id() -> AccountId {
+    "a".repeat(64)
+        .parse()
+        .unwrap_or_else(|_| env::panic_str("Can't build an account id"))
+}
+
 fn key(token_id: &TokenId) -> Vec<u8> {
     [LOAN_PREFIX, token_id.as_bytes()].concat()
 }
@@ -217,7 +224,6 @@ impl Contract {
         fee: NearToken,
         apps: Vec<String>,
     ) -> u32 {
-        self.require_dataset();
         require!(
             (1..=MAX_SAMPLES_PER_CALL).contains(&token_ids.len()),
             "Lend 1 to 50 samples at a time"
@@ -226,6 +232,7 @@ impl Contract {
             (1..=MAX_APPS_PER_LOAN).contains(&apps.len()),
             "Name 1 to 8 training apps"
         );
+        self.require_dataset();
         let registered = self.training_apps();
         for (i, app) in apps.iter().enumerate() {
             require!(
@@ -241,6 +248,12 @@ impl Contract {
             );
         }
         let owner_id = env::predecessor_account_id();
+        // The longest app a renter may name, for the storage reserve below.
+        let longest_app = apps
+            .iter()
+            .max_by_key(|app| app.len())
+            .cloned()
+            .unwrap_or_default();
         let mut total = NearToken::from_yoctonear(0);
         for (i, token_id) in token_ids.iter().enumerate() {
             require!(
@@ -275,15 +288,26 @@ impl Contract {
                 app_id: None,
                 spent: false,
             };
-            // Both records are measured as stored, then the loan is stored
-            // again with their joint cost.
+            // Both records are measured at the size they grow to when a
+            // renter takes the loan (the longest account id, its times, the
+            // longest app), so the lender pays for that too; then they are
+            // stored as offered, the loan with that cost.
             let before = env::storage_usage();
-            write(token_id, &loan);
-            write_training(token_id, &training);
+            let mut taken = loan.clone();
+            taken.start(longest_account_id());
+            write(token_id, &taken);
+            write_training(
+                token_id,
+                &LoanTraining {
+                    app_id: Some(longest_app.clone()),
+                    ..training.clone()
+                },
+            );
             let bytes = env::storage_usage().saturating_sub(before);
             let cost = env::storage_byte_cost().saturating_mul(u128::from(bytes));
             loan.storage = cost;
             write(token_id, &loan);
+            write_training(token_id, &training);
             total = total.saturating_add(cost);
         }
         // One record for the batch, as all its tokens share the terms: 50
@@ -314,11 +338,11 @@ impl Contract {
     /// fees. All or nothing. Anything attached beyond the fees comes back.
     #[payable]
     pub fn borrow_many(&mut self, token_ids: Vec<TokenId>, app_id: String) -> u32 {
-        self.require_dataset();
         require!(
             (1..=MAX_SAMPLES_PER_CALL).contains(&token_ids.len()),
             "Rent 1 to 50 samples at a time"
         );
+        self.require_dataset();
         let borrower = env::predecessor_account_id();
         let mut owed: Vec<(AccountId, NearToken)> = Vec::new();
         let mut total = NearToken::from_yoctonear(0);
@@ -393,7 +417,7 @@ impl Contract {
         fee: Option<NearToken>,
     ) -> LoanView {
         require!(
-            self.dataset_classes().is_none(),
+            !crate::dataset::is_dataset(),
             "Lend samples with lend_many, naming training apps"
         );
         let owner_id = self.owner_of(&token_id);
@@ -476,7 +500,7 @@ impl Contract {
     #[payable]
     pub fn borrow(&mut self, token_id: TokenId) -> LoanView {
         require!(
-            self.dataset_classes().is_none(),
+            !crate::dataset::is_dataset(),
             "Rent samples with borrow_many, naming a training app"
         );
         let owner_id = self.owner_of(&token_id);
@@ -596,7 +620,7 @@ impl Contract {
         };
         if let Some(loan) = read(token_id) {
             require!(
-                !(status(token_id, &loan, &owner_id) == LoanStatus::Active && !loan.fee.is_zero()),
+                status(token_id, &loan, &owner_id) != LoanStatus::Active || loan.fee.is_zero(),
                 "It's rented out: it can't change hands until the loan ends"
             );
         }
