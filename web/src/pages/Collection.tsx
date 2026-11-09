@@ -20,6 +20,7 @@ import { describeProblem } from "../lib/problems.ts";
 import { KeeperSession } from "../lib/session.ts";
 import { createTrainer } from "../lib/trainer.ts";
 import { useAsync } from "../lib/useAsync.ts";
+import { ViewCache } from "../lib/viewCache.ts";
 import { SIGN_IN_MESSAGE, useServices } from "../services.tsx";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
@@ -77,7 +78,12 @@ export function Collection() {
   const { config, prices, reader: near } = useServices();
   const wallet = useWallet();
   const home = contractId === config.contractId;
-  const reader = useMemo(() => new KatContract(near, contractId), [near, contractId]);
+  // One limiter and cache for the page's views: a dataset's scans read each
+  // token once, at most 8 calls at a time. Cleared before every reload.
+  const reader = useMemo(
+    () => new KatContract(near, contractId, { views: new ViewCache(8) }),
+    [near, contractId],
+  );
   const [collection, reloadCollection] = useAsync(`collection/${contractId}`, () =>
     reader.getCollection(),
   );
@@ -123,6 +129,7 @@ export function Collection() {
       startingBalance,
     );
     setMinted(tokenId ?? "");
+    reader.forget();
     void reloadTokens();
     void reloadCollection();
   }
@@ -291,7 +298,10 @@ export function Collection() {
             collection={c}
             adminId={s.admin_id}
             keeperId={s.keeper_id}
-            onChange={() => void reloadCollection()}
+            onChange={() => {
+              reader.forget();
+              void reloadCollection();
+            }}
           />
           <Version contractId={contractId} collection={c} adminId={s.admin_id} />
         </div>
@@ -747,6 +757,7 @@ function DatasetSection({
           apps={apps.data}
           list={async (ids, terms) => {
             const listed = await signer.lendMany(accountId as string, ids, terms);
+            reader.forget();
             void reloadOffers();
             void reloadMine();
             return listed;
@@ -765,6 +776,7 @@ function DatasetSection({
               appId,
               (id) => byId.get(id) ?? 0n,
             );
+            reader.forget();
             void reloadOffers();
             void reloadRentals();
             return rented;
@@ -782,6 +794,7 @@ function DatasetSection({
           getAppKey={(publicKey) => reader.getAppKey(publicKey)}
           txUrl={(hash) => (explorer ? `${explorer}${hash}` : null)}
           onFinished={() => {
+            reader.forget();
             void reloadRentals();
             void reloadOffers();
           }}

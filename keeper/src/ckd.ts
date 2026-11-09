@@ -130,6 +130,8 @@ export async function fetchSampleKeys(
   mpcPublicKey: string,
   tokenIds: string[],
   perCall = MAX_SAMPLE_KEYS_PER_CALL,
+  /** Calls in flight at once; all of them when unset. */
+  parallel = Number.POSITIVE_INFINITY,
 ): Promise<Map<string, Buffer>> {
   if (!Number.isInteger(perCall) || perCall < 1 || perCall > MAX_SAMPLE_KEYS_PER_CALL) {
     throw new Error(`Ask for 1 to ${MAX_SAMPLE_KEYS_PER_CALL} sample keys per call`);
@@ -139,30 +141,35 @@ export async function fetchSampleKeys(
     chunks.push(tokenIds.slice(i, i + perCall));
   }
   const keys = new Map<string, Buffer>();
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      const app = newAppKey();
-      const answers = await request(chunk, app.publicKey);
-      for (const [i, id] of chunk.entries()) {
-        const answer = answers[i];
-        if (!answer) {
-          throw new Error(`No key for sample ${id}`);
-        }
-        let derived: Uint8Array;
-        try {
-          derived = openResponse(
-            answer,
-            app.secret,
-            mpcPublicKey,
-            appId(collectionId, sampleKeyPath(id)),
-          );
-        } catch {
-          throw new Error(`No key for sample ${id}`);
-        }
-        keys.set(id, sampleKey(derived, id));
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      await fetchChunk(chunks[next++] as string[]);
+    }
+  };
+  const fetchChunk = async (chunk: string[]) => {
+    const app = newAppKey();
+    const answers = await request(chunk, app.publicKey);
+    for (const [i, id] of chunk.entries()) {
+      const answer = answers[i];
+      if (!answer) {
+        throw new Error(`No key for sample ${id}`);
       }
-    }),
-  );
+      let derived: Uint8Array;
+      try {
+        derived = openResponse(
+          answer,
+          app.secret,
+          mpcPublicKey,
+          appId(collectionId, sampleKeyPath(id)),
+        );
+      } catch {
+        throw new Error(`No key for sample ${id}`);
+      }
+      keys.set(id, sampleKey(derived, id));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(parallel, chunks.length)) }, worker));
   return keys;
 }
 

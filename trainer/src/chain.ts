@@ -214,14 +214,31 @@ export class NearTrainerChain implements TrainerChain {
     return key;
   }
 
+  /**
+   * A reader of the collection's FastFS files, for one run. One ingest
+   * transaction holds up to 20 samples, so each transaction's arguments are
+   * fetched from the archival node once and kept for the run (they are the
+   * sealed blobs, never plaintext). A failed fetch is not kept.
+   */
   fastfsStore(contract: string): FastfsStore {
     const readOnly = () => Promise.reject(new Error("The training app does not upload"));
+    const fetched = new Map<string, Promise<Uint8Array[]>>();
+    const transactionArgs = (txHash: string, sender: string) => {
+      const key = `${sender}:${txHash}`;
+      let args = fetched.get(key);
+      if (!args) {
+        args = this.#transactionArgs(txHash, sender);
+        fetched.set(key, args);
+        args.catch(() => fetched.delete(key));
+      }
+      return args;
+    };
     return new FastfsStore({
       uploader: this.#signerId,
       receiver: contract,
       upload: readOnly,
       uploadMany: readOnly,
-      transactionArgs: this.#transactionArgs,
+      transactionArgs,
       gatewayUrl: this.#gatewayUrl,
     });
   }

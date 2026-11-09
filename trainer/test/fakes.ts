@@ -41,6 +41,10 @@ export class FakeTrainerChain implements TrainerChain {
   readonly samples = new Map<string, SampleView>();
   readonly records: TrainingRecord[] = [];
   readonly keyRequests: string[][] = [];
+  /** How long each requestSampleKeys call takes, in ms; and the most at once. */
+  keyDelayMs = 0;
+  mostKeyCallsAtOnce = 0;
+  #keyCallsNow = 0;
   /** Thrown by every recordTraining call, as a contract panic would be. */
   recordFailure: string | null = null;
   /** What each recordTraining call does in turn: throw the error, or succeed (null). */
@@ -129,6 +133,10 @@ export class FakeTrainerChain implements TrainerChain {
 
   async requestSampleKeys(_contract: string, ids: string[], appPublicKey: string) {
     this.keyRequests.push(ids);
+    this.#keyCallsNow += 1;
+    this.mostKeyCallsAtOnce = Math.max(this.mostKeyCallsAtOnce, this.#keyCallsNow);
+    await new Promise((resolve) => setTimeout(resolve, this.keyDelayMs));
+    this.#keyCallsNow -= 1;
     if (ids.length > 10) {
       throw new Error("At most 10 keys per call");
     }

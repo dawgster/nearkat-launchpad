@@ -32,12 +32,16 @@ function setup(launchpadId: string | null = null) {
 
 /** Waits for a run to finish, one way or the other. */
 async function settle(runs: Runs, id: string): Promise<RunState> {
-  await vi.waitFor(() => {
-    const stage = runs.get(id)?.stage;
-    if (stage !== "done" && stage !== "failed") {
-      throw new Error(`still ${stage}`);
-    }
-  });
+  // Generous: the fake MPC does real BLS maths, slow when test files run side by side.
+  await vi.waitFor(
+    () => {
+      const stage = runs.get(id)?.stage;
+      if (stage !== "done" && stage !== "failed") {
+        throw new Error(`still ${stage}`);
+      }
+    },
+    { timeout: 10_000 },
+  );
   return runs.get(id) as RunState;
 }
 
@@ -146,6 +150,28 @@ describe("Runs", () => {
     await expect(runs.start(CONTRACT, RENTER, ["1"])).rejects.toMatchObject(refusal);
     expect(chain.keyRequests).toEqual([]);
     expect(ensureRegistered).not.toHaveBeenCalled();
+  });
+
+  test("asks the collection for at most five calls' worth of keys at once", async () => {
+    const chain = new FakeTrainerChain();
+    const runs = new Runs({
+      appId: APP_ID,
+      appPublicKey: () => "ed25519:trainer",
+      chain,
+      python: new FakePython().run,
+      heldoutDir: "/heldout",
+      ensureRegistered: async () => {},
+      keysPerCall: 1,
+    });
+    const ids = Array.from({ length: 20 }, (_, i) => String(i + 1));
+    for (const id of ids) {
+      await chain.addRentedSample(id, "cat");
+    }
+    chain.keyDelayMs = 2;
+    const done = await settle(runs, (await runs.start(CONTRACT, RENTER, ids)).id);
+    expect(done.stage).toBe("done");
+    expect(chain.keyRequests).toHaveLength(20);
+    expect(chain.mostKeyCallsAtOnce).toBe(5);
   });
 
   test("refuses tokens whose rental is spent or not the caller's", async () => {

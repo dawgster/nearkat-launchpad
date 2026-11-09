@@ -89,6 +89,30 @@ describe("samples", () => {
     expect(keys.size).toBe(23);
   });
 
+  test("fetchSampleKeys keeps at most `parallel` calls in flight", async () => {
+    const chain = new FakeChain();
+    const ids = Array.from({ length: 30 }, (_, i) => String(i + 1));
+    let running = 0;
+    let most = 0;
+    const keys = await fetchSampleKeys(
+      chain.contractId,
+      KEY_SOURCE,
+      async (tokenIds, appPublicKey) => {
+        running += 1;
+        most = Math.max(most, running);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        running -= 1;
+        return chain.requestIngestKeys(tokenIds, appPublicKey);
+      },
+      await chain.mpcPublicKey(KEY_SOURCE),
+      ids,
+      1,
+      5,
+    );
+    expect(most).toBe(5);
+    expect(keys.size).toBe(30);
+  });
+
   test("fetchSampleKeys asks for 1 to 10 keys per call", async () => {
     const chain = new FakeChain();
     for (const perCall of [0, 11, 1.5]) {

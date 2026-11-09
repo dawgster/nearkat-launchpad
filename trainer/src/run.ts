@@ -51,6 +51,8 @@ export class RunFailure extends Error {}
 export const MAX_RUN_SAMPLES = 200;
 /** The most samples one `record_training` call takes. */
 const RECORD_CHUNK = 50;
+/** `request_sample_keys` calls in flight at once: each fans out to the MPC network. */
+const KEY_CALLS_AT_ONCE = 5;
 /** How many samples are checked, or fetched from FastFS, at once. */
 const PARALLEL = 8;
 
@@ -337,6 +339,7 @@ export class Runs {
         mpcPublicKey,
         tokenIds,
         this.#o.keysPerCall,
+        KEY_CALLS_AT_ONCE,
       ).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : "";
         throw /^No key for sample \S+$/.test(message) ? new RunFailure(message) : error;

@@ -1,5 +1,6 @@
 import type { Near } from "near-kit";
 import type { CollectionView } from "./launchpad.ts";
+import type { ViewCache } from "./viewCache.ts";
 
 /** A kat as the contract's `get_kat` view returns it. */
 export interface KatView {
@@ -185,13 +186,33 @@ export function returnValue<T>(outcome: unknown): T | null {
   }
 }
 
+/** Views a page's scans repeat: cached by a reader that has a `ViewCache`. */
+const SCAN_VIEWS = new Set([
+  "nft_tokens",
+  "nft_tokens_for_owner",
+  "get_loan",
+  "get_loan_training",
+  "training_apps",
+]);
+
 export class KatContract {
   readonly #near: Near;
   readonly #contractId: string;
+  readonly #views: ViewCache | null;
 
-  constructor(near: Near, contractId: string) {
+  /**
+   * `views`: share a page's view limiter and cache. Without it every view
+   * goes to the chain at once.
+   */
+  constructor(near: Near, contractId: string, options: { views?: ViewCache } = {}) {
     this.#near = near;
     this.#contractId = contractId;
+    this.#views = options.views ?? null;
+  }
+
+  /** Forgets cached views, so what follows a transaction is read afresh. */
+  forget(): void {
+    this.#views?.clear();
   }
 
   async getKat(tokenId: string): Promise<KatView | null> {
@@ -581,6 +602,10 @@ export class KatContract {
 
   // Optimistic finality: the interface should show a transaction's effect at once.
   #view<T>(method: string, args: object): Promise<T | undefined> {
-    return this.#near.view<T>(this.#contractId, method, args, { finality: "optimistic" });
+    const load = () =>
+      this.#near.view<T>(this.#contractId, method, args, { finality: "optimistic" });
+    return this.#views
+      ? this.#views.run(`${method}:${JSON.stringify(args)}`, load, SCAN_VIEWS.has(method))
+      : load();
   }
 }
