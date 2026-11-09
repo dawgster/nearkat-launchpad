@@ -65,6 +65,7 @@ describe.skipIf(!existsSync(WASM) || !existsSync(MPC_WASM) || !existsSync(WALLET
           uploader: who.id,
           receiver: contractId,
           upload: (_receiver, args) => chain.uploadFastfs(args),
+          uploadMany: (_receiver, list) => chain.uploadFastfsMany(list),
           transactionArgs: transactionArgsFrom(sandbox.rpcUrl),
           gatewayUrl: null,
         }),

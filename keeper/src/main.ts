@@ -62,6 +62,7 @@ const storeFor = (contractId: string, chain: Chain): ContextStore =>
           uploader: config.keeperAccountId,
           receiver: contractId,
           upload: (_receiver, args) => chain.uploadFastfs(args),
+          uploadMany: (_receiver, list) => chain.uploadFastfsMany(list),
           transactionArgs,
           gatewayUrl: config.fastfsGateway
             ? (uploader, receiver, path) =>

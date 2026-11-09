@@ -74,10 +74,49 @@ export interface KeyChain {
 /** Stores a FastFS file addressed to the collection; resolves to the transaction hash. */
 export interface FastfsUploader {
   uploadFastfs(args: Uint8Array): Promise<string>;
+  /** Several files in one transaction, at most 20; resolves to the transaction hash. */
+  uploadFastfsMany(argsList: Uint8Array[]): Promise<string>;
+}
+
+/** What a dataset collection's ingest needs. */
+export interface DatasetChain {
+  /** Has the collection fetch the samples' keys from the MPC network. Keeper only; at most 10. */
+  requestIngestKeys(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>>;
+  /** Same, for a training app: samples that are sealed and rented. */
+  requestSampleKeys?(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>>;
+  /** Records sealed samples: `[token_id, sha256 base64, ref]`; at most 50. */
+  setSamples(items: Array<[tokenId: string, sha256Base64: string, ref: string]>): Promise<void>;
+  getSample(tokenId: string): Promise<SampleView | null>;
+  /** The dataset's classes; null for a character collection. */
+  getDatasetInfo(): Promise<{ classes: string[] } | null>;
+  /** How many samples are minted, and how many the dataset has. */
+  getSupply(): Promise<{ minted: number; max_supply: number | null }>;
+  /** The collection's admin account. */
+  getAdminId(): Promise<string>;
+  /** Mints the samples still missing. Anyone may call it. */
+  finishMinting(): Promise<void>;
+}
+
+export interface SampleView {
+  owner_id: string;
+  sample_hash: string | null;
+  sample_ref: string | null;
+  runs: number;
 }
 
 /** Everything the keeper needs from one collection contract. */
-export type Chain = TokenChain & CollectionChain & KeyChain & FastfsUploader & WalletChain;
+export type Chain = TokenChain &
+  CollectionChain &
+  KeyChain &
+  FastfsUploader &
+  WalletChain &
+  DatasetChain;
 
 /** The collection moved to another key epoch while a context was being saved. */
 export class KeyEpochChanged extends Error {
@@ -101,6 +140,9 @@ export interface KeyProof {
   /** dstack's event log JSON. */
   event_log: string;
 }
+
+/** The most `__fastdata_fastfs` actions one transaction carries: 20 × 10 Tgas fits a transaction's gas. */
+export const MAX_FASTFS_ACTIONS = 20;
 
 export class NearChain implements Chain {
   readonly #near: Near;
@@ -225,6 +267,10 @@ export class NearChain implements Chain {
       key_epoch: view.key_epoch,
       wallet_code_hash: view.wallet_code_hash ?? null,
       history_import: view.history_import === true,
+      kind: view.kind ?? "Character",
+      class_counts: (view.class_counts ?? []).map(Number),
+      minted: view.minted === undefined ? 0 : Number(view.minted),
+      max_supply: view.max_supply == null ? null : Number(view.max_supply),
     };
   }
 
@@ -367,9 +413,113 @@ export class NearChain implements Chain {
     return outcome.transaction_outcome.id;
   }
 
-  async #config(): Promise<{ keeper_id: string; debit_seq: string; inference_accrued?: string }> {
+  async uploadFastfsMany(argsList: Uint8Array[]): Promise<string> {
+    if (argsList.length === 0 || argsList.length > MAX_FASTFS_ACTIONS) {
+      throw new Error(`1 to ${MAX_FASTFS_ACTIONS} FastFS files per transaction`);
+    }
+    let tx = this.#near.transaction(this.#signerId);
+    for (const args of argsList) {
+      tx = tx.functionCall(this.#contractId, "__fastdata_fastfs", args, { gas: "10 Tgas" });
+    }
+    const outcome = (await tx.send({ waitUntil: "FINAL" })) as unknown as {
+      transaction_outcome: { id: string };
+    };
+    return outcome.transaction_outcome.id;
+  }
+
+  async requestIngestKeys(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>> {
+    return this.#sampleKeys("request_ingest_keys", tokenIds, appPublicKey);
+  }
+
+  async requestSampleKeys(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>> {
+    return this.#sampleKeys("request_sample_keys", tokenIds, appPublicKey);
+  }
+
+  async #sampleKeys(
+    method: string,
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>> {
+    // One MPC request per sample, answered a few blocks later.
+    const outcome = (await this.#near.call(
+      this.#contractId,
+      method,
+      { token_ids: tokenIds, app_public_key: appPublicKey },
+      { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
+    )) as unknown as { status?: { SuccessValue?: string } };
+    const value = outcome.status?.SuccessValue;
+    if (!value) {
+      throw new Error(`The MPC network gave no sample keys: ${JSON.stringify(outcome.status)}`);
+    }
+    const answer = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
+    if (!Array.isArray(answer) || answer.length !== tokenIds.length) {
+      throw new Error("The MPC network's answer is malformed");
+    }
+    return answer.map((item: { big_y?: unknown; big_c?: unknown } | null) =>
+      item && typeof item.big_y === "string" && typeof item.big_c === "string"
+        ? { big_y: item.big_y, big_c: item.big_c }
+        : null,
+    );
+  }
+
+  async setSamples(items: Array<[string, string, string]>): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "set_samples",
+      { items },
+      { gas: "100 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
+    );
+  }
+
+  async getSample(tokenId: string): Promise<SampleView | null> {
+    return (
+      (await this.#near.view<SampleView | null>(
+        this.#contractId,
+        "get_sample",
+        { token_id: tokenId },
+        { finality: this.#finality },
+      )) ?? null
+    );
+  }
+
+  async getDatasetInfo(): Promise<{ classes: string[] } | null> {
+    const { kind } = await this.getCollection();
+    return kind && typeof kind === "object" ? { classes: kind.Dataset.classes } : null;
+  }
+
+  async getSupply(): Promise<{ minted: number; max_supply: number | null }> {
+    const { minted, max_supply } = await this.getCollection();
+    return { minted: minted ?? 0, max_supply: max_supply ?? null };
+  }
+
+  async getAdminId(): Promise<string> {
+    return (await this.#config()).admin_id;
+  }
+
+  async finishMinting(): Promise<void> {
+    await this.#near.call(
+      this.#contractId,
+      "finish_minting",
+      {},
+      { gas: "300 Tgas", waitUntil: "FINAL", signerId: this.#signerId },
+    );
+  }
+
+  async #config(): Promise<{
+    keeper_id: string;
+    admin_id: string;
+    debit_seq: string;
+    inference_accrued?: string;
+  }> {
     const config = await this.#near.view<{
       keeper_id: string;
+      admin_id: string;
       debit_seq: string;
       inference_accrued?: string;
     }>(this.#contractId, "get_config", {}, { finality: this.#finality });
@@ -385,7 +535,7 @@ export class NearChain implements Chain {
  * a FastFS file can be read back without any FastFS service.
  */
 export function transactionArgsFrom(rpcUrl: string, fetchImpl: typeof fetch = fetch) {
-  return async (txHash: string, sender: string): Promise<Uint8Array> => {
+  return async (txHash: string, sender: string): Promise<Uint8Array[]> => {
     const response = await fetchImpl(rpcUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -401,10 +551,14 @@ export function transactionArgsFrom(rpcUrl: string, fetchImpl: typeof fetch = fe
       result?: { transaction?: { actions?: Array<{ FunctionCall?: { args?: string } }> } };
       error?: unknown;
     };
-    const args = body.result?.transaction?.actions?.[0]?.FunctionCall?.args;
-    if (!args) {
+    const args = (body.result?.transaction?.actions ?? []).flatMap((action) =>
+      action.FunctionCall?.args === undefined
+        ? []
+        : [Buffer.from(action.FunctionCall.args, "base64")],
+    );
+    if (args.length === 0) {
       throw new Error(`Transaction ${txHash} not found: ${JSON.stringify(body.error ?? body)}`);
     }
-    return Buffer.from(args, "base64");
+    return args;
   };
 }

@@ -95,8 +95,10 @@ export interface FastfsOptions {
   receiver: string;
   /** Sends a `__fastdata_fastfs` call to the receiver; resolves to the transaction hash. */
   upload(receiver: string, args: Uint8Array): Promise<string>;
-  /** The original arguments of a transaction, from an archival node. */
-  transactionArgs(txHash: string, sender: string): Promise<Uint8Array>;
+  /** Sends several `__fastdata_fastfs` calls to the receiver in one transaction. */
+  uploadMany(receiver: string, argsList: Uint8Array[]): Promise<string>;
+  /** The original arguments of every function call in a transaction, from an archival node. */
+  transactionArgs(txHash: string, sender: string): Promise<Uint8Array[]>;
   /** Where a FastFS file is served over HTTP, or null for no gateway. */
   gatewayUrl: ((uploader: string, receiver: string, path: string) => string) | null;
   fetch?: typeof fetch;
@@ -124,6 +126,16 @@ export class FastfsStore implements ContextStore {
     return `fastfs:${this.#o.uploader}:${sha256}:${txHash}`;
   }
 
+  /** Stores several blobs in one transaction; the refs come back in order. */
+  async putMany(blobs: Uint8Array[]): Promise<string[]> {
+    const shas = blobs.map(sha256Hex);
+    const txHash = await this.#o.uploadMany(
+      this.#o.receiver,
+      blobs.map((blob, i) => encodeFastfs(FastfsStore.path(shas[i] as string), blob)),
+    );
+    return shas.map((sha256) => `fastfs:${this.#o.uploader}:${sha256}:${txHash}`);
+  }
+
   async get(ref: string): Promise<Uint8Array> {
     const { uploader, sha256, txHash } = parseRef(ref);
     const path = FastfsStore.path(sha256);
@@ -144,8 +156,19 @@ export class FastfsStore implements ContextStore {
         // Fall back to the chain itself.
       }
     }
-    const upload = decodeFastfs(await this.#o.transactionArgs(txHash, uploader));
-    const blob = upload.relativePath === path ? checked(upload.content) : null;
+    let blob: Uint8Array | null = null;
+    for (const args of await this.#o.transactionArgs(txHash, uploader)) {
+      let upload: ReturnType<typeof decodeFastfs>;
+      try {
+        upload = decodeFastfs(args);
+      } catch {
+        continue; // Not a FastFS action.
+      }
+      if (upload.relativePath === path) {
+        blob = checked(upload.content);
+        break;
+      }
+    }
     if (!blob) {
       throw new Error(`Context ${sha256} is not in transaction ${txHash}`);
     }

@@ -44,7 +44,7 @@ describe("liveCheck", () => {
       collection: { id: "lantern.testnet", keeperId: "keeper.testnet", chain },
       fastfs: {
         gatewayUrl: null,
-        transactionArgs: async (hash) => chain.uploads.get(hash) ?? new Uint8Array(),
+        transactionArgs: async (hash) => chain.uploads.get(hash) ?? [],
       },
       waitMs: 0,
     });

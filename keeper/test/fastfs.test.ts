@@ -11,16 +11,21 @@ const TX = "4Ze6vaV85aaEsmYasL2K7hTgXUoHoaVWKvjEbjJi";
 
 /** A chain that remembers uploads by transaction, as an archival node would. */
 function fakeChain() {
-  const txs = new Map<string, { sender: string; args: Uint8Array }>();
+  const txs = new Map<string, { sender: string; args: Uint8Array[] }>();
   let n = 0;
   return {
     txs,
     upload: async (_receiver: string, args: Uint8Array) => {
       const hash = `${TX}${String(n++).padStart(4, "A").replace(/0/g, "B")}`;
-      txs.set(hash, { sender: "keeper.near", args });
+      txs.set(hash, { sender: "keeper.near", args: [args] });
       return hash;
     },
-    transactionArgs: async (hash: string) => {
+    uploadMany: async (_receiver: string, argsList: Uint8Array[]) => {
+      const hash = `${TX}${String(n++).padStart(4, "A").replace(/0/g, "B")}`;
+      txs.set(hash, { sender: "keeper.near", args: argsList });
+      return hash;
+    },
+    transactionArgs: async (hash: string): Promise<Uint8Array[]> => {
       const tx = txs.get(hash);
       if (!tx) {
         throw new Error("unknown transaction");
@@ -59,6 +64,23 @@ describe("FastFS encoding", () => {
 
 describe("FastfsStore", () => {
   const blob = new Uint8Array([9, 8, 7, 6]);
+
+  test("putMany stores several files in one transaction and reads each back", async () => {
+    const chain = fakeChain();
+    const store = new FastfsStore({
+      uploader: "keeper.near",
+      receiver: "lantern.launch.near",
+      ...chain,
+      gatewayUrl: null,
+    });
+    const blobs = [new Uint8Array([1, 1]), new Uint8Array([2, 2]), new Uint8Array([3, 3])];
+    const refs = await store.putMany(blobs);
+    expect(chain.txs.size).toBe(1);
+    expect(new Set(refs.map((r) => parseRef(r).txHash)).size).toBe(1);
+    for (const [i, ref] of refs.entries()) {
+      expect(await store.get(ref)).toEqual(blobs[i]);
+    }
+  });
 
   test("uploads to the collection and records who, what and where", async () => {
     const chain = fakeChain();
@@ -125,6 +147,7 @@ describe("FastFS with a disk cache", () => {
         uploader: "keeper.near",
         receiver: "kats.near",
         upload: chain.upload,
+        uploadMany: chain.uploadMany,
         transactionArgs: chain.transactionArgs,
         gatewayUrl: null,
       });

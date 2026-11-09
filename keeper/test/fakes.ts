@@ -7,8 +7,9 @@ import {
   type DebitResult,
   KeyEpochChanged,
   type KeyProof,
+  type SampleView,
 } from "../src/chain.ts";
-import { appId, contextKeyPath, type KeySource, MpcKeyring } from "../src/ckd.ts";
+import { appId, contextKeyPath, type KeySource, MpcKeyring, sampleKeyPath } from "../src/ckd.ts";
 import { type CollectionInfo, DEFAULT_COLLECTION } from "../src/collection.ts";
 import { InferenceError } from "../src/errors.ts";
 import type { ChatResult, Inference, Tool } from "../src/inference.ts";
@@ -66,7 +67,7 @@ export class FakeChain implements Chain {
   ckdFailure: string | null = null;
   ckdRequests = 0;
   /** FastFS uploads, by transaction hash. */
-  readonly uploads = new Map<string, Uint8Array>();
+  readonly uploads = new Map<string, Uint8Array[]>();
   /** Loans by token, as the contract shows them. */
   readonly loans = new Map<string, LoanView>();
 
@@ -260,10 +261,116 @@ export class FakeChain implements Chain {
     return `bls12381g2:${base58.encode(bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true))}`;
   }
 
+  /** Samples as `set_samples` recorded them. */
+  readonly samples = new Map<string, SampleView>();
+  /** Every `request_ingest_keys` call's token ids. */
+  readonly ingestRequests: string[][] = [];
+  /** Tokens whose key the MPC network won't give. */
+  readonly noSampleKey = new Set<string>();
+  /** Calls to finish_minting. */
+  finishMintingCalls = 0;
+  adminId = "admin.near";
+
+  #mpcAnswer(path: string, appPublicKey: string): { big_y: string; big_c: string } {
+    const G1 = bls.G1.Point;
+    const app = G1.fromBytes(base58.decode(appPublicKey.replace(/^bls12381g1:/, "")));
+    const pk = bls.G2.Point.BASE.multiply(this.mpcSecret).toBytes(true);
+    const hashed = bls.G1.hashToCurve(new Uint8Array([...pk, ...appId(this.contractId, path)]), {
+      DST: "NEAR BLS12381G1_XMD:SHA-256_SSWU_RO_",
+    }) as unknown as InstanceType<typeof G1>;
+    const y = bls.fields.Fr.fromBytes(bls.utils.randomSecretKey());
+    const encode = (point: InstanceType<typeof G1>) =>
+      `bls12381g1:${base58.encode(point.toBytes(true))}`;
+    return {
+      big_y: encode(G1.BASE.multiply(y)),
+      big_c: encode(hashed.multiply(this.mpcSecret).add(app.multiply(y))),
+    };
+  }
+
+  async requestIngestKeys(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>> {
+    this.ingestRequests.push(tokenIds);
+    if (this.ckdFailure) {
+      throw new Error(this.ckdFailure);
+    }
+    if (tokenIds.length > 10) {
+      throw new Error("1 to 10 samples per call");
+    }
+    return tokenIds.map((id) =>
+      this.noSampleKey.has(id) || this.samples.get(id)?.sample_hash
+        ? null
+        : this.#mpcAnswer(sampleKeyPath(id), appPublicKey),
+    );
+  }
+
+  async requestSampleKeys(
+    tokenIds: string[],
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>> {
+    return tokenIds.map((id) =>
+      this.samples.get(id)?.sample_hash ? this.#mpcAnswer(sampleKeyPath(id), appPublicKey) : null,
+    );
+  }
+
+  async setSamples(items: Array<[string, string, string]>): Promise<void> {
+    if (items.length < 1 || items.length > 50) {
+      throw new Error("1 to 50 samples per call");
+    }
+    for (const [id, hash, ref] of items) {
+      if (Buffer.from(hash, "base64").length !== 32) {
+        throw new Error("sample hash must be 32 bytes");
+      }
+      const sample = this.samples.get(id);
+      if (!sample) {
+        throw new Error(`No sample ${id}`);
+      }
+      this.samples.set(id, { ...sample, sample_hash: hash, sample_ref: ref });
+    }
+  }
+
+  async getSample(tokenId: string): Promise<SampleView | null> {
+    return this.samples.get(tokenId) ?? null;
+  }
+
+  async getDatasetInfo(): Promise<{ classes: string[] } | null> {
+    const kind = this.collection.kind;
+    return kind && typeof kind === "object" ? { classes: kind.Dataset.classes } : null;
+  }
+
+  async getSupply(): Promise<{ minted: number; max_supply: number | null }> {
+    return { minted: this.collection.minted ?? 0, max_supply: this.collection.max_supply ?? null };
+  }
+
+  async getAdminId(): Promise<string> {
+    return this.adminId;
+  }
+
+  async finishMinting(): Promise<void> {
+    this.finishMintingCalls += 1;
+  }
+
+  async uploadFastfsMany(argsList: Uint8Array[]): Promise<string> {
+    if (argsList.length < 1 || argsList.length > 20) {
+      throw new Error("1 to 20 FastFS files per transaction");
+    }
+    const digest = createHash("sha256");
+    for (const args of argsList) {
+      digest.update(args);
+    }
+    const txHash = base58.encode(digest.update(String(this.uploads.size)).digest());
+    this.uploads.set(
+      txHash,
+      argsList.map((a) => Uint8Array.from(a)),
+    );
+    return txHash;
+  }
+
   async uploadFastfs(args: Uint8Array): Promise<string> {
     const digest = createHash("sha256").update(args).update(String(this.uploads.size)).digest();
     const txHash = base58.encode(digest);
-    this.uploads.set(txHash, Uint8Array.from(args));
+    this.uploads.set(txHash, [Uint8Array.from(args)]);
     return txHash;
   }
 

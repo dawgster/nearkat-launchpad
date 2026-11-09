@@ -22,7 +22,7 @@ export interface LiveCheckDeps {
   collection?: { id: string; keeperId: string; chain: Chain };
   fastfs?: {
     gatewayUrl: ((uploader: string, receiver: string, path: string) => string) | null;
-    transactionArgs(txHash: string, sender: string): Promise<Uint8Array>;
+    transactionArgs(txHash: string, sender: string): Promise<Uint8Array[]>;
   };
   /** How long to wait for an indexer or a view to catch up. */
   waitMs?: number;
@@ -157,6 +157,7 @@ export async function liveCheck(deps: LiveCheckDeps): Promise<CheckResult[]> {
       uploader: collection.keeperId,
       receiver: collection.id,
       upload: (_receiver, args) => collection.chain.uploadFastfs(args),
+      uploadMany: (_receiver, list) => collection.chain.uploadFastfsMany(list),
       transactionArgs,
       gatewayUrl,
     });

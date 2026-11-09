@@ -24,6 +24,11 @@ export interface KeySource {
 /** The derivation path prefix the collection contract requests; the epoch follows it. Must match the contract. */
 export const CONTEXT_KEY_PATH = "nearkat/contexts/v1";
 
+/** The derivation path prefix of a dataset's samples; the token id follows it. Must match the contract. */
+export const SAMPLE_KEY_PATH = "nearkat/samples/v1";
+
+export const sampleKeyPath = (tokenId: string) => `${SAMPLE_KEY_PATH}/${tokenId}`;
+
 /** Epoch 0 is the key from before epochs existed: the bare path. */
 export const contextKeyPath = (epoch: number) =>
   epoch === 0 ? CONTEXT_KEY_PATH : `${CONTEXT_KEY_PATH}/${epoch}`;
@@ -97,6 +102,62 @@ export function contextRoot(derivedKey: Uint8Array): Buffer {
   return Buffer.from(
     hkdfSync("sha256", derivedKey, "near-mpc-ckd-hkdf-v1", "nearkat/contexts/v1", 32),
   );
+}
+
+/** The 32-byte AES key of one sample, from the key the MPC network derived for its path. */
+export function sampleKey(derivedKey: Uint8Array, tokenId: string): Buffer {
+  return Buffer.from(
+    hkdfSync("sha256", derivedKey, "near-mpc-ckd-hkdf-v1", sampleKeyPath(tokenId), 32),
+  );
+}
+
+const SAMPLE_KEYS_PER_REQUEST = 10;
+
+/**
+ * Every listed sample's key. Asks the collection in chunks of ten, in
+ * parallel, each with its own throwaway key, and checks every answer is the
+ * network's signature on that sample's app id.
+ */
+export async function fetchSampleKeys(
+  collectionId: string,
+  _source: KeySource,
+  request: (
+    tokenIds: string[],
+    appPublicKey: string,
+  ) => Promise<Array<{ big_y: string; big_c: string } | null>>,
+  mpcPublicKey: string,
+  tokenIds: string[],
+): Promise<Map<string, Buffer>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < tokenIds.length; i += SAMPLE_KEYS_PER_REQUEST) {
+    chunks.push(tokenIds.slice(i, i + SAMPLE_KEYS_PER_REQUEST));
+  }
+  const keys = new Map<string, Buffer>();
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      const app = newAppKey();
+      const answers = await request(chunk, app.publicKey);
+      for (const [i, id] of chunk.entries()) {
+        const answer = answers[i];
+        if (!answer) {
+          throw new Error(`No key for sample ${id}`);
+        }
+        let derived: Uint8Array;
+        try {
+          derived = openResponse(
+            answer,
+            app.secret,
+            mpcPublicKey,
+            appId(collectionId, sampleKeyPath(id)),
+          );
+        } catch {
+          throw new Error(`No key for sample ${id}`);
+        }
+        keys.set(id, sampleKey(derived, id));
+      }
+    }),
+  );
+  return keys;
 }
 
 /** Fetches, decrypts and checks a collection's context root for one key epoch. */

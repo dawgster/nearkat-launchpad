@@ -1,0 +1,10 @@
+{
+  "caller": "lantern.launch.near",
+  "path": "nearkat/samples/v1/1",
+  "token_id": "1",
+  "app_secret": "987654321",
+  "app_public_key": "bls12381g1:6DqHv7oY955gVnuEyosBmVspL75gvDtrLZ1htYmYzkbtjZC9pvLBknP225KGb6ntqe",
+  "mpc_public_key": "bls12381g2:24KouzewJwJ37Rho1uZcDSJ89zAu5jHx6XUwZnuEZUKeUz1g9jk5j5PXgdQvxRVV27AS9PyKgcSMxPsCoj2Qwz7asBxbMuCZQPxVerQGGZKD1MnFjNMewGWB4NVEHFn3ThQV",
+  "big_y": "bls12381g1:5nTKm7WaGSTqRXTMN3YfvHrEg5MRBLV2FPXnYfqXjqXiSoQvByiAtkYhUnYUHjsgso",
+  "big_c": "bls12381g1:6vYadSrGS7BZKcoAb4MkXzunUwPLsTyRARoG32viZ6n6FjfrRa6QUFNaxu21UqiJqF"
+}

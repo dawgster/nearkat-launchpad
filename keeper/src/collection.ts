@@ -30,7 +30,17 @@ export interface CollectionInfo extends Persona {
   key_epoch: number;
   /** The published code each token's wallet account runs; null without wallets. */
   wallet_code_hash?: string | null;
+  /** What the tokens are; absent from contracts that predate datasets, which are characters. */
+  kind?: CollectionKind;
+  /** For a dataset: samples per class, in class order. */
+  class_counts?: number[];
+  /** Tokens minted so far. */
+  minted?: number;
+  /** How many tokens the collection will ever have, if limited. */
+  max_supply?: number | null;
 }
+
+export type CollectionKind = "Character" | { Dataset: { classes: string[] } };
 
 /** Amounts are yoctoNEAR strings. */
 export interface Terms {

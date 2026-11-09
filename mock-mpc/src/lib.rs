@@ -286,4 +286,40 @@ mod vector {
         std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
         std::fs::write(path, near_sdk::serde_json::to_string_pretty(&vector).unwrap()).unwrap();
     }
+
+    /// The same for a sample's key (path `nearkat/samples/v1/<token_id>`).
+    #[test]
+    fn write_sample_vector_for_the_keeper() {
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id("lantern.launch.near".parse().unwrap())
+            .attached_deposit(NearToken::from_yoctonear(1))
+            .random_seed([7u8; 32])
+            .build());
+        let mut mpc = MockMpc::new("22".repeat(32), 2);
+        let a = Scalar::from(987_654_321u64);
+        let app = G1Projective::generator() * a;
+        let response = mpc.request_app_private_key(CkdRequestArgs {
+            derivation_path: "nearkat/samples/v1/1".to_string(),
+            app_public_key: AppPublicKey::Tagged {
+                app_public_key: encode_g1(&app),
+            },
+            domain_id: 2,
+        });
+        let vector = near_sdk::serde_json::json!({
+            "caller": "lantern.launch.near",
+            "path": "nearkat/samples/v1/1",
+            "token_id": "1",
+            "app_secret": "987654321",
+            "app_public_key": encode_g1(&app),
+            "mpc_public_key": mpc.public_key(None),
+            "big_y": response.big_y,
+            "big_c": response.big_c,
+        });
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../keeper/test/fixtures/ckd-sample-vector.json"
+        );
+        std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+        std::fs::write(path, near_sdk::serde_json::to_string_pretty(&vector).unwrap()).unwrap();
+    }
 }
