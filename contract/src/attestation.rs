@@ -148,14 +148,14 @@ pub fn verify_quote(
     })
 }
 
-/// Runs every check for registering `public_key` under `app_id`.
-pub fn check_registration(
-    app_id: &str,
+/// Runs the quote, report-data and RTMR3 checks for registering `public_key`
+/// and returns the app id the event log measured (lowercase).
+pub fn check_app_registration(
     public_key: &str,
     seal_public_key: &str,
     td: &VerifiedTd,
     event_log_json: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     if !ACCEPTED_STATUSES.contains(&td.status.as_str()) {
         return Err(format!("platform TCB status {} is not accepted", td.status));
     }
@@ -164,7 +164,18 @@ pub fn check_registration(
     }
     let events: Vec<DstackEvent> = near_sdk::serde_json::from_str(event_log_json)
         .map_err(|e| format!("event log is not valid: {e}"))?;
-    let measured = measured_app_id(&events, &td.rtmr3)?;
+    measured_app_id(&events, &td.rtmr3)
+}
+
+/// Runs every check for registering `public_key` under `app_id`.
+pub fn check_registration(
+    app_id: &str,
+    public_key: &str,
+    seal_public_key: &str,
+    td: &VerifiedTd,
+    event_log_json: &str,
+) -> Result<(), String> {
+    let measured = check_app_registration(public_key, seal_public_key, td, event_log_json)?;
     if measured != app_id.to_lowercase() {
         return Err(format!("the quote is from app {measured}, not {app_id}"));
     }

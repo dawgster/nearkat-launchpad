@@ -307,3 +307,59 @@ fn registration_runs_the_quote_through_intels_checks() {
         "[]".to_string(),
     );
 }
+
+#[test]
+fn an_app_key_registers_under_the_app_its_quote_measures() {
+    // The recorded fixtures are not one matching quote and collateral set, so
+    // the quote's checks run here on the dstack fixture's TD data, then the
+    // contract stores the app id the event log measured.
+    let (_, _, log) = dstack();
+    let app =
+        crate::attestation::check_app_registration(KEY, SEAL, &td("UpToDate", KEY), &log).unwrap();
+    assert_eq!(app, DSTACK_APP);
+    let mut c = tee_collection();
+    ctx("anyone.near", OPERATOR_KEY, NearToken::from_near(1));
+    let entry = crate::apps::AppKey {
+        app_id: app,
+        label: "trainer".to_string(),
+        seal_public_key: SEAL.to_string(),
+        attested_at: 0,
+        trusted_by_admin: false,
+    };
+    c.store_app_key(key(KEY), entry, NearToken::from_yoctonear(0));
+    let stored = c.get_app_key(key(KEY)).unwrap();
+    assert_eq!(stored.app_id, DSTACK_APP);
+    assert!(!stored.trusted_by_admin);
+    assert_eq!(
+        c.training_apps(),
+        vec![(DSTACK_APP.to_string(), "trainer".to_string())]
+    );
+}
+
+#[test]
+fn an_app_key_with_the_wrong_report_data_is_refused() {
+    let (_, _, log) = dstack();
+    let error = crate::attestation::check_app_registration(
+        KEY,
+        SEAL,
+        &td("UpToDate", "ed25519:other"),
+        &log,
+    )
+    .unwrap_err();
+    assert!(error.contains("does not commit to these keys"));
+}
+
+#[test]
+#[should_panic(expected = "quote verification failed")]
+fn register_app_key_runs_the_quote_through_intels_checks() {
+    let mut c = tee_collection();
+    ctx("anyone.near", OPERATOR_KEY, NearToken::from_near(1));
+    c.register_app_key(
+        key(KEY),
+        SEAL.to_string(),
+        "trainer".to_string(),
+        hex::encode(INTEL_QUOTE),
+        INTEL_COLLATERAL.to_string(),
+        "[]".to_string(),
+    );
+}

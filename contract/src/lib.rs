@@ -1,4 +1,5 @@
 mod admin;
+pub mod apps;
 pub mod attestation;
 pub(crate) mod ckd;
 mod dataset;

@@ -1946,3 +1946,94 @@ fn set_context_cannot_overwrite_a_sealed_sample() {
     c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
     c.set_context("1".to_string(), hash(2), "ref2".to_string(), 2.into(), 0);
 }
+
+fn tee_deploy() -> Contract {
+    deploy_with(Collection {
+        tee: Some(crate::TeeRequirement::Phala {
+            app_id: "3763bc34552cf3a27ff71ad5f7a90471562a1a2d".to_string(),
+        }),
+        ..collection("Nearkat", "KAT", "")
+    })
+}
+
+fn pk(s: &str) -> near_sdk::PublicKey {
+    s.parse().unwrap()
+}
+
+const APP_KEY_A: &str = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp";
+const APP_KEY_B: &str = "ed25519:4eUKxcVz6kQgHHvJDY2jkm6mYwSj8b8N3pHn1dQd8Z8C";
+
+#[test]
+fn the_admin_trusts_app_keys_only_without_a_tee() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    let entry = c.trust_app_key(pk(APP_KEY_A), "dev-trainer".to_string(), "Dev".to_string());
+    assert!(entry.trusted_by_admin);
+    assert_eq!(c.get_app_key(pk(APP_KEY_A)), Some(entry));
+    assert_eq!(c.get_app_key(pk(APP_KEY_B)), None);
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(acc("admin.near"))
+        .signer_account_pk(pk(APP_KEY_A))
+        .build());
+    assert_eq!(c.signer_app(), Some("dev-trainer".to_string()));
+}
+
+#[test]
+#[should_panic(expected = "Only the admin can call this method")]
+fn trust_app_key_is_admin_only() {
+    let mut c = deploy();
+    ctx("alice.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), "Dev".to_string());
+}
+
+#[test]
+#[should_panic(expected = "for the key's storage")]
+fn trust_app_key_must_pay_its_storage() {
+    let mut c = deploy();
+    ctx("admin.near", YOCTO);
+    c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), "Dev".to_string());
+}
+
+#[test]
+#[should_panic(expected = "app_id is 1 to 64")]
+fn trust_app_key_checks_the_app_id() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "Not Valid".to_string(), "Dev".to_string());
+}
+
+#[test]
+#[should_panic(expected = "A label is 1 to 48 printable characters")]
+fn app_key_labels_are_checked() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), "bad\nlabel".to_string());
+}
+
+#[test]
+#[should_panic(expected = "A TEE collection only accepts attested training apps")]
+fn trust_app_key_refused_for_tee_collections() {
+    let mut c = tee_deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), "Dev".to_string());
+}
+
+#[test]
+fn training_apps_lists_each_app_once() {
+    let mut c = deploy();
+    ctx("admin.near", NearToken::from_millinear(10));
+    c.trust_app_key(pk(APP_KEY_A), "app-one".to_string(), "First".to_string());
+    c.trust_app_key(pk(APP_KEY_B), "app-one".to_string(), "Renamed".to_string());
+    c.trust_app_key(
+        pk("ed25519:8fWHD35Rjd78yeowbGCfY5zXqmQzy56Dg9d6xRqVnRYX"),
+        "app-two".to_string(),
+        "Second".to_string(),
+    );
+    assert_eq!(
+        c.training_apps(),
+        vec![
+            ("app-one".to_string(), "Renamed".to_string()),
+            ("app-two".to_string(), "Second".to_string())
+        ]
+    );
+}
