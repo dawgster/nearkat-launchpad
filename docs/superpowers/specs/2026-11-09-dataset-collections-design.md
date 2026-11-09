@@ -345,6 +345,14 @@ The launch itself can also be shown live with a small folder, if time allows.
     10 in parallel 7.8 s, all decrypt. Verdict by the rule (10 in one
     transaction over 20 s): `KEYS_AT_RENT_TIME = true`; parallel single
     transactions (about 8 s for 10) would support false for small counts.
+  - Fan-out from one contract call (`probes/ckd-fanout`, `keeper/scripts/ckd-fanout.ts`,
+    one `request_app_private_key` promise per key, joined with `Promise::and`, 300 Tgas
+    attached): N=2, 5, 10, two runs each, all took 7.9-9.7 s to final, the callback
+    received all N responses every time and all N decrypt and pass `openResponse`.
+    Gas burnt is about 9.2 Tgas per key (21 / 48 / 92 Tgas for 2 / 5 / 10), so the
+    limit is the 300 Tgas cap (15 Tgas static per promise), not the MPC network.
+    Conclusion: fan-out works reliably up to N=10 in one call (about 8 s); larger
+    N was not tried, expect roughly 15 to 20 per call by gas.
 - The Phala CVM has not been deployed before (no CVM in `deploy/` yet). Plan time
   for two apps, including the trainer's image size and the whole compose being
   attested. Run `npm run live-check` against them.
