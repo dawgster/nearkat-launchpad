@@ -143,11 +143,23 @@ async fn call(
     args: Value,
     deposit: NearToken,
 ) -> TestResult<Result<Value, String>> {
+    call_with_gas(env, contract, who, method, args, deposit, 200).await
+}
+
+async fn call_with_gas(
+    env: &Env,
+    contract: &AccountId,
+    who: &User,
+    method: &str,
+    args: Value,
+    deposit: NearToken,
+    tgas: u64,
+) -> TestResult<Result<Value, String>> {
     let outcome = Contract(contract.clone())
         .call_function(method, args)
         .transaction()
         .deposit(deposit)
-        .gas(near_api::types::NearGas::from_tgas(200))
+        .gas(near_api::types::NearGas::from_tgas(tgas))
         .with_signer(who.id.clone(), who.signer.clone())
         .send_to(&env.network)
         .await?;
@@ -365,5 +377,79 @@ async fn a_creator_upgrades_their_collection_only_to_an_approved_version() -> Te
     )
     .await?;
     assert!(format!("{stranger:?}").contains("Only the admin"));
+    Ok(())
+}
+
+/// A dataset mints its samples while it launches: as many as its gas allows,
+/// and the creator finishes the rest.
+#[tokio::test]
+async fn a_creator_launches_a_dataset_and_finishes_minting_its_samples() -> TestResult {
+    let env = setup().await?;
+    let launched = call_with_gas(
+        &env,
+        &env.launchpad.id,
+        &env.alice,
+        "launch",
+        json!({ "args": {
+            "slug": "hotdogs",
+            "mint_price": NearToken::from_near(1),
+            "collection": {
+                "name": "Hotdogs",
+                "symbol": "HOT",
+                "prompt": "",
+                "starter": "",
+                "kind": { "Dataset": { "classes": ["hotdog", "not_hotdog"] } },
+                "class_counts": ["60", "60"],
+                "initial_supply": "120",
+            },
+            "keeper_id": null,
+        }}),
+        NearToken::from_near(5),
+        300,
+    )
+    .await??;
+    assert_eq!(launched, json!(true));
+
+    let collection: AccountId = format!("hotdogs.{}", env.launchpad.id).parse()?;
+    let mut minted = 0;
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let info = view(&env, &collection, "get_collection", json!({})).await?;
+        let now: u64 = info["minted"].as_str().unwrap().parse()?;
+        if now == minted && now > 0 {
+            break;
+        }
+        minted = now;
+    }
+    eprintln!("the launch minted {minted} of 120");
+    assert!(minted >= 40, "only {minted} minted at launch");
+
+    // Whatever is missing, its creator (the admin) mints by calling again.
+    let mut calls = 0;
+    while minted < 120 {
+        assert!(calls < 3, "still {minted} after {calls} calls");
+        call_with_gas(
+            &env,
+            &collection,
+            &env.alice,
+            "finish_minting",
+            json!({}),
+            NearToken::from_yoctonear(1),
+            300,
+        )
+        .await??;
+        calls += 1;
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let info = view(&env, &collection, "get_collection", json!({})).await?;
+            minted = info["minted"].as_str().unwrap().parse()?;
+            if minted == 120 {
+                break;
+            }
+        }
+    }
+    eprintln!("finish_minting calls needed: {calls}");
+    let token = view(&env, &collection, "nft_token", json!({ "token_id": "120" })).await?;
+    assert_eq!(token["owner_id"], env.alice.id.as_str());
     Ok(())
 }

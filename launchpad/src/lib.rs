@@ -15,6 +15,10 @@ use near_sdk::{
 mod tests;
 
 const GAS_FOR_INIT: Gas = Gas::from_tgas(100);
+/// A dataset mints its samples while it initialises, about 4 Tgas each, so
+/// it gets more: room for roughly 45 before `finish_minting` takes over. The
+/// launch call then needs about 280 Tgas attached.
+const GAS_FOR_DATASET_INIT: Gas = Gas::from_tgas(230);
 const GAS_FOR_LAUNCH_CALLBACK: Gas = Gas::from_tgas(15);
 const GAS_FOR_WITHDRAW_CALLBACK: Gas = Gas::from_tgas(5);
 const MAX_SLUG_LEN: usize = 32;
@@ -230,6 +234,11 @@ impl Launchpad {
             "collection": with_key_source(&args.collection, &key_source, self.wallet_code_hash),
             "code_hash": Base58CryptoHash::from(code_hash),
         });
+        let init_gas = if args.collection.initial_supply.is_some() {
+            GAS_FOR_DATASET_INIT
+        } else {
+            GAS_FOR_INIT
+        };
         Promise::new(account_id.clone())
             .create_account()
             .transfer(deposit.saturating_sub(self.launch_fee))
@@ -238,7 +247,7 @@ impl Launchpad {
                 "new",
                 init.to_string().into_bytes(),
                 NearToken::from_yoctonear(0),
-                GAS_FOR_INIT,
+                init_gas,
             )
             .then(
                 Self::ext(env::current_account_id())

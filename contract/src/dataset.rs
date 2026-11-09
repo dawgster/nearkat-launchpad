@@ -20,6 +20,15 @@ pub(crate) const DATASET_KEY: &[u8] = b"dataset";
 /// How many samples one call mints, to stay within gas.
 pub(crate) const SAMPLE_MINT_BATCH: u64 = 50;
 
+/// Minting stops when less gas than this is left, which keeps the call
+/// itself (and `new`) from running out. A sample costs about 4 Tgas.
+const GAS_TO_STOP_MINTING: Gas = Gas::from_tgas(30);
+/// The rest is only scheduled when this much is left to run it. A chain of
+/// continuations shares the gas of the transaction that started it (300
+/// Tgas at most), so it reaches about 70 samples; `finish_minting` mints
+/// more, in later transactions.
+const GAS_TO_CONTINUE_MINTING: Gas = Gas::from_tgas(60);
+
 /// Keys per `request_ingest_keys` call, to stay within gas.
 const MAX_INGEST_KEYS: usize = 10;
 /// Samples sealed per `set_samples` call.
@@ -148,6 +157,10 @@ impl RunRecord {
             recorded_at: U64(self.recorded_at),
         }
     }
+}
+
+fn gas_left() -> Gas {
+    env::prepaid_gas().saturating_sub(env::used_gas())
 }
 
 fn slot(prefix: &[u8], id: &str) -> Vec<u8> {
@@ -494,9 +507,10 @@ impl Contract {
         )
     }
 
-    /// Mints `min(count, SAMPLE_MINT_BATCH)` samples to the admin (the
-    /// creator) and schedules `mint_samples` for what remains. Storage comes
-    /// out of the collection account's balance.
+    /// Mints up to `min(count, SAMPLE_MINT_BATCH)` samples to the admin (the
+    /// creator), fewer if the gas runs low, and schedules `mint_samples` for
+    /// what remains if there is gas to run it. Storage comes out of the
+    /// collection account's balance.
     pub(crate) fn mint_sample_batch(&mut self, count: u64) {
         let max = self.max_supply.unwrap_or(0);
         let minted = self.next_token_id - 1;
@@ -504,10 +518,13 @@ impl Contract {
             minted + count <= max,
             "More samples than the collection holds"
         );
-        let now = count.min(SAMPLE_MINT_BATCH);
+        let batch = count.min(SAMPLE_MINT_BATCH);
         let owner = self.admin_id.clone();
-        let mut ids = Vec::with_capacity(now as usize);
-        for _ in 0..now {
+        let mut ids = Vec::with_capacity(batch as usize);
+        for _ in 0..batch {
+            if gas_left() < GAS_TO_STOP_MINTING {
+                break;
+            }
             let token_id = self.next_token_id.to_string();
             self.next_token_id += 1;
             let metadata = TokenMetadata {
@@ -526,6 +543,7 @@ impl Contract {
                 .insert(token_id.clone(), Kat::new(NearToken::from_yoctonear(0)));
             ids.push(token_id);
         }
+        require!(!ids.is_empty(), "Not enough gas to mint samples");
         let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
         NftMint {
             owner_id: &owner,
@@ -533,8 +551,8 @@ impl Contract {
             memo: None,
         }
         .emit();
-        let remaining = count - now;
-        if remaining > 0 {
+        let remaining = count - ids.len() as u64;
+        if remaining > 0 && gas_left() >= GAS_TO_CONTINUE_MINTING {
             Promise::new(env::current_account_id())
                 .function_call_weight(
                     "mint_samples".to_string(),
