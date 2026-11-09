@@ -19,6 +19,10 @@ impl Contract {
     ) {
         self.assert_keeper();
         require!(
+            self.dataset_classes().is_none(),
+            "Samples are sealed with set_samples"
+        );
+        require!(
             key_epoch == self.key_epoch,
             format!("Contexts are saved under key epoch {}", self.key_epoch)
         );

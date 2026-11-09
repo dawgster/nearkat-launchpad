@@ -1929,3 +1929,20 @@ fn character_collections_have_no_samples() {
     ctx("keeper.near", NearToken::from_yoctonear(0));
     c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
 }
+
+#[test]
+#[should_panic(expected = "Samples are sealed with set_samples")]
+fn set_context_refuses_samples() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_context("1".to_string(), hash(1), "ref".to_string(), 1.into(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Samples are sealed with set_samples")]
+fn set_context_cannot_overwrite_a_sealed_sample() {
+    let mut c = sample_dataset();
+    ctx("keeper.near", NearToken::from_yoctonear(0));
+    c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
+    c.set_context("1".to_string(), hash(2), "ref2".to_string(), 2.into(), 0);
+}
