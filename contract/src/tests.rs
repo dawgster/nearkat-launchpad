@@ -1806,6 +1806,51 @@ fn a_dataset_over_fifty_schedules_the_rest() {
 }
 
 #[test]
+fn the_admin_finishes_minting() {
+    // The continuation never ran, as if it had failed: 50 of 120 are minted.
+    let mut c = deploy_with(dataset(&["a", "b"], &[100, 20], 120));
+    assert_eq!(c.get_collection().minted.0, 50);
+    ctx("admin.near", YOCTO);
+    c.finish_minting();
+    assert_eq!(c.get_collection().minted.0, 100);
+    // It schedules the last batch, which the collection runs on its own.
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    assert_eq!(receipts.len(), 1);
+    match receipts[0].actions.as_slice() {
+        [near_sdk::mock::MockAction::FunctionCallWeight {
+            method_name, args, ..
+        }] => {
+            assert_eq!(method_name, b"mint_samples");
+            assert_eq!(args, br#"{"count":"20"}"#);
+        }
+        other => panic!("unexpected actions {other:?}"),
+    }
+    ctx("admin.near", YOCTO);
+    c.finish_minting();
+    assert_eq!(c.get_collection().minted.0, 120);
+    assert_eq!(
+        c.nft_token("120".to_string()).unwrap().owner_id,
+        acc("admin.near")
+    );
+}
+
+#[test]
+#[should_panic(expected = "All samples are minted")]
+fn nothing_left_to_mint() {
+    let mut c = deploy_with(dataset(&["a", "b"], &[3, 2], 5));
+    ctx("admin.near", YOCTO);
+    c.finish_minting();
+}
+
+#[test]
+#[should_panic(expected = "Only the admin can call this method")]
+fn only_the_admin_finishes_minting() {
+    let mut c = deploy_with(dataset(&["a", "b"], &[100, 20], 120));
+    ctx("alice.near", YOCTO);
+    c.finish_minting();
+}
+
+#[test]
 #[should_panic(expected = "initial_supply must equal the sum of class_counts")]
 fn dataset_counts_must_add_up() {
     deploy_with(dataset(&["a", "b"], &[3, 2], 6));

@@ -410,6 +410,21 @@ impl Contract {
         })
     }
 
+    /// Mints the samples still missing, up to the dataset's size, so a launch
+    /// whose continuation ran out of gas or balance can be completed. Admin
+    /// only; one batch per call, the rest scheduled like at launch.
+    #[payable]
+    pub fn finish_minting(&mut self) {
+        self.assert_admin();
+        self.require_dataset();
+        let remaining = self
+            .max_supply
+            .unwrap_or(0)
+            .saturating_sub(self.next_token_id - 1);
+        require!(remaining > 0, "All samples are minted");
+        self.mint_sample_batch(remaining);
+    }
+
     /// Mints up to a batch of the samples still to come, then schedules the
     /// rest. Only the collection itself calls this.
     #[private]
