@@ -9,6 +9,7 @@ import { FundPanel } from "../src/components/FundPanel.tsx";
 import { GiveAwayPanel } from "../src/components/GiveAwayPanel.tsx";
 import { MintPanel } from "../src/components/MintPanel.tsx";
 import { NaturePanel } from "../src/components/NaturePanel.tsx";
+import { SamplePanel } from "../src/components/SamplePanel.tsx";
 import { WalletPanel } from "../src/components/WalletPanel.tsx";
 import { type ChatReply, KeeperError } from "../src/lib/keeper.ts";
 import type { WalletView } from "../src/lib/wallet.ts";
@@ -499,5 +500,50 @@ describe("NaturePanel", () => {
       expect(text).toContain(kat[layer]);
       expect(text).toContain(NATURES[layer][kat[layer]]);
     }
+  });
+});
+
+describe("SamplePanel", () => {
+  const loan = (status: "offered" | "active" | "over") => ({
+    token_id: "1",
+    status,
+    lender_id: "alice.near",
+    borrower_id: status === "offered" ? null : "bob.near",
+    duration_s: null,
+    messages: 1,
+    sees_memory: false,
+    learns: false,
+    fee: "10000000000000000000000",
+    started_at: status === "offered" ? null : "1",
+    ends_at: null,
+  });
+  const show = (status: "offered" | "active" | "over" | null, spent: boolean) =>
+    render(
+      <SamplePanel
+        name="Sample #1"
+        seed="1"
+        owner="alice.near"
+        loan={status ? loan(status) : null}
+        training={status ? { apps: ["app"], app_id: "app", spent } : null}
+        runs={[]}
+        runCount={spent ? 1 : 0}
+        labels={{}}
+      />,
+    );
+
+  test("a rental whose one use is spent reads as used, not rented", () => {
+    show("over", true);
+    expect(screen.getByTestId("sample-status").textContent).toBe("Used; the rental is over");
+  });
+
+  test("on offer, rented, and not listed", () => {
+    const { unmount } = show("offered", false);
+    expect(screen.getByTestId("sample-status").textContent).toBe("On offer");
+    unmount();
+    const second = show("active", false);
+    expect(screen.getByTestId("sample-status").textContent).toBe("Rented");
+    second.unmount();
+    show(null, false);
+    expect(screen.getByTestId("sample-status").textContent).toBe("Not listed");
   });
 });

@@ -11,7 +11,8 @@
 //!
 //! A rented token (an active loan with a fee) can't change hands until the
 //! loan ends, so a borrower gets the time they paid for. Any other loan ends
-//! when the token changes hands. Loans live under their own storage keys, so
+//! when the token changes hands. A dataset sample's rental is for one
+//! training use, so it is over once that use is spent, whatever its time. Loans live under their own storage keys, so
 //! collections from before lending need no migration.
 
 use near_contract_standards::non_fungible_token::TokenId;
@@ -74,7 +75,8 @@ pub enum LoanStatus {
     /// Waiting for the borrower to take it.
     Offered,
     Active,
-    /// Past its end, or void because the token changed hands.
+    /// Past its end, void because the token changed hands, or a sample's
+    /// rental whose one use is spent.
     Over,
 }
 
@@ -168,7 +170,7 @@ impl Loan {
     fn view(&self, token_id: &TokenId, owner_id: &AccountId) -> LoanView {
         LoanView {
             token_id: token_id.clone(),
-            status: self.status(owner_id),
+            status: status(token_id, self, owner_id),
             lender_id: self.lender_id.clone(),
             borrower_id: self.borrower_id.clone(),
             duration_s: self.duration_s,
@@ -179,6 +181,14 @@ impl Loan {
             started_at: self.started_at,
             ends_at: self.ends_at,
         }
+    }
+}
+
+/// A loan's status, counting a dataset rental whose one use is spent as over.
+fn status(token_id: &TokenId, loan: &Loan, owner_id: &AccountId) -> LoanStatus {
+    match loan.status(owner_id) {
+        LoanStatus::Active if read_training(token_id).is_some_and(|t| t.spent) => LoanStatus::Over,
+        other => other,
     }
 }
 
@@ -243,7 +253,7 @@ impl Contract {
             );
             if let Some(previous) = read(token_id) {
                 require!(
-                    previous.status(&owner_id) != LoanStatus::Active,
+                    status(token_id, &previous, &owner_id) != LoanStatus::Active,
                     "It is already on loan; end that loan first"
                 );
                 self.remove_loan(token_id, previous);
@@ -409,7 +419,7 @@ impl Contract {
         }
         if let Some(previous) = read(&token_id) {
             require!(
-                previous.status(&owner_id) != LoanStatus::Active,
+                status(&token_id, &previous, &owner_id) != LoanStatus::Active,
                 "It is already on loan; end that loan first"
             );
             self.remove_loan(&token_id, previous);
@@ -513,7 +523,7 @@ impl Contract {
         let owner_id = self.owner_of(&token_id);
         let loan = read(&token_id).unwrap_or_else(|| env::panic_str("It isn't on loan"));
         let caller = env::predecessor_account_id();
-        match loan.status(&owner_id) {
+        match status(&token_id, &loan, &owner_id) {
             LoanStatus::Over => {}
             LoanStatus::Offered => require!(caller == owner_id, "Only the owner can withdraw it"),
             LoanStatus::Active => {
@@ -540,7 +550,8 @@ impl Contract {
 impl Contract {
     /// Why `token_id` can't serve one training run by `app_id` for
     /// `renter_id` (when given); None when it can. Checked in order: the loan
-    /// is active, for this app, unspent, and held by this renter.
+    /// is within its time, for this app, unspent, and held by this renter. (A
+    /// spent rental reads as over elsewhere; here it says it was used.)
     pub(crate) fn rental_problem(
         &self,
         token_id: &TokenId,
@@ -585,7 +596,7 @@ impl Contract {
         };
         if let Some(loan) = read(token_id) {
             require!(
-                !(loan.status(&owner_id) == LoanStatus::Active && !loan.fee.is_zero()),
+                !(status(token_id, &loan, &owner_id) == LoanStatus::Active && !loan.fee.is_zero()),
                 "It's rented out: it can't change hands until the loan ends"
             );
         }

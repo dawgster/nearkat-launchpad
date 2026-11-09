@@ -1968,7 +1968,12 @@ fn relayed(predecessor: &str, signer: &str, signer_pk: Option<&str>, deposit: Ne
 #[should_panic(expected = "Call this directly, not through another contract")]
 fn ingest_keys_are_requested_directly() {
     let mut c = sample_dataset();
-    relayed("keeper.near", "mallory.near", None, NearToken::from_yoctonear(0));
+    relayed(
+        "keeper.near",
+        "mallory.near",
+        None,
+        NearToken::from_yoctonear(0),
+    );
     let _ = c.request_ingest_keys(ids(&["1"]), APP_KEY.to_string());
 }
 
@@ -1976,7 +1981,12 @@ fn ingest_keys_are_requested_directly() {
 #[should_panic(expected = "Call this directly, not through another contract")]
 fn samples_are_sealed_directly() {
     let mut c = sample_dataset();
-    relayed("keeper.near", "mallory.near", None, NearToken::from_yoctonear(0));
+    relayed(
+        "keeper.near",
+        "mallory.near",
+        None,
+        NearToken::from_yoctonear(0),
+    );
     c.set_samples(vec![("1".to_string(), hash(1), "ref".to_string())]);
 }
 
@@ -2635,7 +2645,12 @@ mod sample_loans {
     #[should_panic(expected = "Call this directly, not through another contract")]
     fn training_is_recorded_only_by_a_direct_call() {
         let mut c = rented();
-        relayed("relay.near", "trainer.near", Some(APP_KEY_A), TRAINER_DEPOSIT);
+        relayed(
+            "relay.near",
+            "trainer.near",
+            Some(APP_KEY_A),
+            TRAINER_DEPOSIT,
+        );
         c.record_training(
             "run-1".to_string(),
             acc("bob.near"),
@@ -2643,6 +2658,73 @@ mod sample_loans {
             SHA.to_string(),
             9_250,
         );
+    }
+
+    #[test]
+    fn a_used_rental_is_over() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        ctx("anyone.near", NearToken::from_yoctonear(0));
+        assert_eq!(
+            c.get_loan("1".to_string()).unwrap().status,
+            LoanStatus::Over
+        );
+        assert_eq!(
+            c.get_loan("2".to_string()).unwrap().status,
+            LoanStatus::Active
+        );
+    }
+
+    #[test]
+    fn a_used_sample_can_change_hands() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        give(&mut c, "1", "carol.near");
+        assert_eq!(
+            c.get_sample("1".to_string()).unwrap().owner_id,
+            acc("carol.near")
+        );
+        assert!(c.get_loan("1".to_string()).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "It's rented out")]
+    fn an_unused_rental_still_holds_the_sample() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        give(&mut c, "2", "carol.near");
+    }
+
+    #[test]
+    fn anyone_clears_a_used_rental_and_the_lender_gets_the_storage() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        ctx("carol.near", YOCTO);
+        c.end_loan("1".to_string());
+        assert!(c.get_loan("1".to_string()).is_none());
+        assert!(c.get_loan_training("1".to_string()).is_none());
+        let refunded = near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .filter(|r| r.receiver_id == acc("admin.near"))
+            .any(|r| {
+                r.actions
+                    .iter()
+                    .any(|a| matches!(a, near_sdk::mock::MockAction::Transfer { .. }))
+            });
+        assert!(refunded);
+    }
+
+    #[test]
+    fn a_used_rental_can_be_listed_again() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        ctx("admin.near", STORAGE);
+        assert_eq!(lend(&mut c, &["1"], 5, &["app-one"]), 1);
+        assert_eq!(
+            c.get_loan("1".to_string()).unwrap().status,
+            LoanStatus::Offered
+        );
+        assert!(!c.get_loan_training("1".to_string()).unwrap().spent);
     }
 
     #[test]

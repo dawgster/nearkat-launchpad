@@ -58,7 +58,11 @@ leaves its owner. The keeper enforces the rest: the borrower may chat, with or
 without the token's memory (`sees_memory`), changing it only if `learns`;
 never read its mind, use its wallet or import into it. Loans live under their
 own storage keys, so older collections need no migration. Events:
-`loan_offered`, `loan_started`, `loan_ended`.
+`loan_offered`, `loan_started`, `loan_ended`. A dataset sample's rental
+(`lend_many`/`borrow_many`) is for one training use: once `record_training`
+spends it, it reads as `over` everywhere, so the sample can change hands, be
+listed again, and anyone can clear the record (the lender gets the storage
+back).
 
 **History import.** `collection.history_import` (default false) lets owners
 teach their token from their ChatGPT or Claude history; the keeper refuses

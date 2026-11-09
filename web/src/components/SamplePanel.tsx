@@ -40,13 +40,14 @@ export function SamplePanel({
 }) {
   const stage = Math.min(3, runCount) as Stage;
   const current = loan && loan.status !== "over" ? loan : null;
+  // A rental is for one training use: once spent, the contract reads it as over.
   const status = !current
-    ? "Not listed"
+    ? training?.spent
+      ? "Used; the rental is over"
+      : "Not listed"
     : current.status === "offered"
       ? "On offer"
-      : training?.spent
-        ? "Rented, used"
-        : "Rented";
+      : "Rented";
   return (
     <div className="mt-8 space-y-5">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-7">
