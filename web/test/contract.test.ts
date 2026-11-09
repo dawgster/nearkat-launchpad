@@ -191,6 +191,22 @@ describe("batched transactions", () => {
     expect(first).not.toBeInstanceOf(PartialBatchError);
   });
 
+  test("withdraws 25 offers: end_loan with a yoctoNEAR each, ten to a transaction", async () => {
+    const { transactions, contract } = recorder();
+    const withdrawn = await contract.endLoans("me.near", ids(25));
+    expect(withdrawn).toBe(25);
+    expect(transactions.map((tx) => tx.actions.length)).toEqual([10, 10, 5]);
+    const actions = transactions.flatMap((tx) => tx.actions);
+    expect(actions.map((a) => a.method)).toEqual(Array(25).fill("end_loan"));
+    expect(actions.map((a) => (a.args as unknown as { token_id: string }).token_id)).toEqual(
+      ids(25),
+    );
+    expect(actions.every((a) => a.deposit === "1 yocto")).toBe(true);
+    for (const tx of transactions) {
+      expect(tx.actions.reduce((sum, a) => sum + tgas(a.gas), 0)).toBeLessThanOrEqual(300);
+    }
+  });
+
   test("a rental with no fee still attaches a yoctoNEAR", async () => {
     const { transactions, contract } = recorder();
     await contract.borrowMany("me.near", ids(2), "a", () => 0n);

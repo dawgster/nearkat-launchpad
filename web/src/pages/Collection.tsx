@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Icon, type IconName } from "../components/Icon.tsx";
-import { ListSamplesPanel } from "../components/ListSamplesPanel.tsx";
+import { ListSamplesPanel, ListSamplesUnavailable } from "../components/ListSamplesPanel.tsx";
 import { MintPanel } from "../components/MintPanel.tsx";
 import { RentPanel } from "../components/RentPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
@@ -707,20 +707,19 @@ function DatasetSection({
     accountId ? `my-samples/${contractId}/${accountId}` : null,
     async () => {
       const ids = await reader.katsOf(accountId as string);
-      const free = await Promise.all(
-        ids.map(async (id) => ((await reader.getLoan(id))?.status === "active" ? null : id)),
+      const statuses = await Promise.all(
+        ids.map(async (id) => [id, (await reader.getLoan(id))?.status] as const),
       );
-      return free.filter((id): id is string => id !== null);
+      // Rented samples can't be listed; those on offer are listed again only
+      // when the holder asks, to change their terms.
+      return {
+        free: statuses.filter(([, status]) => status !== "active" && status !== "offered"),
+        offered: statuses.filter(([, status]) => status === "offered"),
+      };
     },
   );
   const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
   const signer = wallet.near && accountId ? new KatContract(wallet.near, contractId) : null;
-  // A sample already on offer isn't listed again: listing replaces its terms.
-  const offered = new Set(
-    offers.status === "ready"
-      ? offers.data.filter((offer) => offer.lender === accountId).map((offer) => offer.tokenId)
-      : [],
-  );
 
   return (
     <>
@@ -755,25 +754,41 @@ function DatasetSection({
           </ul>
         )}
       </section>
-      {signer &&
-        mine.status === "ready" &&
-        apps.status === "ready" &&
-        offers.status === "ready" && (
-          <ListSamplesPanel
-            available={mine.data.filter((id) => !offered.has(id))}
-            apps={apps.data}
-            list={async (ids, terms) => {
-              try {
-                return await signer.lendMany(accountId as string, ids, terms);
-              } finally {
-                // Some batches may have gone through even if a later one failed.
-                reader.forget();
-                void reloadOffers();
-                void reloadMine();
-              }
-            }}
-          />
-        )}
+      {signer && mine.status === "error" && (
+        <ListSamplesUnavailable
+          error={mine.error}
+          onRetry={() => {
+            reader.forget();
+            void reloadMine();
+          }}
+        />
+      )}
+      {signer && mine.status === "ready" && apps.status === "ready" && (
+        <ListSamplesPanel
+          available={mine.data.free.map(([id]) => id)}
+          offered={mine.data.offered.map(([id]) => id)}
+          apps={apps.data}
+          list={async (ids, terms) => {
+            try {
+              return await signer.lendMany(accountId as string, ids, terms);
+            } finally {
+              // Some batches may have gone through even if a later one failed.
+              reader.forget();
+              void reloadOffers();
+              void reloadMine();
+            }
+          }}
+          withdraw={async (ids) => {
+            try {
+              return await signer.endLoans(accountId as string, ids);
+            } finally {
+              reader.forget();
+              void reloadOffers();
+              void reloadMine();
+            }
+          }}
+        />
+      )}
       {signer && offers.status === "ready" && (
         <RentPanel
           offers={offers.data}

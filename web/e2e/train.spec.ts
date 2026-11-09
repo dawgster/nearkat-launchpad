@@ -114,4 +114,13 @@ test("trains and tries a model", async ({ page, browser }) => {
   await expect(verdict).toContainText(/\d+% sure/);
   await expect(train.getByRole("img", { name: "What you dropped" })).toBeVisible();
   await renter.close();
+
+  // The lender withdraws the 2 offers nobody rented.
+  await page.reload();
+  const relist = page.getByRole("region", { name: "List your samples" });
+  await relist.getByRole("button", { name: "Withdraw your 2 offers" }).click();
+  await expect(relist.getByText("Withdrew the offers on 2 samples.")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(relist.getByRole("button", { name: /^Withdraw/ })).toHaveCount(0);
 });

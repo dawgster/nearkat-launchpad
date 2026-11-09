@@ -66,12 +66,16 @@ export const MAX_SAMPLES_PER_CALL = 50;
 
 /**
  * Gas for one `lend_many` or `borrow_many` action of up to 50 samples. The
- * sandbox measures 25 and 30 Tgas for 50 (one lender); paying up to 50
- * lenders adds a transfer each, so 90 leaves a wide margin.
+ * sandbox measures about 30 Tgas for either with 50 (one lender); paying up
+ * to 50 lenders adds a transfer each, so 90 leaves a wide margin.
  */
-export const BATCH_ACTION_GAS = "90 Tgas";
+export const BATCH_ACTION_GAS = "90 Tgas" as const;
 /** Actions per transaction: 3 × 90 Tgas fits the 300 Tgas one transaction may attach. */
 export const ACTIONS_PER_TRANSACTION = 3;
+/** Gas for one `end_loan` action, as a single call attaches. */
+export const END_LOAN_GAS = "30 Tgas" as const;
+/** `end_loan` actions per transaction: 10 × 30 Tgas fits 300 Tgas. */
+export const END_LOANS_PER_TRANSACTION = 10;
 
 /** What an owner chooses when listing samples for rent to training apps. */
 export interface SampleTerms {
@@ -436,6 +440,20 @@ export class KatContract {
   }
 
   /**
+   * Withdraws the signer's offers: one `end_loan` action a sample, ten
+   * actions a transaction (one wallet prompt for ten). Returns how many
+   * were withdrawn.
+   */
+  async endLoans(signerId: string, tokenIds: string[]): Promise<number> {
+    return this.#batches(
+      signerId,
+      "end_loan",
+      tokenIds.map((tokenId) => ({ args: { token_id: tokenId }, count: 1, deposit: 1n })),
+      { gas: END_LOAN_GAS, perTransaction: END_LOANS_PER_TRANSACTION },
+    );
+  }
+
+  /**
    * Sends calls of one method as the actions of as few transactions as fit
    * the gas a transaction may attach. A transaction's actions succeed or
    * fail together.
@@ -444,14 +462,18 @@ export class KatContract {
     signerId: string,
     method: string,
     calls: Array<{ args: object; count: number; deposit: bigint }>,
+    {
+      gas = BATCH_ACTION_GAS,
+      perTransaction = ACTIONS_PER_TRANSACTION,
+    }: { gas?: `${number} Tgas`; perTransaction?: number } = {},
   ): Promise<number> {
     let done = 0;
-    for (const group of chunked(calls, ACTIONS_PER_TRANSACTION)) {
+    for (const group of chunked(calls, perTransaction)) {
       try {
         let tx = this.#near.transaction(signerId);
         for (const call of group) {
           tx = tx.functionCall(this.#contractId, method, call.args, {
-            gas: BATCH_ACTION_GAS,
+            gas,
             attachedDeposit: yocto(call.deposit),
           });
         }

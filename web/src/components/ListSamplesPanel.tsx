@@ -5,11 +5,15 @@ import { describeProblem } from "../lib/problems.ts";
 import { Icon } from "./Icon.tsx";
 
 export interface ListSamplesPanelProps {
-  /** Samples the holder owns that can be listed now. */
+  /** Samples the holder owns that are not on offer or rented now. */
   available: string[];
+  /** The holder's samples already on offer: listing them again replaces their terms. */
+  offered?: string[];
   /** `[app_id, label]` of the registered training apps. */
   apps: Array<[string, string]>;
   list: (tokenIds: string[], terms: SampleTerms) => Promise<number>;
+  /** Withdraws offers; returns how many. Without it there is no withdraw button. */
+  withdraw?: (tokenIds: string[]) => Promise<number>;
 }
 
 const LENGTHS: Array<[string, number | null]> = [
@@ -19,9 +23,21 @@ const LENGTHS: Array<[string, number | null]> = [
   ["Until used", null],
 ];
 
-/** List some of your samples for rent to named training apps. */
-export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProps) {
+const samples = (n: number) => `${n} ${n === 1 ? "sample" : "samples"}`;
+
+/**
+ * List some of your samples for rent to named training apps. New samples by
+ * default; samples already on offer only when asked, to change their terms.
+ */
+export function ListSamplesPanel({
+  available,
+  offered = [],
+  apps,
+  list,
+  withdraw,
+}: ListSamplesPanelProps) {
   const [count, setCount] = useState(String(available.length));
+  const [relist, setRelist] = useState(false);
   const [fee, setFee] = useState("0.01");
   const [length, setLength] = useState("604800");
   const [chosen, setChosen] = useState<string[]>([]);
@@ -29,14 +45,27 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
   const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
   // Fewer samples are free once some are listed.
   useEffect(() => setCount(String(available.length)), [available.length]);
+  // With nothing on offer there is nothing to change.
+  useEffect(() => {
+    if (offered.length === 0) {
+      setRelist(false);
+    }
+  }, [offered.length]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const n = Number(count);
+    const n = count.trim() === "" && relist ? 0 : Number(count);
     const price = parseNear(fee);
     setOutcome(null);
-    if (!Number.isInteger(n) || n < 1 || n > available.length) {
-      return setOutcome({ ok: false, text: `Choose between 1 and ${available.length} samples.` });
+    const least = relist ? 0 : 1;
+    if (!Number.isInteger(n) || n < least || n > available.length) {
+      return setOutcome({
+        ok: false,
+        text:
+          available.length === 0
+            ? "You have no new samples to list. Tick the box to change the terms of those on offer."
+            : `Choose between ${least} and ${available.length} samples.`,
+      });
     }
     if (price === null) {
       return setOutcome({ ok: false, text: "The fee is an amount in NEAR, like 0.01." });
@@ -46,12 +75,28 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
     }
     setBusy(true);
     try {
-      const listed = await list(available.slice(0, n), {
+      const listed = await list([...available.slice(0, n), ...(relist ? offered : [])], {
         durationS: length === "none" ? null : Number(length),
         fee: price,
         apps: chosen,
       });
-      setOutcome({ ok: true, text: `Listed ${listed} ${listed === 1 ? "sample" : "samples"}.` });
+      setOutcome({ ok: true, text: `Listed ${samples(listed)}.` });
+    } catch (error) {
+      setOutcome({ ok: false, text: describeProblem(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function withdrawAll() {
+    if (!withdraw) {
+      return;
+    }
+    setOutcome(null);
+    setBusy(true);
+    try {
+      const withdrawn = await withdraw(offered);
+      setOutcome({ ok: true, text: `Withdrew the offers on ${samples(withdrawn)}.` });
     } catch (error) {
       setOutcome({ ok: false, text: describeProblem(error) });
     } finally {
@@ -65,7 +110,7 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
         <Icon name="gift" size={18} className="text-mist" />
         List your samples
       </h2>
-      {available.length === 0 ? (
+      {available.length === 0 && offered.length === 0 ? (
         <p className="mt-3 text-sm text-mist">You have no samples free to list.</p>
       ) : (
         <form className="mt-3 space-y-3" onSubmit={(event) => void submit(event)}>
@@ -75,7 +120,9 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
           </p>
           <div className="grid grid-cols-3 gap-2">
             <label className="text-sm">
-              <span className="mb-1 block text-xs text-mist">Samples ({available.length})</span>
+              <span className="mb-1 block text-xs text-mist">
+                {offered.length > 0 ? "New samples" : "Samples"} ({available.length})
+              </span>
               <input
                 className="field text-right"
                 inputMode="numeric"
@@ -110,6 +157,19 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
               </select>
             </label>
           </div>
+          {offered.length > 0 && (
+            <label className="option !py-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={relist}
+                onChange={(event) => setRelist(event.target.checked)}
+              />
+              <span>
+                Also change the terms of {offered.length === 1 ? "the" : `the ${offered.length}`}{" "}
+                {offered.length === 1 ? "sample" : "samples"} you already have on offer
+              </span>
+            </label>
+          )}
           <fieldset className="space-y-2">
             <legend className="mb-1 text-xs text-mist">Training apps allowed</legend>
             {apps.map(([id, label]) => (
@@ -133,6 +193,16 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
           <button type="submit" className="button button-quiet w-full" disabled={busy}>
             {busy ? "Listing…" : "List for rent"}
           </button>
+          {withdraw && offered.length > 0 && (
+            <button
+              type="button"
+              className="button button-quiet w-full"
+              disabled={busy}
+              onClick={() => void withdrawAll()}
+            >
+              Withdraw {offered.length === 1 ? "your offer" : `your ${offered.length} offers`}
+            </button>
+          )}
         </form>
       )}
       {outcome && (
@@ -147,6 +217,30 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
           {outcome.text}
         </p>
       )}
+    </section>
+  );
+}
+
+/** In place of the panel when the holder's samples can't be read. */
+export function ListSamplesUnavailable({
+  error,
+  onRetry,
+}: {
+  error: unknown;
+  onRetry: () => void;
+}) {
+  return (
+    <section aria-labelledby="list-samples" className="card">
+      <h2 id="list-samples" className="card-title flex items-center gap-2">
+        <Icon name="gift" size={18} className="text-mist" />
+        List your samples
+      </h2>
+      <p role="alert" className="mt-2 text-sm text-alarm">
+        Can't read your samples right now. {describeProblem(error)}
+      </p>
+      <button type="button" className="button button-quiet mt-3" onClick={onRetry}>
+        Retry
+      </button>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { ListSamplesPanel } from "../src/components/ListSamplesPanel.tsx";
+import { ListSamplesPanel, ListSamplesUnavailable } from "../src/components/ListSamplesPanel.tsx";
 
 const apps: Array<[string, string]> = [
   ["trainer.near", "Trainer"],
@@ -58,4 +58,81 @@ test("shows why listing failed", async () => {
 test("says so when there is nothing to list", () => {
   render(<ListSamplesPanel available={[]} apps={apps} list={vi.fn()} />);
   expect(screen.getByText("You have no samples free to list.")).toBeTruthy();
+});
+
+test("leaves samples on offer out unless asked to change their terms", async () => {
+  const list = vi.fn(async (ids: string[]) => ids.length);
+  render(<ListSamplesPanel available={["4", "5"]} offered={["1", "2"]} apps={apps} list={list} />);
+  expect(screen.getByText("New samples (2)")).toBeTruthy();
+  await userEvent.click(screen.getByRole("checkbox", { name: /Trainer/ }));
+  await userEvent.click(screen.getByRole("button", { name: "List for rent" }));
+  expect(list).toHaveBeenLastCalledWith(["4", "5"], expect.anything());
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: /change the terms of the 2 samples you already have/ }),
+  );
+  await userEvent.clear(screen.getByLabelText("How many to list"));
+  await userEvent.type(screen.getByLabelText("How many to list"), "1");
+  await userEvent.click(screen.getByRole("button", { name: "List for rent" }));
+  expect(list).toHaveBeenLastCalledWith(["4", "1", "2"], expect.anything());
+  expect(await screen.findByText("Listed 3 samples.")).toBeTruthy();
+});
+
+test("changes the terms of samples on offer when none are new", async () => {
+  const list = vi.fn(async (ids: string[]) => ids.length);
+  render(<ListSamplesPanel available={[]} offered={["1"]} apps={apps} list={list} />);
+  await userEvent.click(screen.getByRole("checkbox", { name: /Trainer/ }));
+  await userEvent.click(screen.getByRole("button", { name: "List for rent" }));
+  expect((await screen.findByRole("alert")).textContent).toMatch(/Tick the box/);
+  expect(list).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("checkbox", { name: /change the terms of the sample/ }));
+  await userEvent.click(screen.getByRole("button", { name: "List for rent" }));
+  expect(list).toHaveBeenCalledWith(["1"], expect.anything());
+  expect(await screen.findByText("Listed 1 sample.")).toBeTruthy();
+});
+
+test("withdraws every offer", async () => {
+  const withdraw = vi.fn(async (ids: string[]) => ids.length);
+  render(
+    <ListSamplesPanel
+      available={["4"]}
+      offered={["1", "2"]}
+      apps={apps}
+      list={vi.fn()}
+      withdraw={withdraw}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Withdraw your 2 offers" }));
+  expect(withdraw).toHaveBeenCalledWith(["1", "2"]);
+  expect(await screen.findByText("Withdrew the offers on 2 samples.")).toBeTruthy();
+});
+
+test("shows why withdrawing failed", async () => {
+  const withdraw = vi.fn(async () => {
+    throw new Error("The wallet said no.");
+  });
+  render(
+    <ListSamplesPanel
+      available={[]}
+      offered={["1"]}
+      apps={apps}
+      list={vi.fn()}
+      withdraw={withdraw}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Withdraw your offer" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("The wallet said no.");
+});
+
+test("has no withdraw button with nothing on offer", () => {
+  render(<ListSamplesPanel available={["4"]} apps={apps} list={vi.fn()} withdraw={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: /Withdraw/ })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /change the terms/ })).toBeNull();
+});
+
+test("says so when the samples can't be read, and retries", async () => {
+  const onRetry = vi.fn();
+  render(<ListSamplesUnavailable error={new Error("RPC down")} onRetry={onRetry} />);
+  expect(screen.getByRole("alert").textContent).toContain("RPC down");
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(onRetry).toHaveBeenCalled();
 });
