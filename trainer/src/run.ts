@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { fetchSampleKeys, type KeySource } from "../../keeper/src/ckd.ts";
 import { HttpError } from "../../keeper/src/errors.ts";
 import { openSample } from "../../keeper/src/samples.ts";
-import type { TrainerChain } from "./chain.ts";
+import { ContractRefusal, type TrainerChain, type TrainingRecord } from "./chain.ts";
 import { PythonError, type runPython } from "./python.ts";
 
 export type Stage = "checking" | "keys" | "loading" | "training" | "recording" | "done" | "failed";
@@ -18,6 +18,10 @@ export interface RunState {
   epochs?: number;
   accuracy?: number;
   modelSha256?: string;
+  /** How many samples the run is recorded on-chain for; set when done. */
+  recordedTokens?: number;
+  /** Set when only part of the run could be recorded; says why. */
+  partial?: string;
   error?: string;
 }
 
@@ -175,7 +179,21 @@ export class Runs {
     if (!model) {
       throw new NotFoundError("The run has no model");
     }
-    return model;
+    return Buffer.from(model);
+  }
+
+  /** One `record_training` call, tried again once if the outcome is unknown. */
+  async #record(contract: string, run: TrainingRecord): Promise<void> {
+    try {
+      await this.#o.chain.recordTraining(contract, run);
+    } catch (error) {
+      if (error instanceof ContractRefusal) {
+        throw error;
+      }
+      // A transport failure: the call may or may not have landed. A repeat
+      // that did land is refused as "already used", which is then reported.
+      await this.#o.chain.recordTraining(contract, run);
+    }
   }
 
   async #check(contract: string, renter: string, tokenIds: string[]) {
@@ -301,22 +319,38 @@ export class Runs {
       state.stage = "recording";
       const modelSha256 = createHash("sha256").update(result.model).digest("hex");
       const accuracyBps = Math.min(10_000, Math.max(0, Math.round(result.accuracy * 10_000)));
+      // In order: once a chunk is final on-chain the renter has paid for the
+      // model, so it is kept even if a later chunk can't be recorded.
+      let recorded = 0;
       for (let i = 0; i < tokenIds.length; i += RECORD_CHUNK) {
+        const chunk = tokenIds.slice(i, i + RECORD_CHUNK);
         try {
-          await chain.recordTraining(contract, {
+          await this.#record(contract, {
             run_id: state.id,
             renter_id: renter,
-            token_ids: tokenIds.slice(i, i + RECORD_CHUNK),
+            token_ids: chunk,
             model_sha256: modelSha256,
             accuracy_bps: accuracyBps,
           });
         } catch (error) {
-          if (/rental ended/.test(error instanceof Error ? error.message : String(error))) {
-            throw new RunFailure("A rental ended before the run was recorded");
+          const ended = /rental ended/.test(error instanceof Error ? error.message : String(error));
+          if (recorded === 0) {
+            if (ended) {
+              throw new RunFailure("A rental ended before the run was recorded");
+            }
+            throw error;
           }
-          throw error;
+          console.error(`Run ${state.id}: recorded ${recorded} of ${tokenIds.length} samples`);
+          state.partial = `Recorded ${recorded} of ${tokenIds.length} samples: ${
+            ended
+              ? "a rental ended before the rest were recorded"
+              : "the rest could not be recorded"
+          }`;
+          break;
         }
+        recorded += chunk.length;
       }
+      state.recordedTokens = recorded;
       this.#models.set(state.id, result.model);
       state.accuracy = result.accuracy;
       state.modelSha256 = modelSha256;

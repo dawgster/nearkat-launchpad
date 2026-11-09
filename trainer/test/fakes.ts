@@ -6,7 +6,12 @@ import { appId, type KeySource, sampleKey, sampleKeyPath } from "../../keeper/sr
 import { FastfsStore } from "../../keeper/src/fastfs.ts";
 import type { LoanView } from "../../keeper/src/loans.ts";
 import { sealSample } from "../../keeper/src/samples.ts";
-import type { LoanTraining, TrainerChain, TrainingRecord } from "../src/chain.ts";
+import {
+  ContractRefusal,
+  type LoanTraining,
+  type TrainerChain,
+  type TrainingRecord,
+} from "../src/chain.ts";
 import type { runPython } from "../src/python.ts";
 
 export const KEY_SOURCE: KeySource = { mpc_contract_id: "v1.signer", domain_id: 2 };
@@ -31,8 +36,11 @@ export class FakeTrainerChain implements TrainerChain {
   readonly samples = new Map<string, SampleView>();
   readonly records: TrainingRecord[] = [];
   readonly keyRequests: string[][] = [];
-  /** Thrown by recordTraining, as a contract panic would be. */
+  /** Thrown by every recordTraining call, as a contract panic would be. */
   recordFailure: string | null = null;
+  /** What each recordTraining call does in turn: throw the error, or succeed (null). */
+  readonly recordScript: Array<Error | null> = [];
+  recordCalls = 0;
   readonly registered = new Set<string>();
   readonly #txs = new Map<string, Uint8Array[]>();
   readonly #store = new FastfsStore({
@@ -132,8 +140,13 @@ export class FakeTrainerChain implements TrainerChain {
   }
 
   async recordTraining(_contract: string, run: TrainingRecord): Promise<void> {
+    this.recordCalls += 1;
+    const scripted = this.recordScript.shift();
+    if (scripted) {
+      throw scripted;
+    }
     if (this.recordFailure) {
-      throw new Error(this.recordFailure);
+      throw new ContractRefusal(this.recordFailure);
     }
     if (run.token_ids.length > 50) {
       throw new Error("1 to 50 samples per call");

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
+import { ContractRefusal } from "../src/chain.ts";
 import { PythonError } from "../src/python.ts";
 import { type RunState, Runs } from "../src/run.ts";
 import { APP_ID, CONTRACT, FakePython, FakeTrainerChain, jpegFor, RENTER } from "./fakes.ts";
@@ -61,7 +62,8 @@ describe("Runs", () => {
         accuracy_bps: 8750,
       },
     ]);
-    expect(done).toMatchObject({ accuracy: 0.875, modelSha256: sha });
+    expect(done).toMatchObject({ accuracy: 0.875, modelSha256: sha, recordedTokens: 3 });
+    expect(done.partial).toBeUndefined();
     expect(runs.model(started.id, RENTER)).toEqual(python.model);
     // Nothing secret is kept in what the web sees.
     expect(JSON.stringify(done)).not.toContain(jpegFor("1").toString("base64"));
@@ -156,7 +158,7 @@ describe("Runs", () => {
     const { chain, runs } = setup();
     await chain.addRentedSample("1", "cat");
     await chain.addRentedSample("2", "dog");
-    chain.recordFailure = "Smart contract panicked: Sample 1: rental ended";
+    chain.recordFailure = "Sample 1: rental ended";
     const { id } = await runs.start(CONTRACT, RENTER, ["1", "2"]);
     const state = await settle(runs, id);
     expect(state).toMatchObject({
@@ -164,7 +166,70 @@ describe("Runs", () => {
       error: "A rental ended before the run was recorded",
     });
     expect(state.modelSha256).toBeUndefined();
+    expect(state.recordedTokens).toBeUndefined();
+    expect(chain.records).toEqual([]);
     expect(() => runs.model(id, RENTER)).toThrow();
+    // The samples are free for another run.
+    await expect(runs.start(CONTRACT, RENTER, ["1"])).resolves.toBeTruthy();
+  });
+
+  test("keeps the model when a later chunk fails after earlier ones were recorded", async () => {
+    const { chain, python, runs } = setup();
+    const ids = Array.from({ length: 60 }, (_, i) => String(i + 1));
+    for (const id of ids) {
+      await chain.addRentedSample(id, Number(id) % 2 ? "cat" : "dog");
+    }
+    chain.recordScript.push(null, new ContractRefusal("Sample 60: rental ended"));
+    const { id } = await runs.start(CONTRACT, RENTER, ids);
+    const state = await settle(runs, id);
+    expect(state).toMatchObject({ stage: "done", recordedTokens: 50 });
+    expect(state.partial).toBe(
+      "Recorded 50 of 60 samples: a rental ended before the rest were recorded",
+    );
+    expect(chain.records.map((r) => r.token_ids.length)).toEqual([50]);
+    const model = runs.model(id, RENTER);
+    expect(createHash("sha256").update(model).digest("hex")).toBe(chain.records[0]?.model_sha256);
+    expect(state.modelSha256).toBe(chain.records[0]?.model_sha256);
+    // The unrecorded samples are no longer held by the run.
+    python.gate = new Promise(() => {});
+    await expect(runs.start(CONTRACT, RENTER, ["55"])).resolves.toBeTruthy();
+  });
+
+  test("retries a chunk once after a transport error", async () => {
+    const { chain, runs } = setup();
+    await chain.addRentedSample("1", "cat");
+    chain.recordScript.push(new Error("fetch failed"));
+    const { id } = await runs.start(CONTRACT, RENTER, ["1"]);
+    expect(await settle(runs, id)).toMatchObject({ stage: "done", recordedTokens: 1 });
+    expect(chain.recordCalls).toBe(2);
+    expect((await settle(runs, id)).partial).toBeUndefined();
+
+    // A panic is not retried, and a second transport error is the end of it.
+    await chain.addRentedSample("2", "dog");
+    chain.recordCalls = 0;
+    chain.recordScript.push(new Error("timeout"), new Error("timeout"));
+    const second = await runs.start(CONTRACT, RENTER, ["2"]);
+    expect(await settle(runs, second.id)).toMatchObject({
+      stage: "failed",
+      error: "Could not record the run",
+    });
+    expect(chain.recordCalls).toBe(2);
+    chain.recordCalls = 0;
+    await chain.addRentedSample("3", "dog");
+    chain.recordScript.push(new ContractRefusal("Sample 3: already used"));
+    const third = await runs.start(CONTRACT, RENTER, ["3"]);
+    expect((await settle(runs, third.id)).stage).toBe("failed");
+    expect(chain.recordCalls).toBe(1);
+  });
+
+  test("hands out a copy of the model", async () => {
+    const { chain, python, runs } = setup();
+    await chain.addRentedSample("1", "cat");
+    const { id } = await runs.start(CONTRACT, RENTER, ["1"]);
+    await settle(runs, id);
+    const original = Buffer.from(python.model);
+    runs.model(id, RENTER).fill(0);
+    expect(runs.model(id, RENTER)).toEqual(original);
   });
 
   test("serves the model only to the renter", async () => {
