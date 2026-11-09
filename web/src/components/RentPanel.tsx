@@ -1,5 +1,5 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { type Offer, pickRentable } from "../lib/contract.ts";
+import { type Offer, pickRentable, SAMPLE_SCAN_LIMIT } from "../lib/contract.ts";
 import { formatNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { Icon } from "./Icon.tsx";
@@ -8,12 +8,15 @@ export interface RentPanelProps {
   offers: Offer[];
   /** App labels by app id. They are the apps' own words, so the id is always shown too. */
   labels: Record<string, string>;
-  /** Rents these samples for the app, attaching the fee; resolves to how many were rented. */
-  borrow: (tokenIds: string[], appId: string, totalFee: bigint) => Promise<number>;
+  /** The account renting. Its own samples are not offered to it. */
+  renter?: string;
+  /** Rents these samples for the app, attaching each one's fee; resolves to how many were rented. */
+  borrow: (tokenIds: string[], appId: string) => Promise<number>;
 }
 
 /** Rent some samples for a training app, spreading them across as many holders as possible. */
-export function RentPanel({ offers, labels, borrow }: RentPanelProps) {
+export function RentPanel({ offers: all, renter, labels, borrow }: RentPanelProps) {
+  const offers = useMemo(() => all.filter((offer) => offer.lender !== renter), [all, renter]);
   const apps = useMemo(() => [...new Set(offers.flatMap((offer) => offer.apps))].sort(), [offers]);
   const [chosen, setApp] = useState("");
   const appId = apps.includes(chosen) ? chosen : (apps[0] ?? "");
@@ -24,7 +27,7 @@ export function RentPanel({ offers, labels, borrow }: RentPanelProps) {
   const onOffer = offers.filter((offer) => offer.apps.includes(appId));
   const wanted = Number(count);
   const valid = Number.isInteger(wanted) && wanted >= 1;
-  const picked = valid ? pickRentable(offers, appId, wanted) : [];
+  const picked = valid ? pickRentable(offers, appId, wanted, renter) : [];
   const byId = new Map(offers.map((offer) => [offer.tokenId, offer]));
   const total = picked.reduce((sum, id) => sum + (byId.get(id)?.fee ?? 0n), 0n);
   const sum = onOffer.reduce((acc, offer) => acc + offer.fee, 0n);
@@ -37,7 +40,7 @@ export function RentPanel({ offers, labels, borrow }: RentPanelProps) {
     setBusy(true);
     setOutcome(null);
     try {
-      const rented = await borrow(picked, appId, total);
+      const rented = await borrow(picked, appId);
       const holders = new Set(picked.map((id) => byId.get(id)?.lender)).size;
       setOutcome({
         ok: true,
@@ -80,7 +83,8 @@ export function RentPanel({ offers, labels, borrow }: RentPanelProps) {
             </select>
           </label>
           <p className="text-xs text-mist">
-            {onOffer.length} on offer for {appId}, {formatNear(sum)} NEAR in all.
+            {onOffer.length} on offer for {appId}, {formatNear(sum)} NEAR in all. Looks through the
+            first {SAMPLE_SCAN_LIMIT} samples of the collection.
           </p>
           <label className="block text-sm">
             <span className="mb-1 block text-xs text-mist">How many</span>

@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import type { SampleTerms } from "../lib/contract.ts";
 import { parseNear } from "../lib/format.ts";
 import { describeProblem } from "../lib/problems.ts";
@@ -27,6 +27,8 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
   const [chosen, setChosen] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
+  // Fewer samples are free once some are listed.
+  useEffect(() => setCount(String(available.length)), [available.length]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -60,7 +62,7 @@ export function ListSamplesPanel({ available, apps, list }: ListSamplesPanelProp
   return (
     <section aria-labelledby="list-samples" className="card">
       <h2 id="list-samples" className="card-title flex items-center gap-2">
-        <Icon name="clock" size={18} className="text-mist" />
+        <Icon name="gift" size={18} className="text-mist" />
         List your samples
       </h2>
       {available.length === 0 ? (

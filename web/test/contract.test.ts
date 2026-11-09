@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   KatContract,
   LOAN_STORAGE_DEPOSIT,
+  PartialBatchError,
   pickRentable,
   returnValue,
 } from "../src/lib/contract.ts";
@@ -65,6 +66,17 @@ describe("pickRentable", () => {
   test("skips offers for other apps and never exceeds what is offered", () => {
     const mixed = [offer("1", "a.near", 1, ["other"]), offer("2", "b.near", 2)];
     expect(pickRentable(mixed, "app-a", 5)).toEqual(["2"]);
+  });
+});
+
+describe("pickRentable for a renter", () => {
+  test("never picks the renter's own samples", () => {
+    const offers = [
+      { tokenId: "1", lender: "me.near", fee: 1n, apps: ["a"] },
+      { tokenId: "2", lender: "bob.near", fee: 5n, apps: ["a"] },
+    ];
+    expect(pickRentable(offers, "a", 2, "me.near")).toEqual(["2"]);
+    expect(pickRentable(offers, "a", 2).sort()).toEqual(["1", "2"]);
   });
 });
 
@@ -149,6 +161,34 @@ describe("batched transactions", () => {
       [50n, 50n, 20n].map((n) => `${LOAN_STORAGE_DEPOSIT * n} yocto`),
     );
     expect(actions.reduce((sum, a) => sum + tgas(a.gas), 0)).toBeLessThanOrEqual(300);
+  });
+
+  test("a failure after the first transaction says how many went through", async () => {
+    let sent = 0;
+    const near = {
+      transaction: () => {
+        const builder = {
+          functionCall: () => builder,
+          send: async () => {
+            if (++sent === 2) {
+              throw new Error("out of gas");
+            }
+            return {};
+          },
+        };
+        return builder;
+      },
+    };
+    const contract = new KatContract(near as never, "set.near");
+    const error = await contract.borrowMany("me.near", ids(200), "a", () => 1n).catch((e) => e);
+    expect(error).toBeInstanceOf(PartialBatchError);
+    expect(error.done).toBe(150);
+    expect(error.message).toBe("out of gas");
+    // Nothing went through before the first failure, so it is reported as it is.
+    sent = 1;
+    const first = await contract.borrowMany("me.near", ids(10), "a", () => 1n).catch((e) => e);
+    expect(first).toBeInstanceOf(Error);
+    expect(first).not.toBeInstanceOf(PartialBatchError);
   });
 
   test("a rental with no fee still attaches a yoctoNEAR", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { PartialBatchError } from "../src/lib/contract.ts";
 import { KeeperError } from "../src/lib/keeper.ts";
 import { describeProblem } from "../src/lib/problems.ts";
 import { WalletAccountChanged } from "../src/lib/session.ts";
@@ -61,5 +62,13 @@ describe("describeProblem", () => {
     expect(describeProblem("plain string")).toBe("plain string");
     expect(describeProblem({ code: 4001 })).toMatch(/Something went wrong/);
     expect(describeProblem(undefined)).toMatch(/Something went wrong/);
+  });
+});
+
+describe("describeProblem for a batch that stopped part way", () => {
+  test("says how many went through", () => {
+    expect(describeProblem(new PartialBatchError(150, new Error("out of gas")))).toBe(
+      "150 samples went through before the rest failed. out of gas",
+    );
   });
 });

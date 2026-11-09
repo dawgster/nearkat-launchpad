@@ -131,12 +131,18 @@ export interface AppKeyView {
 
 /**
  * Chooses `count` samples to rent for an app: cheapest first, but taking one
- * from each lender in turn so that several holders get paid.
+ * from each lender in turn so that several holders get paid. `renter`'s own
+ * samples are never picked: nobody rents from themselves.
  */
-export function pickRentable(offers: Offer[], appId: string, count: number): string[] {
+export function pickRentable(
+  offers: Offer[],
+  appId: string,
+  count: number,
+  renter?: string,
+): string[] {
   const byLender = new Map<string, Offer[]>();
   for (const offer of offers) {
-    if (offer.apps.includes(appId)) {
+    if (offer.apps.includes(appId) && offer.lender !== renter) {
       byLender.set(offer.lender, [...(byLender.get(offer.lender) ?? []), offer]);
     }
   }
@@ -157,6 +163,18 @@ export function pickRentable(offers: Offer[], appId: string, count: number): str
     }
   }
   return picked;
+}
+
+/** How many of a dataset's samples a page looks through for offers and rentals. */
+export const SAMPLE_SCAN_LIMIT = 200;
+
+/** A batch of transactions stopped part way: `done` samples went through before `cause` failed. */
+export class PartialBatchError extends Error {
+  readonly done: number;
+  constructor(done: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.done = done;
+  }
 }
 
 const chunked = <T>(items: T[], size: number): T[][] => {
@@ -429,14 +447,19 @@ export class KatContract {
   ): Promise<number> {
     let done = 0;
     for (const group of chunked(calls, ACTIONS_PER_TRANSACTION)) {
-      let tx = this.#near.transaction(signerId);
-      for (const call of group) {
-        tx = tx.functionCall(this.#contractId, method, call.args, {
-          gas: BATCH_ACTION_GAS,
-          attachedDeposit: yocto(call.deposit),
-        });
+      try {
+        let tx = this.#near.transaction(signerId);
+        for (const call of group) {
+          tx = tx.functionCall(this.#contractId, method, call.args, {
+            gas: BATCH_ACTION_GAS,
+            attachedDeposit: yocto(call.deposit),
+          });
+        }
+        await tx.send({ waitUntil: "FINAL" });
+      } catch (error) {
+        // Earlier transactions are final: say how far this got, so nobody repeats them.
+        throw done > 0 ? new PartialBatchError(done, error) : error;
       }
-      await tx.send({ waitUntil: "FINAL" });
       done += group.reduce((sum, call) => sum + call.count, 0);
     }
     return done;
@@ -473,7 +496,7 @@ export class KatContract {
    * The samples of a dataset (the first `max`, in pages) with their owners, and
    * those of them on offer to training apps.
    */
-  async sampleOffers(max = 200): Promise<Offer[]> {
+  async sampleOffers(max = SAMPLE_SCAN_LIMIT): Promise<Offer[]> {
     const tokens = await this.#tokens(max);
     const offers: Offer[] = [];
     for (const batch of chunked(tokens, 25)) {
@@ -504,7 +527,7 @@ export class KatContract {
    * The account's rentals that a training app may still use, by app, among
    * the first `max` samples: active, borrowed by the account and not spent.
    */
-  async rentalsOf(accountId: string, max = 200): Promise<Rental[]> {
+  async rentalsOf(accountId: string, max = SAMPLE_SCAN_LIMIT): Promise<Rental[]> {
     const tokens = await this.#tokens(max);
     const byApp = new Map<string, string[]>();
     for (const batch of chunked(tokens, 25)) {

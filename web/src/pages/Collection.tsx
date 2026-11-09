@@ -715,8 +715,12 @@ function DatasetSection({
   );
   const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
   const signer = wallet.near && accountId ? new KatContract(wallet.near, contractId) : null;
-  const rentable =
-    offers.status === "ready" ? offers.data.filter((offer) => offer.lender !== accountId) : [];
+  // A sample already on offer isn't listed again: listing replaces its terms.
+  const offered = new Set(
+    offers.status === "ready"
+      ? offers.data.filter((offer) => offer.lender === accountId).map((offer) => offer.tokenId)
+      : [],
+  );
 
   return (
     <>
@@ -751,35 +755,44 @@ function DatasetSection({
           </ul>
         )}
       </section>
-      {signer && mine.status === "ready" && apps.status === "ready" && (
-        <ListSamplesPanel
-          available={mine.data}
-          apps={apps.data}
-          list={async (ids, terms) => {
-            const listed = await signer.lendMany(accountId as string, ids, terms);
-            reader.forget();
-            void reloadOffers();
-            void reloadMine();
-            return listed;
-          }}
-        />
-      )}
+      {signer &&
+        mine.status === "ready" &&
+        apps.status === "ready" &&
+        offers.status === "ready" && (
+          <ListSamplesPanel
+            available={mine.data.filter((id) => !offered.has(id))}
+            apps={apps.data}
+            list={async (ids, terms) => {
+              try {
+                return await signer.lendMany(accountId as string, ids, terms);
+              } finally {
+                // Some batches may have gone through even if a later one failed.
+                reader.forget();
+                void reloadOffers();
+                void reloadMine();
+              }
+            }}
+          />
+        )}
       {signer && offers.status === "ready" && (
         <RentPanel
-          offers={rentable}
+          offers={offers.data}
+          renter={accountId ?? undefined}
           labels={labels}
           borrow={async (ids, appId) => {
-            const byId = new Map(rentable.map((offer) => [offer.tokenId, offer.fee]));
-            const rented = await signer.borrowMany(
-              accountId as string,
-              ids,
-              appId,
-              (id) => byId.get(id) ?? 0n,
-            );
-            reader.forget();
-            void reloadOffers();
-            void reloadRentals();
-            return rented;
+            const byId = new Map(offers.data.map((offer) => [offer.tokenId, offer.fee]));
+            try {
+              return await signer.borrowMany(
+                accountId as string,
+                ids,
+                appId,
+                (id) => byId.get(id) ?? 0n,
+              );
+            } finally {
+              reader.forget();
+              void reloadOffers();
+              void reloadRentals();
+            }
           }}
         />
       )}

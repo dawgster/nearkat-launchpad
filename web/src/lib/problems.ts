@@ -1,4 +1,5 @@
 import { WalletError } from "../wallet/errors.ts";
+import { PartialBatchError } from "./contract.ts";
 import { KeeperError } from "./keeper.ts";
 import { WalletAccountChanged } from "./session.ts";
 
@@ -30,6 +31,10 @@ export function describeProblem(error: unknown): string {
       default:
         return error.message;
     }
+  }
+  if (error instanceof PartialBatchError) {
+    const cause = describeProblem(error.cause);
+    return `${error.done} ${error.done === 1 ? "sample" : "samples"} went through before the rest failed. ${cause}`;
   }
   if (error instanceof WalletAccountChanged) {
     return `Your wallet is now on ${error.actual}, not ${error.expected}. Disconnect and connect again.`;
