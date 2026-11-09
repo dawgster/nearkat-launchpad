@@ -4,7 +4,12 @@ import { type Dataset, DatasetDrop } from "../components/DatasetDrop.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenSigil } from "../components/TokenSigil.tsx";
-import { type LaunchProgress, launchDataset, sealKeyForApp } from "../lib/datasetLaunch.ts";
+import {
+  isOwnDataset,
+  type LaunchProgress,
+  launchDataset,
+  sealKeyForApp,
+} from "../lib/datasetLaunch.ts";
 import { formatNear, parseNear, shorten } from "../lib/format.ts";
 import type { Keeper } from "../lib/keeper.ts";
 import {
@@ -260,6 +265,23 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
     return () => clearTimeout(timer);
   }, [effectiveSlug, launchpad]);
 
+  /** Whether the taken address holds this creator's own launch of this dataset; null until known. */
+  const [ownLaunch, setOwnLaunch] = useState<boolean | null>(null);
+  useEffect(() => {
+    setOwnLaunch(null);
+    if (!taken || !isDataset || !account || !dataset || !wallet.accountId) {
+      return;
+    }
+    let current = true;
+    isOwnDataset(reader, account, wallet.accountId, dataset).then(
+      (own) => current && setOwnLaunch(own),
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [taken, isDataset, account, dataset, wallet.accountId, reader]);
+
   const mintPrice = parseNear(price);
   const royaltyBps = percentToBps(royalty, 25);
   const shareBps = percentToBps(share, 50);
@@ -318,12 +340,14 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
       ownImages && !/^[A-Za-z0-9]{1,8}$/.test(imageExtension) ? "Like png, jpg or webp." : null,
   };
   // A dataset that is already launched can be finished: its samples are sealed again.
-  const valid = Object.values(problems).every((p) => p === null) && (!taken || isDataset);
+  const valid =
+    Object.values(problems).every((p) => p === null) &&
+    (!taken || (isDataset && ownLaunch !== false));
   const [touched, setTouched] = useState(false);
   const show = (p: string | null) => (touched ? p : null);
 
   /** This address holds the creator's earlier launch of the dataset: only missing samples are stored. */
-  const resuming = isDataset && taken;
+  const resuming = isDataset && taken && ownLaunch === true;
   const sampleCount = isDataset ? (dataset?.samples.length ?? 0) : 0;
   const sampleStorage = SAMPLE_STORAGE_DEPOSIT * BigInt(sampleCount);
   const cost =
@@ -471,9 +495,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
               hint="The collection gets its own NEAR account. This can't be changed later."
               problem={
                 taken
-                  ? isDataset
-                    ? "That address is taken. If it's your dataset, launching again stores only the samples it is missing."
-                    : "That address is taken."
+                  ? resuming
+                    ? "This address holds your launch of this dataset: launching again stores only the samples it is missing."
+                    : isDataset && ownLaunch === null
+                      ? "That address is taken. If it's your dataset, launching again stores only the samples it is missing."
+                      : "That address is taken."
                   : show(problems.slug)
               }
             >
@@ -864,7 +890,7 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
           <div className="card card-lit">
             {config.status === "ready" ? (
               <dl className="space-y-2 text-sm">
-                {!resuming && (
+                {!taken && (
                   <>
                     <div className="flex justify-between gap-4">
                       <dt className="text-mist">Launch fee</dt>
@@ -885,11 +911,19 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                   </>
                 )}
                 <div
-                  className={`flex items-baseline justify-between gap-4 ${resuming ? "" : "border-t border-[var(--card-line)] pt-3"}`}
+                  className={`flex items-baseline justify-between gap-4 ${taken ? "" : "border-t border-[var(--card-line)] pt-3"}`}
                 >
-                  <dt className="text-mist">{resuming ? "Already launched" : "You pay"}</dt>
+                  <dt className="text-mist">
+                    {resuming ? "Already launched" : taken ? "Address taken" : "You pay"}
+                  </dt>
                   <dd className="font-display text-2xl tracking-tight">
-                    {resuming ? "Nothing to pay" : `${formatNear(cost ?? 0n)} NEAR`}
+                    {resuming
+                      ? "Nothing to pay"
+                      : taken
+                        ? isDataset && ownLaunch === null
+                          ? "—"
+                          : "Pick another"
+                        : `${formatNear(cost ?? 0n)} NEAR`}
                   </dd>
                 </div>
               </dl>

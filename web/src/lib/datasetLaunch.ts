@@ -69,6 +69,26 @@ export function sameDataset(
   );
 }
 
+/**
+ * Whether `account` (an address that is taken) holds `accountId`'s own
+ * launch of this dataset, which launching again can finish. Throws if the
+ * collection can't be read.
+ */
+export async function isOwnDataset(
+  reader: Near,
+  account: string,
+  accountId: string,
+  chosen: LaunchSamples,
+): Promise<boolean> {
+  const counts = chosen.classes.map((c) => chosen.samples.filter((s) => s.label === c).length);
+  const existing = new KatContract(reader, account);
+  const [collection, contractConfig] = await Promise.all([
+    existing.getCollection(),
+    existing.getConfig(),
+  ]);
+  return contractConfig.admin_id === accountId && sameDataset(collection, chosen.classes, counts);
+}
+
 export type LaunchProgress = {
   step: "sealing" | "launching" | "storing";
   done: number;
@@ -145,15 +165,8 @@ export async function launchDataset(
 
   // An address that is taken is only fine if it is this creator's unfinished launch of this dataset.
   const resuming = await launchpad.isTaken(options.slug);
-  if (resuming) {
-    const existing = new KatContract(reader, account);
-    const [collection, contractConfig] = await Promise.all([
-      existing.getCollection(),
-      existing.getConfig(),
-    ]);
-    if (contractConfig.admin_id !== accountId || !sameDataset(collection, chosen.classes, counts)) {
-      throw new Error("That address is taken.");
-    }
+  if (resuming && !(await isOwnDataset(reader, account, accountId, chosen))) {
+    throw new Error("That address is taken.");
   }
 
   const total = chosen.samples.length;

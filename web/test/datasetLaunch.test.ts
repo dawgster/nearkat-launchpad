@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   type DatasetLaunchOptions,
   type DatasetLaunchServices,
+  isOwnDataset,
   launchDataset,
   SAMPLES_PER_CALL,
   sameDataset,
@@ -179,4 +180,17 @@ test("sameDataset compares classes and per-class counts", () => {
   expect(sameDataset(collection, ["a", "b"], [2, 1])).toBe(true);
   expect(sameDataset(collection, ["a", "b"], [1, 2])).toBe(false);
   expect(sameDataset(collection, ["b", "a"], [2, 1])).toBe(false);
+});
+
+test("isOwnDataset is true only for the creator's own launch of the same dataset", async () => {
+  const own = (admin: string, counts: string[]) =>
+    isOwnDataset(
+      setup(true, { admin, counts }).services.reader,
+      "pets.pad.near",
+      "alice.near",
+      chosen(3),
+    );
+  expect(await own("alice.near", ["2", "1"])).toBe(true);
+  expect(await own("mallory.near", ["2", "1"])).toBe(false);
+  expect(await own("alice.near", ["1", "1"])).toBe(false);
 });
