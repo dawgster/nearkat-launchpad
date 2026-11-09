@@ -2242,6 +2242,8 @@ fn app_key_labels_cant_hide_characters() {
     // read as another's.
     for label in [
         "Dev\u{200B}",
+        "Dev\u{200C}",
+        "\u{200F}Dev",
         "\u{202E}veD",
         "D\u{2066}ev",
         "\u{FEFF}Dev",
@@ -2262,6 +2264,14 @@ fn app_key_labels_cant_hide_characters() {
         "Café trainer ✨".to_string(),
     );
     assert_eq!(entry.label, "Café trainer ✨");
+    // Emoji joined by U+200D (zero-width joiner) are allowed.
+    for label in [
+        "\u{1F469}\u{200D}\u{1F4BB} trainer",
+        "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",
+    ] {
+        let entry = c.trust_app_key(pk(APP_KEY_A), "dev".to_string(), label.to_string());
+        assert_eq!(entry.label, label);
+    }
 }
 
 #[test]
@@ -2547,6 +2557,64 @@ mod sample_loans {
         assert!(
             used <= kept,
             "the loan uses {used} but the lender paid {kept}"
+        );
+    }
+
+    #[test]
+    fn the_worst_case_offer_fits_the_web_deposit_of_a_hundredth_near() {
+        // The web attaches 0.01 NEAR a sample (LOAN_STORAGE_DEPOSIT). The
+        // largest record: the highest token id, a 64-char lender and renter,
+        // and 8 apps of 64 chars each.
+        const WEB_DEPOSIT: NearToken = NearToken::from_millinear(10);
+        let lender = "l".repeat(64);
+        let renter = "r".repeat(64);
+        let apps: Vec<String> = (0..8u8).map(|i| format!("{}{i}", "a".repeat(63))).collect();
+        let mut c = deploy_with(dataset(&["a", "b"], &[500, 500], 1000));
+        let me = env::current_account_id();
+        while c.get_collection().minted.0 < 1000 {
+            testing_env!(VMContextBuilder::new()
+                .current_account_id(me.clone())
+                .predecessor_account_id(me.clone())
+                .storage_usage(env::storage_usage())
+                .build());
+            let left = 1000 - c.get_collection().minted.0;
+            c.mint_samples(left.into());
+        }
+        for (i, app) in apps.iter().enumerate() {
+            ctx("admin.near", NearToken::from_millinear(10));
+            c.trust_app_key(
+                near_sdk::PublicKey::from_parts(
+                    near_sdk::CurveType::ED25519,
+                    vec![i as u8 + 1; 32],
+                )
+                .unwrap(),
+                app.clone(),
+                "x".repeat(48),
+            );
+        }
+        give(&mut c, "1000", &lender);
+        let before = env::storage_usage();
+        ctx(&lender, WEB_DEPOSIT);
+        c.lend_many(
+            ids(&["1000"]),
+            Some(60.into()),
+            NearToken::from_near(1_000_000),
+            apps.clone(),
+        );
+        let kept = WEB_DEPOSIT.as_yoctonear() - transfers(None).iter().sum::<u128>();
+        ctx(&renter, NearToken::from_near(1_000_000));
+        c.borrow_many(ids(&["1000"]), apps[7].clone());
+        let used =
+            u128::from(env::storage_usage() - before) * env::storage_byte_cost().as_yoctonear();
+        assert!(
+            used <= kept && kept <= WEB_DEPOSIT.as_yoctonear(),
+            "the loan uses {used} and the lender paid {kept} of {WEB_DEPOSIT}"
+        );
+        // Report the margin left when this is run with --nocapture.
+        println!(
+            "worst-case offer: {} of {} bytes",
+            kept / env::storage_byte_cost().as_yoctonear(),
+            WEB_DEPOSIT.as_yoctonear() / env::storage_byte_cost().as_yoctonear()
         );
     }
 

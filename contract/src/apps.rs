@@ -57,11 +57,12 @@ pub(crate) fn require_direct_call() {
 
 /// Characters that print as nothing or reorder the text around them, so a
 /// label with them could pass for another app's: zero-width characters,
-/// bidirectional controls and Unicode tags.
+/// bidirectional controls and Unicode tags. The zero-width joiner (U+200D)
+/// is allowed, as emoji sequences such as 👩‍💻 are built with it.
 fn is_invisible(c: char) -> bool {
     matches!(c,
         '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}'
-        | '\u{17B5}' | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}'
+        | '\u{17B5}' | '\u{180B}'..='\u{180F}' | '\u{200B}' | '\u{200C}' | '\u{200E}' | '\u{200F}'
         | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FEFF}'
         | '\u{FFA0}' | '\u{FFF0}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
 }
