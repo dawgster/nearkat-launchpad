@@ -5,6 +5,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { describe, expect, test, vi } from "vitest";
 import {
   type Classifier,
+  declaredSize,
   heldoutAccuracy,
   INPUT_SIZE,
   loadModel,
@@ -13,28 +14,36 @@ import {
 } from "../src/lib/model.ts";
 
 const PLANE = INPUT_SIZE * INPUT_SIZE;
-const at = (channel: number, y: number, x: number) => channel * PLANE + y * INPUT_SIZE + x;
+const at = (channel: number, y: number, x: number, size = INPUT_SIZE) =>
+  channel * size * size + y * size + x;
 
 describe("toInput", () => {
-  test("toInput squashes to 64×64 RGB in [0,1], channels first", async () => {
+  test("is 224×224 by default, the size the trainer's models take", async () => {
+    expect(INPUT_SIZE).toBe(224);
+    const input = await toInput({ width: 1, height: 1, data: [0, 0, 0, 255] });
+    expect(input.length).toBe(3 * 224 * 224);
+  });
+
+  test("toInput squashes to size×size RGB in [0,1], channels first", async () => {
     // Two pixels side by side: red, then blue.
     const redBlue: Pixels = { width: 2, height: 1, data: [255, 0, 0, 255, 0, 0, 255, 255] };
-    const input = await toInput(redBlue);
+    const input = await toInput(redBlue, 64);
+    const at64 = (channel: number, y: number, x: number) => at(channel, y, x, 64);
     expect(input).toBeInstanceOf(Float32Array);
-    expect(input.length).toBe(3 * PLANE);
+    expect(input.length).toBe(3 * 64 * 64);
     expect(Math.min(...input)).toBeGreaterThanOrEqual(0);
     expect(Math.max(...input)).toBeLessThanOrEqual(1);
     for (const y of [0, 31, 63]) {
       // Left edge: red. Right edge: blue. No green anywhere.
-      expect(input[at(0, y, 0)]).toBeCloseTo(1);
-      expect(input[at(2, y, 0)]).toBeCloseTo(0);
-      expect(input[at(0, y, 63)]).toBeCloseTo(0);
-      expect(input[at(2, y, 63)]).toBeCloseTo(1);
-      expect(input[at(1, y, 31)]).toBeCloseTo(0);
+      expect(input[at64(0, y, 0)]).toBeCloseTo(1);
+      expect(input[at64(2, y, 0)]).toBeCloseTo(0);
+      expect(input[at64(0, y, 63)]).toBeCloseTo(0);
+      expect(input[at64(2, y, 63)]).toBeCloseTo(1);
+      expect(input[at64(1, y, 31)]).toBeCloseTo(0);
     }
     // Squashed, not cropped: the middle blends the two.
-    expect(input[at(0, 0, 31)]).toBeCloseTo(0.515625);
-    expect(input[at(2, 0, 32)]).toBeCloseTo(0.515625);
+    expect(input[at64(0, 0, 31)]).toBeCloseTo(0.515625);
+    expect(input[at64(2, 0, 32)]).toBeCloseTo(0.515625);
   });
 
   test("ignores alpha and scales bytes to [0,1]", async () => {
@@ -43,6 +52,20 @@ describe("toInput", () => {
     expect(input[at(0, 10, 10)]).toBeCloseTo(0.2);
     expect(input[at(1, 10, 10)]).toBeCloseTo(0.4);
     expect(input[at(2, 10, 10)]).toBeCloseTo(0.8);
+  });
+});
+
+describe("declaredSize", () => {
+  test("reads the square side from the model's input shape", () => {
+    expect(declaredSize({ isTensor: true, shape: ["batch", 3, 128, 128] })).toBe(128);
+  });
+
+  test("falls back to INPUT_SIZE when the model doesn't say", () => {
+    expect(declaredSize(undefined)).toBe(INPUT_SIZE);
+    expect(declaredSize({ isTensor: false })).toBe(INPUT_SIZE);
+    expect(declaredSize({ isTensor: true, shape: [] })).toBe(INPUT_SIZE);
+    expect(declaredSize({ isTensor: true, shape: ["batch", 3, "h", "w"] })).toBe(INPUT_SIZE);
+    expect(declaredSize({ isTensor: true, shape: [1, 3, 64, 32] })).toBe(INPUT_SIZE);
   });
 });
 
@@ -73,6 +96,13 @@ describe("loadModel", () => {
     expect(result.label).toBe("not_hotdog");
     expect(result.confidence).toBeCloseTo(0.75);
     expect((run.mock.calls[0] as unknown as [Float32Array])[0].length).toBe(3 * PLANE);
+  });
+
+  test("feeds the model pictures at the size it declares", async () => {
+    const run = vi.fn(async () => Float32Array.from([1, 0]));
+    const classifier = await loadModel(bytes, hash, { create: async () => ({ size: 32, run }) });
+    await classifier.classify({ width: 1, height: 1, data: [0, 0, 0, 255] }, ["a", "b"]);
+    expect((run.mock.calls[0] as unknown as [Float32Array])[0].length).toBe(3 * 32 * 32);
   });
 
   test("refuses a model with a different number of classes", async () => {

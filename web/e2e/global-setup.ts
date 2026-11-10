@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -183,6 +183,23 @@ export default async function globalSetup() {
   });
   const attestation = await (await waitFor(`http://127.0.0.1:${KEEPER_PORT}/attestation`)).json();
 
+  // The trainer never downloads its backbone's weights: put them in torch's cache first
+  // (a no-op once they are there).
+  const fetchWeights = spawnSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      join(TRAINER_DIR, "py"),
+      "python",
+      join(TRAINER_DIR, "py/fetch_weights.py"),
+    ],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  );
+  if (fetchWeights.status !== 0) {
+    throw new Error("Could not fetch the trainer's backbone weights (trainer/py/fetch_weights.py)");
+  }
+
   // The training app, in local mode: its key derives from a throwaway secret and must be
   // a full-access key of its account. A dataset's admin trusts it with trust_app_key.
   start("node", ["src/main.ts"], TRAINER_DIR, {
@@ -193,12 +210,11 @@ export default async function globalSetup() {
     TRAINER_ROOT_SECRET: "09".repeat(32),
     TRAINER_APP_ID,
     TRAINER_LAUNCHPAD_ID: names.launchpad,
-    // REHEARSAL=1 runs the stage demo at full size: the real held-out set, the default epochs.
+    // REHEARSAL=1 runs the stage demo at full size: the real held-out set.
     HELDOUT_DIR: process.env.REHEARSAL
       ? resolve("../trainer/heldout")
       : resolve("e2e/fixtures/heldout"),
     SAMPLE_KEYS_PER_CALL: "1",
-    ...(process.env.REHEARSAL ? {} : { TRAINER_EPOCHS: "3" }),
     PORT: String(TRAINER_PORT),
     WEB_ORIGINS: `${ALICE_URL},${BOB_URL}`,
   });

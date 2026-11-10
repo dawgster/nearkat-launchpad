@@ -88,7 +88,7 @@ test("trains and tries a model", async ({ page, browser }) => {
   const train = renter.getByRole("region", { name: "Train a model" });
   await train.getByRole("button", { name: "Train on 4 rented samples" }).click();
   const progress = train.getByRole("list", { name: "Progress" });
-  await expect(progress.getByText(/epoch \d of 3/)).toBeVisible({ timeout: 300_000 });
+  await expect(progress.getByText("epoch 1 of 1")).toBeVisible({ timeout: 300_000 });
   const record = train.getByRole("region", { name: "On-chain record" });
   await expect(record).toContainText("recorded for 4 samples", { timeout: 120_000 });
   await expect(record).toContainText("The model's hash matches the one recorded");

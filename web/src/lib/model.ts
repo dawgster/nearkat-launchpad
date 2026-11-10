@@ -1,8 +1,11 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-/** The model's input is a square of this many pixels a side. */
-export const INPUT_SIZE = 64;
+/**
+ * The model's input is a square of this many pixels a side, unless the
+ * model's own input metadata says otherwise.
+ */
+export const INPUT_SIZE = 224;
 /** Bigger photos are shrunk on a canvas first, so the filter below stays quick. */
 const MAX_SIDE = 512;
 
@@ -21,7 +24,11 @@ export interface Classifier {
 
 /** Runs the ONNX model. Swappable in tests. */
 export interface Runtime {
-  create(model: Uint8Array): Promise<{ run(input: Float32Array): Promise<Float32Array> }>;
+  create(model: Uint8Array): Promise<{
+    /** The input square's side, as the model declares it; INPUT_SIZE if it doesn't. */
+    size?: number;
+    run(input: Float32Array): Promise<Float32Array>;
+  }>;
 }
 
 function pixelsOf(image: Picture): Pixels {
@@ -68,57 +75,69 @@ function filter(inSize: number, outSize: number): Array<{ start: number; weights
 }
 
 /**
- * The model's input for a picture: squashed (not cropped) to 64×64, RGB in
- * [0,1], channels first, as `[1, 3, 64, 64]`.
+ * The model's input for a picture: squashed (not cropped) to `size`×`size`,
+ * RGB in [0,1], channels first, as `[1, 3, size, size]`. The model normalises
+ * the colours itself.
  */
-export async function toInput(image: Picture): Promise<Float32Array> {
+export async function toInput(image: Picture, size = INPUT_SIZE): Promise<Float32Array> {
   const { width, height, data } = pixelsOf(image);
-  const across = filter(width, INPUT_SIZE);
-  const down = filter(height, INPUT_SIZE);
+  const across = filter(width, size);
+  const down = filter(height, size);
   // Across each row first, then down each column.
-  const rows = new Float32Array(height * INPUT_SIZE * 3);
+  const rows = new Float32Array(height * size * 3);
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < INPUT_SIZE; x++) {
+    for (let x = 0; x < size; x++) {
       const { start, weights } = across[x] as (typeof across)[number];
       for (let c = 0; c < 3; c++) {
         let sum = 0;
         for (let i = 0; i < weights.length; i++) {
           sum += (weights[i] as number) * (data[(y * width + start + i) * 4 + c] as number);
         }
-        rows[(y * INPUT_SIZE + x) * 3 + c] = sum;
+        rows[(y * size + x) * 3 + c] = sum;
       }
     }
   }
-  const plane = INPUT_SIZE * INPUT_SIZE;
+  const plane = size * size;
   const input = new Float32Array(3 * plane);
-  for (let y = 0; y < INPUT_SIZE; y++) {
+  for (let y = 0; y < size; y++) {
     const { start, weights } = down[y] as (typeof down)[number];
-    for (let x = 0; x < INPUT_SIZE; x++) {
+    for (let x = 0; x < size; x++) {
       for (let c = 0; c < 3; c++) {
         let sum = 0;
         for (let i = 0; i < weights.length; i++) {
-          sum += (weights[i] as number) * (rows[((start + i) * INPUT_SIZE + x) * 3 + c] as number);
+          sum += (weights[i] as number) * (rows[((start + i) * size + x) * 3 + c] as number);
         }
-        input[c * plane + y * INPUT_SIZE + x] = Math.min(1, Math.max(0, sum / 255));
+        input[c * plane + y * size + x] = Math.min(1, Math.max(0, sum / 255));
       }
     }
   }
   return input;
 }
 
+/** The square side a model's `[batch, 3, side, side]` input declares; INPUT_SIZE if it declares none. */
+export function declaredSize(
+  input: { isTensor: boolean; shape?: ReadonlyArray<number | string> } | undefined,
+): number {
+  const shape = input?.isTensor ? input.shape : undefined;
+  const [height, width] = shape?.slice(-2) ?? [];
+  return typeof height === "number" && height > 0 && height === width ? height : INPUT_SIZE;
+}
+
 /** onnxruntime-web on its wasm backend, loaded only when a model is. */
 const onnxRuntime: Runtime = {
   async create(model) {
     const ort = await import("onnxruntime-web/wasm");
-    // The model is tiny; threads would need a cross-origin isolated page.
+    // Threads would need a cross-origin isolated page; one is quick enough for a picture at a time.
     ort.env.wasm.numThreads = 1;
     const session = await ort.InferenceSession.create(model.slice(), {
       executionProviders: ["wasm"],
     });
+    const size = declaredSize(session.inputMetadata[0]);
     return {
+      size,
       async run(input) {
         const outputs = await session.run({
-          image: new ort.Tensor("float32", input, [1, 3, INPUT_SIZE, INPUT_SIZE]),
+          image: new ort.Tensor("float32", input, [1, 3, size, size]),
         });
         return Float32Array.from(outputs.logits?.data as Float32Array);
       },
@@ -141,7 +160,7 @@ export async function loadModel(
   const model = await runtime.create(bytes);
   return {
     async classify(image, classes) {
-      const logits = await model.run(await toInput(image));
+      const logits = await model.run(await toInput(image, model.size ?? INPUT_SIZE));
       if (logits.length !== classes.length) {
         throw new Error(
           `The model tells ${logits.length} classes apart; this collection has ${classes.length}.`,

@@ -5,7 +5,7 @@ import { Near, type PrivateKey } from "near-kit";
 import { ALICE_URL, BOB_URL, TRAINER_APP_ID } from "./global-setup.ts";
 
 // The stage demo at full size, on the local sandbox: 200 real images, 150 rented, the
-// trainer's default epochs, the real 50-image held-out set. Opt in with REHEARSAL=1
+// real 50-image held-out set. Opt in with REHEARSAL=1
 // after scripts/fetch-hotdog.sh: `REHEARSAL=1 npx playwright test rehearsal`.
 const DATASET = resolve(import.meta.dirname, "../../data/hotdog/train");
 const RENT = 150;
