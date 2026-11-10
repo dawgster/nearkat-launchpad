@@ -61,6 +61,9 @@ export interface LoanTerms {
 /** Covers a loan record's storage; what isn't needed comes back. */
 export const LOAN_STORAGE_DEPOSIT = 10n ** 22n;
 
+/** Tokens read per nft_tokens_for_owner call. */
+const OWNER_PAGE = 100;
+
 /** What `lend_many` and `borrow_many` take at most per call. */
 export const MAX_SAMPLES_PER_CALL = 50;
 
@@ -262,13 +265,22 @@ export class KatContract {
     return config;
   }
 
-  /** Token ids owned by an account, lowest number first. */
+  /** Token ids owned by an account, lowest number first. A dataset's creator holds hundreds. */
   async katsOf(accountId: string): Promise<string[]> {
-    const tokens = await this.#view<Array<{ token_id: string }>>("nft_tokens_for_owner", {
-      account_id: accountId,
-      limit: 100,
-    });
-    return (tokens ?? []).map((token) => token.token_id).sort((a, b) => Number(a) - Number(b));
+    const ids: string[] = [];
+    for (;;) {
+      const page =
+        (await this.#view<Array<{ token_id: string }>>("nft_tokens_for_owner", {
+          account_id: accountId,
+          from_index: String(ids.length),
+          limit: OWNER_PAGE,
+        })) ?? [];
+      ids.push(...page.map((token) => token.token_id));
+      if (page.length < OWNER_PAGE) {
+        break;
+      }
+    }
+    return ids.sort((a, b) => Number(a) - Number(b));
   }
 
   /** An account's tokens with their context versions, which set how grown each one is drawn. */
