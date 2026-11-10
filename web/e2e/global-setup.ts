@@ -193,9 +193,12 @@ export default async function globalSetup() {
     TRAINER_ROOT_SECRET: "09".repeat(32),
     TRAINER_APP_ID,
     TRAINER_LAUNCHPAD_ID: names.launchpad,
-    HELDOUT_DIR: resolve("e2e/fixtures/heldout"),
+    // REHEARSAL=1 runs the stage demo at full size: the real held-out set, the default epochs.
+    HELDOUT_DIR: process.env.REHEARSAL
+      ? resolve("../trainer/heldout")
+      : resolve("e2e/fixtures/heldout"),
     SAMPLE_KEYS_PER_CALL: "1",
-    TRAINER_EPOCHS: "3",
+    ...(process.env.REHEARSAL ? {} : { TRAINER_EPOCHS: "3" }),
     PORT: String(TRAINER_PORT),
     WEB_ORIGINS: `${ALICE_URL},${BOB_URL}`,
   });
