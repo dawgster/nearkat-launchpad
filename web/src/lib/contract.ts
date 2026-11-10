@@ -267,18 +267,22 @@ export class KatContract {
 
   /** Token ids owned by an account, lowest number first. A dataset's creator holds hundreds. */
   async katsOf(accountId: string): Promise<string[]> {
+    // The standard panics on a from_index at or past the end, so count first.
+    const count = Number(
+      (await this.#view<string>("nft_supply_for_owner", { account_id: accountId })) ?? 0,
+    );
     const ids: string[] = [];
-    for (;;) {
+    while (ids.length < count) {
       const page =
         (await this.#view<Array<{ token_id: string }>>("nft_tokens_for_owner", {
           account_id: accountId,
           from_index: String(ids.length),
           limit: OWNER_PAGE,
         })) ?? [];
-      ids.push(...page.map((token) => token.token_id));
-      if (page.length < OWNER_PAGE) {
+      if (page.length === 0) {
         break;
       }
+      ids.push(...page.map((token) => token.token_id));
     }
     return ids.sort((a, b) => Number(a) - Number(b));
   }

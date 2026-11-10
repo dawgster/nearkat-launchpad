@@ -263,23 +263,32 @@ describe("rentalsOf", () => {
 });
 
 describe("katsOf", () => {
-  test("reads every page of an owner's tokens, as a dataset's creator holds hundreds", async () => {
-    const owned = Array.from({ length: 250 }, (_, i) => ({ token_id: String(i + 1) }));
+  test.each([
+    [250, ["0", "100", "200"]],
+    [200, ["0", "100"]],
+    [0, []],
+  ])("reads every page of an owner's %i tokens, never past the end", async (n, froms) => {
+    const owned = Array.from({ length: n }, (_, i) => ({ token_id: String(i + 1) }));
     const calls: Array<{ from_index: string; limit: number }> = [];
     const near = {
       view: async (_id: string, method: string, args: { from_index: string; limit: number }) => {
+        if (method === "nft_supply_for_owner") {
+          return String(owned.length);
+        }
         if (method !== "nft_tokens_for_owner") {
           throw new Error(method);
         }
         calls.push(args);
         const from = Number(args.from_index);
+        // As near-contract-standards does.
+        if (from >= owned.length) {
+          throw new Error("Out of bounds, please use a smaller from_index.");
+        }
         return owned.slice(from, from + args.limit);
       },
     };
     const ids = await new KatContract(near as never, "set.near").katsOf("creator.near");
-    expect(ids).toHaveLength(250);
-    expect(ids[0]).toBe("1");
-    expect(ids.at(-1)).toBe("250");
-    expect(calls.map((c) => c.from_index)).toEqual(["0", "100", "200"]);
+    expect(ids).toEqual(owned.map((t) => t.token_id));
+    expect(calls.map((c) => c.from_index)).toEqual(froms);
   });
 });
