@@ -1,7 +1,7 @@
 [project]
 name = "kat-trainer"
 version = "0.1.0"
-description = "Small CNN trainer: labelled images on stdin, ONNX out"
+description = "Linear SVM on frozen MobileNetV3-Large features: labelled images on stdin, ONNX out"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "torch",
@@ -9,10 +9,14 @@ dependencies = [
     "onnx",
     "pillow",
     "onnxscript>=0.7.2",
+    "scikit-learn>=1.9.1",
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "onnxruntime>=1.31.1",
+    "pytest",
+]
 
 [tool.uv]
 package = false
