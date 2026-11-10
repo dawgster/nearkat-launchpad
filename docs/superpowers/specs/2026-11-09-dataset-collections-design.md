@@ -55,8 +55,8 @@ Something** ("ownership with behavior").
 4. A renter rents a batch of samples for a named training app in one
    transaction, and every holder is paid at that moment.
 5. The renter presses **Train**. The training app proves its attestation
-   on-chain, receives the keys of exactly the rented tokens, and trains a small
-   CNN in about a minute. It reports accuracy on a public held-out set and
+   on-chain, receives the keys of exactly the rented tokens, and trains an
+   image classifier in about a minute. It reports accuracy on a public held-out set and
    records on-chain the model's hash and the list of tokens it trained on. The
    renter downloads the model.
 6. On the same page the renter drops a photo onto the downloaded model, which
@@ -229,11 +229,20 @@ and registered with `register_app_key`.
   and checks them against the network's public key (as `keeper/src/ckd.ts`
   does). It then reads the samples from FastFS, checks their hashes and opens
   them in memory. Plaintext is never written to disk.
-- The trainer is Python with PyTorch on CPU. It reuses the small 64×64 RGB CNN
-  and training loop from
-  `~/Repositories/near_nn/hotdog_cnn_contract/scripts/export_model.py`
-  (conv-pool-conv-pool-conv, global average pooling, linear). The seed is fixed
-  and the run is time-capped.
+- The trainer is Python with PyTorch and scikit-learn on CPU. A frozen
+  MobileNetV3-Large (torchvision's ImageNet weights, classifier removed) turns
+  each picture into 960 features, and a linear SVM (`LinearSVC`, C = 0.01,
+  one-vs-rest) is fitted on them. Trained from scratch, a small CNN reached only
+  52–58% on the hotdog held-out set with 150 samples; this reaches about 90%.
+  The weights are baked into the image and loaded offline, checked against a
+  pinned SHA-256. The run is time-capped.
+- **Model contract** (trainer, ONNX and browser agree): input `image`, float32
+  `[batch, 3, 224, 224]`, RGB in [0,1], squashed to 224×224 (no crop) with
+  Pillow's bilinear filter; the ImageNet mean/std normalisation is inside the
+  graph. Output `logits`, `[batch, classes.length]` in the collection's
+  `classes` order: the SVM's weights as a linear layer (for two classes the
+  decision value d gives `[-d, d]`), so the argmax is the SVM's prediction. One
+  self-contained file, about 12 MB.
 - It evaluates on a **public held-out set**: dataset images that are not minted,
   fetched at build time from the dataset source (not committed to the repo), so
   anyone can check the accuracy claim by running the downloaded model on them.
@@ -243,7 +252,8 @@ and registered with `register_app_key`.
   belongs to the same renter and app and is unspent. It marks the use spent, adds
   the run to each token's record and emits an event.
 - Progress streams to the page (proving attestation, fetching keys, loading,
-  epoch k/n, evaluating, recording).
+  training, evaluating, recording). The SVM is fitted once, so training reports
+  epoch 1 of 1.
 - The renter downloads the ONNX file with their session. The page checks its
   SHA-256 against the on-chain record before using it. The app then drops the
   keys and samples.
@@ -282,8 +292,6 @@ the model hash. The existing verify page covers the ingest app.
    it earned rent and trained model #1 for that app.
 5. *(Stretch)* A second training app, for example a different architecture,
    rents the same samples and gets a different model.
-6. *(Stretch)* Load the model into the on-chain hotdog contract from `near_nn`:
-   trained in private, running in public on NEAR.
 
 The launch itself can also be shown live with a small folder, if time allows.
 

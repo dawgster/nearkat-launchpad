@@ -237,7 +237,7 @@ The last line must read `Total: 200 of 200 samples on offer`. Then, as
 train, download the model, then drop a hotdog photo. The trainer registers its
 own key on the collection the first time (`register_app_key`, attested).
 
-Go / no-go: training under 60 s; held-out accuracy clearly above 50%; the run
+Go / no-go: training under 60 s; held-out accuracy about 90% (85–92%); the run
 is on-chain (`recordTx` on `GET <trainer-url>/runs/<id>`); rented samples
 cannot be rented again. Fallback script: see `docs/demo/hotdog.md`.
 

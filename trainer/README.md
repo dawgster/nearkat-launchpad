@@ -18,6 +18,30 @@ be installed too:
     npm run dev
 
 Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
+It needs the backbone's weights in torch's cache, and never downloads them
+itself. Fetch them once:
+
+    (cd py && uv run python fetch_weights.py)
+
+The image (`deploy/trainer.Dockerfile`) bakes them in at build time.
+
+## The model
+
+`py/train.py` passes every sample through a frozen MobileNetV3-Large
+(torchvision's ImageNet weights, classifier removed: 960 features a picture)
+and fits a linear SVM on the features (`LinearSVC`, C = 0.01, one-vs-rest).
+On the hotdog set, 150 samples give about 90% on the 50 held-out images. The
+SVM is fitted once, so a run reports epoch 1 of 1; feature extraction for 150
+samples takes a few seconds on one CPU core.
+
+It exports one self-contained ONNX file of about 12 MB: input `image`, float32
+`[batch, 3, 224, 224]`, RGB in [0,1] squashed (not cropped) to 224×224, with
+the ImageNet normalisation inside the graph; output `logits`, one per class in
+the collection's order, whose argmax is the SVM's prediction.
+
+`train.py --seconds` (default 120) caps training, scoring and export, counted
+from when the last sample has been read. The weights' SHA-256 is pinned in
+`train.py` and checked on every load.
 
 ## Environment
 
@@ -35,13 +59,14 @@ Python is run with `uv` (or the interpreter in `TRAINER_PYTHON`); see `py/`.
 | `ARCHIVAL_RPC_URL` | fastnear archival | Reads back FastFS files from old transactions. |
 | `FASTFS_GATEWAY` | none (mainnet: fastfs.io) | Gateway URL with `{uploader}`. |
 | `SAMPLE_KEYS_PER_CALL` | `10` | Sample keys asked for in one `request_sample_keys` call, 1 to 10. 1 for the sandbox's mock MPC, which costs ~120 Tgas per key. |
-| `TRAINER_EPOCHS` | train.py's (30) | Epochs per run, 1 to 1000. |
+| `TRAINER_EPOCHS` | train.py's | Accepted, 1 to 1000, and passed on; the SVM is fitted once, so a run is always epoch 1 of 1. |
 | `PORT` | `8790` | |
 | `WEB_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origins. |
 | `AUTH_RECIPIENT` | `trainer.local`; required in phala mode | The NEP-413 recipient renters sign in to. The app's own, never the keeper's, so a keeper sign-in opens no session here; the web app's `VITE_TRAINER_URLS` names it per app. |
 | `TRUST_PROXY` | `false` | Rate limits key on `X-Forwarded-For` behind a proxy. |
 | `DSTACK_ENDPOINT` | guest agent socket | A URL reaches the dstack simulator. |
 | `TRAINER_PYTHON` | uv | Interpreter for `py/train.py`. |
+| `TORCH_HOME` | `~/.cache/torch` | Where `py/train.py` finds the backbone's weights (`hub/checkpoints/`). |
 
 ## The trainer's key
 

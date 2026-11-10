@@ -24,8 +24,8 @@ derivation), released only to that attested code. Two kinds of collection:
    a duration.
 3. A renter rents N samples for that app. The training app proves its code to
    the collection (`register_app_key`, with a TDX quote), asks the collection
-   for the samples' keys, decrypts them in memory, trains a small CNN on a CPU
-   (`trainer/py`), scores it on a held-out set, and records the run on-chain,
+   for the samples' keys, decrypts them in memory, fits a linear SVM on frozen
+   MobileNetV3-Large features on a CPU (`trainer/py`), scores it on a held-out set, and records the run on-chain,
    which spends the rentals.
 4. The renter downloads the ONNX model and can try it on a photo in the browser.
 
@@ -36,7 +36,7 @@ derivation), released only to that attested code. Two kinds of collection:
 | `contract/` | The collection contract (characters and datasets) |
 | `launchpad/` | The factory that launches collections |
 | `keeper/` | The keeper service: ingest, chat, key requests |
-| `trainer/` | The training app (TypeScript service; `trainer/py` is the PyTorch trainer) |
+| `trainer/` | The training app (TypeScript service; `trainer/py` is the Python trainer) |
 | `web/` | The single-page web app |
 | `art/` | Shared token art |
 | `mock-mpc/` | Stand-in for NEAR's MPC contract, for sandbox tests |
@@ -50,8 +50,10 @@ Needs Node 24, Rust with `cargo near`, `uv` and Python 3.12 for the trainer,
 and Docker only for the images.
 
 ```bash
-# 1. The demo dataset (pinned commit, never committed)
+# 1. The demo dataset (pinned commit, never committed), and the trainer's
+#    backbone weights (into torch's cache, TORCH_HOME; the trainer never downloads)
 scripts/fetch-hotdog.sh            # data/hotdog/train, trainer/heldout, web/public/heldout
+(cd trainer/py && uv run python fetch_weights.py)
 
 # 2. Sandbox and browser end-to-end tests (local NEAR sandbox, mock MPC)
 (cd contract  && cargo near build non-reproducible-wasm)

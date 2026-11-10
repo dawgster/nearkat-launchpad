@@ -68,8 +68,10 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    (it prints what each holder was paid; run again after a failure and it only
    tops up to 150), or skip to the recorded run.
 3. **Train.** Press "Train on 150 rented samples". Show the attestation and key
-   requests on-chain, then the progress for under a minute. Accuracy appears,
-   the run is recorded on-chain, and the model downloads. *Fallback:* if
+   requests on-chain, then the progress for under a minute. Accuracy appears
+   (expect about 90% on the 50 held-out images: a linear SVM on frozen
+   MobileNetV3-Large features), the run is recorded on-chain, and the model
+   (about 12 MB) downloads. *Fallback:* if
    training stalls past 90 seconds, say so, switch to `<recorded-run-url>`, and
    continue with `<model-file>`.
 4. **Try it.** Drop a hotdog photo on the page: it says "hotdog". Open a sample's
@@ -77,8 +79,6 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    *Fallback:* load `<model-file>` in the same try box.
 5. *(Stretch)* A second training app rents the same samples and gets a
    different model. *Fallback:* skip.
-6. *(Stretch)* Load the model into the on-chain hotdog contract from `near_nn`.
-   *Fallback:* skip.
 
 If time allows, launch a small folder live, as in "Before the demo", step 3.
 
