@@ -21,23 +21,40 @@ interface Step {
   to?: string;
 }
 
-const KEY = "demo-guide";
+// Numbered so a tour kept from an earlier list of steps starts over.
+const KEY = "demo-guide-2";
 /** Set for the rest of a visit once the guide is closed, so it doesn't come straight back. */
 const CLOSED = "demo-guide-closed";
 
-export function demoSteps(collection: string): Step[] {
+export function demoSteps(collection: string, home: string): Step[] {
   const page = `/c/${collection}`;
   return [
     {
-      title: "A kat",
-      show: "Open one of your kats under “Yours”.",
-      say: "This is a nearkat: an NFT with a mind of its own.",
+      title: "The kat collection",
+      show: "Show the collection: the prompt every kat shares, the price, who can open their minds.",
+      say: "Nearkats are a collection of NFTs with minds of their own. The prompt is public; each mind is private.",
+      to: `/c/${home}`,
+    },
+    {
+      title: "Mint a kat",
+      show: "Show the mint button and your kats under “Yours”. Open one of them.",
+      say: "Anyone can mint one. Each kat carries its own balance, which pays for its conversations.",
       to: "/",
     },
     {
-      title: "Talk to it",
-      show: "Send it a message. Point at its balance, its Character and its Memory.",
-      say: "It pays for its own conversations, and what it learns is encrypted. Give it away and its memories go with it.",
+      title: "Tell it a secret",
+      show: "Chat until the chip says “Your next message saves to memory”, then tell it the secret.",
+      say: "What it learns is encrypted and saved on NEAR. Nobody can read it but the kat's owner.",
+    },
+    {
+      title: "Give the kat away",
+      show: "Once it says “Saved to memory”, give the kat to your other wallet. Connect that wallet and open the kat.",
+      say: "A kat can change hands like any NFT.",
+    },
+    {
+      title: "It remembers",
+      show: "As the new owner, ask it about the secret.",
+      say: "Its memories went with it. The old owner can't read its mind any more.",
     },
     {
       title: "The launchpad",
@@ -84,7 +101,7 @@ export function demoSteps(collection: string): Step[] {
       say: "The model is an NFT too. Its weights are sealed, and the app opens them only for the token's owner.",
     },
     {
-      title: "Give it away",
+      title: "Give the model away",
       show: "Give the token to another account. Do this last: it can't be undone.",
       say: "Sell it or give it away, and the model goes with the token.",
     },
@@ -136,21 +153,34 @@ export function DemoGuide() {
     config.demoGuide && accountId !== null && config.demoGuide.accounts.includes(accountId)
       ? config.demoGuide.collection
       : null;
-  return <DemoGuideBar auto={guided} />;
+  return <DemoGuideBar auto={guided} home={config.contractId} />;
 }
 
-/** `auto`: the collection to start a guide for when none is going, or null. */
-export function DemoGuideBar({ auto }: { auto: string | null }) {
+/**
+ * `auto`: the collection to start a guide for when none is going, or null.
+ * `home`: the app's own collection, where the tour begins.
+ */
+export function DemoGuideBar({ auto, home }: { auto: string | null; home: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   // Read once: the address only switches the guide on.
   const [guide, setGuide] = useState<Saved | null>(() => load(location.search));
+  const asked = new URLSearchParams(location.search).has("demo");
+
+  // A tour that starts now starts on its first page; one picked up again stays where it is.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the address the page opened with.
+  useEffect(() => {
+    if (guide && asked) {
+      navigate(demoSteps(guide.collection, home)[0]?.to ?? "/", { replace: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (auto && !guide && !wasClosed()) {
       setGuide({ collection: auto, step: 0, small: false });
+      navigate(demoSteps(auto, home)[0]?.to ?? "/");
     }
-  }, [auto, guide]);
+  }, [auto, guide, home, navigate]);
 
   useEffect(() => {
     try {
@@ -175,7 +205,7 @@ export function DemoGuideBar({ auto }: { auto: string | null }) {
   if (!guide) {
     return null;
   }
-  const steps = demoSteps(guide.collection);
+  const steps = demoSteps(guide.collection, home);
   const index = Math.min(Math.max(guide.step, 0), steps.length - 1);
   const step = steps[index] as Step;
   const go = (to: number) => {
