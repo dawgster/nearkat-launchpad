@@ -34,6 +34,18 @@ export interface ChatReply {
   payment?: PaymentOutcome;
   /** Set when a borrower is talking: what is left of their loan. `ends_at` is nanoseconds. */
   loan?: { messages_left: number | null; ends_at: string | null };
+  /** Set when the owner is talking: how far this conversation is from being saved. */
+  memory?: MemoryProgress & { saved: boolean };
+}
+
+/**
+ * How far an owner's conversation is from being folded into the token's
+ * memory: it is saved once `unsaved` messages (theirs and the replies) reach
+ * `saves_at`.
+ */
+export interface MemoryProgress {
+  unsaved: number;
+  saves_at: number;
 }
 
 /** A payment the token's mind asked for. Amounts are yoctoNEAR. */
@@ -106,6 +118,8 @@ export interface Keeper {
   /** `collection` is the contract of a launched collection; omitted for the home one. */
   getContext(token: string, tokenId: string, collection?: string): Promise<ContextDoc>;
   chat(token: string, tokenId: string, message: string, collection?: string): Promise<ChatReply>;
+  /** How far the owner's conversation is from being saved. Older keepers don't answer this. */
+  memoryProgress?(token: string, tokenId: string, collection?: string): Promise<MemoryProgress>;
   exportMind(token: string, tokenId: string, collection?: string): Promise<MindExport>;
   /** Hands the token a chat history sealed to the keeper's key, to fold into its memory. */
   importHistory(
@@ -181,6 +195,8 @@ export function createKeeper(baseUrl: string, fetchImpl: typeof fetch = fetch): 
       request("GET", `${kat(tokenId, collection)}/context`, { token }),
     chat: (token, tokenId, message, collection) =>
       request("POST", `${kat(tokenId, collection)}/chat`, { token, body: { message } }),
+    memoryProgress: (token, tokenId, collection) =>
+      request("GET", `${kat(tokenId, collection)}/session`, { token }),
     exportMind: (token, tokenId, collection) =>
       request("GET", `${kat(tokenId, collection)}/export`, { token }),
     importHistory: (token, tokenId, sealed, collection) =>

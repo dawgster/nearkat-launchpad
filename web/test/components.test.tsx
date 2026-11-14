@@ -95,6 +95,31 @@ describe("Chat", () => {
     return { onReply, onOutOfBalance, box: screen.getByLabelText("Message to Nearkat #1") };
   }
 
+  test("counts down the messages until the conversation is saved", async () => {
+    const onReply = vi.fn();
+    let unsaved = 16;
+    render(
+      <Chat
+        katName="Nearkat #1"
+        chatPrice={CHAT}
+        send={async () => {
+          unsaved = unsaved >= 18 ? 0 : unsaved + 2;
+          return { ...reply("ok"), memory: { unsaved, saves_at: 20, saved: unsaved === 0 } };
+        }}
+        onReply={onReply}
+        onOutOfBalance={vi.fn()}
+        loadMemory={async () => ({ unsaved: 16, saves_at: 20 })}
+      />,
+    );
+    const status = await screen.findByRole("status", { name: "Memory" });
+    expect(status.textContent).toBe("Saves to memory in 2 messages");
+    const box = screen.getByLabelText("Message to Nearkat #1");
+    await userEvent.type(box, "one{Enter}");
+    await waitFor(() => expect(status.textContent).toBe("Your next message saves to memory"));
+    await userEvent.type(box, "my secret{Enter}");
+    await waitFor(() => expect(status.textContent).toBe("Saved to memory"));
+  });
+
   test("says when the keeper held back a reply that quoted secret instructions", async () => {
     const { box } = setup(async () => ({
       ...reply("That's something I can't share."),

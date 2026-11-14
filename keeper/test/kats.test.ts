@@ -488,6 +488,21 @@ describe("memory", () => {
     expect(inference.calls[29]?.[1]).toEqual({ role: "user", content: "message 10" });
   });
 
+  test("tells the owner how far the conversation is from being saved", async () => {
+    const { kats } = await setup();
+    expect(await kats.memoryProgress("alice.near", "1")).toEqual({ unsaved: 0, saves_at: 20 });
+    const first = await kats.chat("alice.near", "1", "message 1");
+    expect(first.memory).toEqual({ unsaved: 2, saves_at: 20, saved: false });
+    for (let i = 2; i <= 9; i++) {
+      await kats.chat("alice.near", "1", `message ${i}`);
+    }
+    expect(await kats.memoryProgress("alice.near", "1")).toEqual({ unsaved: 18, saves_at: 20 });
+    // The tenth exchange is the one that saves.
+    const tenth = await kats.chat("alice.near", "1", "my secret is 42");
+    expect(tenth.memory).toEqual({ unsaved: 0, saves_at: 20, saved: true });
+    await expect(kats.memoryProgress("bob.near", "1")).rejects.toMatchObject({ status: 403 });
+  });
+
   test("keeps folding other kats' conversations when one kat's context is unreadable", async () => {
     const { chain, kats, logs, advance } = await setup();
     chain.mint("2", "bob.near", NEAR);

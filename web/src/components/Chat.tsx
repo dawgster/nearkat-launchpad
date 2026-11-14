@@ -7,7 +7,12 @@ import {
   useState,
 } from "react";
 import { formatNear } from "../lib/format.ts";
-import { type ChatReply, KeeperError, type PaymentOutcome } from "../lib/keeper.ts";
+import {
+  type ChatReply,
+  KeeperError,
+  type MemoryProgress,
+  type PaymentOutcome,
+} from "../lib/keeper.ts";
 import { describeProblem } from "../lib/problems.ts";
 import { Icon } from "./Icon.tsx";
 
@@ -31,6 +36,13 @@ export interface ChatProps {
   starters?: string[];
   /** A small picture of the token, shown beside its replies. */
   avatar?: ReactNode;
+  /** Reads how far the conversation is from being saved, when the page opens. */
+  loadMemory?: () => Promise<MemoryProgress | null>;
+}
+
+/** How many more of the owner's messages until the conversation is saved. */
+export function messagesUntilSave(memory: MemoryProgress): number {
+  return Math.max(1, Math.ceil((memory.saves_at - memory.unsaved) / 2));
 }
 
 const MAX_CHARS = 4000;
@@ -43,7 +55,25 @@ export function Chat({
   onOutOfBalance,
   starters = [],
   avatar,
+  loadMemory,
 }: ChatProps) {
+  const [memory, setMemory] = useState<(MemoryProgress & { saved?: boolean }) | null>(null);
+  // Asked once, when the page opens; after that each reply says where it stands.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new loader each render is the same question.
+  useEffect(() => {
+    let current = true;
+    loadMemory?.().then(
+      (progress) => {
+        if (current && progress) {
+          setMemory((known) => known ?? progress);
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -77,6 +107,9 @@ export function Chat({
           payment: reply.payment,
         },
       ]);
+      if (reply.memory) {
+        setMemory(reply.memory);
+      }
       onReply(reply);
     } catch (error) {
       // The message was not answered, so it goes back into the box to resend.
@@ -108,7 +141,22 @@ export function Chat({
     >
       <div className="flex items-center justify-between gap-3 border-b border-[var(--card-line)] px-4 py-3 sm:px-5">
         <p className="card-title">Conversation</p>
-        <span className="chip text-mist">{formatNear(chatPrice, 6)} NEAR a message</span>
+        <span className="flex flex-wrap items-center justify-end gap-2">
+          {memory && (
+            <span
+              className={`chip ${memory.saved ? "chip-accent" : "text-mist"}`}
+              role="status"
+              aria-label="Memory"
+            >
+              {memory.saved
+                ? "Saved to memory"
+                : messagesUntilSave(memory) === 1
+                  ? "Your next message saves to memory"
+                  : `Saves to memory in ${messagesUntilSave(memory)} messages`}
+            </span>
+          )}
+          <span className="chip text-mist">{formatNear(chatPrice, 6)} NEAR a message</span>
+        </span>
       </div>
       <div
         className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5"

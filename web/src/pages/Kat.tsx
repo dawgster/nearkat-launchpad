@@ -221,6 +221,17 @@ function Den({
         }
       }}
       onOutOfBalance={() => setOutOfBalance(true)}
+      loadMemory={async () =>
+        keeper.memoryProgress
+          ? session.call((token) =>
+              (keeper.memoryProgress as NonNullable<typeof keeper.memoryProgress>)(
+                token,
+                tokenId,
+                scope.keeperCollection,
+              ),
+            )
+          : null
+      }
       starters={context.data.version === 1 ? scope.starters.fresh : scope.starters.later}
     />
   );

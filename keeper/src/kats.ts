@@ -165,6 +165,18 @@ export interface ChatReply {
   payment?: PaymentOutcome;
   /** Set when a borrower is talking: what is left of their loan. */
   loan?: LoanStanding;
+  /** Set when the owner is talking: how far this conversation is from being saved. */
+  memory?: MemoryProgress & { saved: boolean };
+}
+
+/**
+ * How far an owner's conversation is from being folded into the token's
+ * memory: it is saved once `unsaved` messages (theirs and the replies) reach
+ * `saves_at`.
+ */
+export interface MemoryProgress {
+  unsaved: number;
+  saves_at: number;
 }
 
 /** Told to a token while it talks with someone it was lent to. */
@@ -243,6 +255,16 @@ export class KatService {
       const doc = await this.#load(tokenId, await this.#owned(accountId, tokenId));
       return doc;
     });
+  }
+
+  /** How far the owner's conversation is from being saved. Owner only. */
+  async memoryProgress(accountId: string, tokenId: string): Promise<MemoryProgress> {
+    await this.#owned(accountId, tokenId);
+    const session = this.#sessions.get(tokenId);
+    return {
+      unsaved: session && session.owner === accountId ? session.messages.length : 0,
+      saves_at: CONSOLIDATE_AFTER_MESSAGES,
+    };
   }
 
   /** The token's mind and its on-chain record, for its owner to keep. */
@@ -366,7 +388,8 @@ export class KatService {
         this.#o.meter.charge(tokenId, this.#o.prices.save);
       }
 
-      if (session.messages.length >= CONSOLIDATE_AFTER_MESSAGES) {
+      const due = session.messages.length >= CONSOLIDATE_AFTER_MESSAGES;
+      if (due) {
         await this.#consolidate(tokenId, owned.kat, doc, session);
       }
       if (session.messages.length > MAX_SESSION_MESSAGES) {
@@ -376,6 +399,12 @@ export class KatService {
         reply,
         verification: result.verification,
         balance: this.#available(tokenId, owned.kat).toString(),
+        memory: {
+          unsaved: session.messages.length,
+          saves_at: CONSOLIDATE_AFTER_MESSAGES,
+          // A save that couldn't be paid for or made leaves the messages waiting.
+          saved: due && session.messages.length === 0,
+        },
         ...(withheld ? { withheld: true as const } : {}),
         ...(payment ? { payment } : {}),
       };

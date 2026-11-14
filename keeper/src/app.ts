@@ -268,6 +268,15 @@ export function createApp(options: AppOptions): Hono<Env> {
       );
     });
 
+    app.get(`${prefix}/kats/:id/session`, async (c) => {
+      limit(limits.read, c.get("accountId"));
+      return c.json(
+        await talkable(c.req.param("contract")).memoryProgress(
+          c.get("accountId"),
+          c.req.param("id"),
+        ),
+      );
+    });
     app.get(`${prefix}/kats/:id/export`, async (c) => {
       limit(limits.read, c.get("accountId"));
       const mind = await talkable(c.req.param("contract")).exportMind(
