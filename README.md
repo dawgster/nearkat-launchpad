@@ -472,7 +472,7 @@ a reader should know which guarantees have been exercised.
   token wallets, lending and rentals, history import, the art, dataset
   collections, the training app and model tokens.
   Diff: `git diff pre-hackathon..main`
-  (<https://github.com/dawgster/nearkatnft/compare/pre-hackathon...main>).
+  (<https://github.com/dawgster/nearkat-launchpad/compare/pre-hackathon...main>).
 - **NEAR integration.** Listed in [NEAR techniques used](#near-techniques-used).
   Testnet only.
 - **Libraries.**
