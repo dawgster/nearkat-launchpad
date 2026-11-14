@@ -22,6 +22,7 @@ federated learning: the data stays sealed and only vetted code may open it.
 | Demo video | <https://youtu.be/Zb-o5v76MYE> |
 | Short explainer video | <https://youtu.be/Yl03G_zljwY> |
 | Live demo (testnet) | <https://web-production-bffc5.up.railway.app/collections> |
+| Talk to a nearkat (testnet) | <https://web-production-bffc5.up.railway.app/>: connect a testnet wallet, press **Mint a kat**, and chat with it on its page |
 | Contracts (testnet) | launchpad `pad.pals-c0b7a5.testnet`, dataset `hotdogs.pad.pals-c0b7a5.testnet`, characters `nft2.pals-c0b7a5.testnet` |
 | Try it without a wallet | [Check the live deployment from a terminal](#1-check-the-live-deployment-from-a-terminal-no-wallet) |
 | Run everything locally | [Run the whole thing locally](#3-run-the-whole-thing-locally) |
