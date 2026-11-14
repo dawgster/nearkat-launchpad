@@ -124,9 +124,11 @@ deploying to Phala (not done yet) is in `docs/demo/phala.md`.
 - **What was tested against what.** Most tests run against stand-ins: a local
   NEAR sandbox and a mock MPC contract that does the real key maths. The key
   derivation is also checked live against testnet's MPC (`npm run live-check`
-  in `keeper/`). Nothing has been deployed to Phala yet: the dataset keeper
-  and the training app have only run locally and in tests, and
-  `docs/demo/phala.md` is the plan for deploying them, not a record of it.
+  in `keeper/`). The dataset flow has also run end to end on testnet, in local
+  mode: 200 samples launched and sealed, 150 rented, a model trained, minted
+  as a token and opened again from it. Nothing has been deployed to Phala yet,
+  so no run has had the privacy guarantee, and `docs/demo/phala.md` is the
+  plan for deploying there, not a record of it.
 
 ## Hackathon
 

@@ -106,7 +106,11 @@ The NEAR key derives from the root secret. It must be a **full-access** key on
 `TRAINER_ACCOUNT_ID`, because `record_training` and `mint_model` take deposits
 (0.1 NEAR attached to each call, most of it refunded; a model token's storage
 costs about 0.02 NEAR) and `register_app_key` must be signed by the key it
-registers. The account also pays for the FastFS upload of each sealed model. On start the app
+registers. The account also pays for the FastFS upload of each sealed model.
+Keep at least 3 NEAR on it: each `request_sample_keys` call prepays 300 Tgas,
+which holds about 0.2 NEAR until the refund, and five go out at once. With
+less, some are refused and the run fails while getting keys
+("InvalidTransactionError"). On start the app
 prints the key; add it with:
 
     near account add-key TRAINER_ACCOUNT_ID grant-full-access use-manually ed25519:<key> \

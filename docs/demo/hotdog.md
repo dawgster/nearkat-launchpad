@@ -68,13 +68,14 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    (it prints what each holder was paid; run again after a failure and it only
    tops up to 150), or skip to the recorded run.
 3. **Train.** Press "Train on 150 rented samples". Show the attestation and key
-   requests on-chain, then the progress for under a minute. Accuracy appears
-   (expect about 90% on the 50 held-out images: a linear SVM on frozen
-   MobileNetV3-Large features), the run is recorded on-chain, and the model
-   (about 12 MB) downloads. The last step, "Sealing the model as a token",
-   takes about 15 more seconds (one MPC request, one FastFS upload, one
-   mint). *Fallback:* if
-   training stalls past 90 seconds, say so, switch to `<recorded-run-url>`, and
+   requests on-chain, then the progress. Measured on testnet on 14 Nov (local
+   mode): about a minute to get the 150 keys and load the samples, then about
+   40 seconds to train, record the run and seal the model as a token (one MPC
+   request, one FastFS upload, one mint). Accuracy appears (expect about 90%
+   on the 50 held-out images: a linear SVM on frozen MobileNetV3-Large
+   features; that run scored 88%), the run is recorded on-chain, and the model
+   (about 12 MB) downloads. *Fallback:* if
+   training stalls past three minutes, say so, switch to `<recorded-run-url>`, and
    continue with `<model-file>`. If only the token fails ("The model wasn't
    minted as a token"), the run and the download still stand: say so and go on.
 4. **Try it.** Drop a hotdog photo on the page: it says "hotdog". Open a sample's
@@ -84,7 +85,7 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    `model-<run id>`, owned by `<renter>`, with the run, the accuracy and the
    model file's hash from the chain, and no weights in sight. Press "Open the
    model": the training app checks the owner, gets the token's key and rebuilds
-   the file (about 15 seconds), the page checks its hash against the chain, and
+   the file (19 seconds in that run), the page checks its hash against the chain, and
    the same photo says "hotdog" again. Say what is sealed: the classifier the
    run learned, on a public backbone. *Fallback:* if opening stalls, show the
    token's record and its `mint_model` transaction, and skip the photo.
