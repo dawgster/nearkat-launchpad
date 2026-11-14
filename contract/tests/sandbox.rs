@@ -1409,6 +1409,107 @@ async fn a_sample_opens_only_for_the_app_it_was_rented_to() -> TestResult {
     .await?;
     assert!(twice.unwrap_err().contains("already used"));
 
+    // The run's model is a token too. Its key is the one for its own path,
+    // different from every sample's, and comes only to the app that trained it.
+    let bob_asks = call_gas(
+        &env,
+        &env.bob,
+        "request_model_key",
+        json!({ "run_id": "run-1", "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await?;
+    assert!(bob_asks
+        .unwrap_err()
+        .contains("Only a registered training app"));
+    let response = call_gas(
+        &env,
+        trainer,
+        "request_model_key",
+        json!({ "run_id": "run-1", "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await??;
+    assert_eq!(response.as_array().unwrap().len(), 1);
+    let model_key = decrypt(&response[0], trainer_secret);
+    assert_is_the_key_for(
+        model_key,
+        &mpc_public_key,
+        &collection,
+        "nearkat/samples/v1/model-run-1",
+    );
+    assert!(!ingest_keys.contains(&model_key));
+
+    // The app mints it to the renter, with its sealed blob; its storage is
+    // paid from the deposit and costs well under the 0.1 NEAR the app attaches.
+    let trainer_before = balance(&env, trainer.id.as_str()).await?;
+    let model = call_gas(
+        &env,
+        trainer,
+        "mint_model",
+        json!({ "run_id": "run-1", "sealed_hash": hash_b64(7), "sealed_ref": "fastfs:model" }),
+        NearToken::from_millinear(100),
+        100,
+    )
+    .await??;
+    assert_eq!(model["token_id"], "model-run-1");
+    assert_eq!(model["owner_id"], json!(env.bob.id));
+    assert_eq!(model["app_id"], "app-a");
+    assert_eq!(model["model_sha256"], "ab".repeat(32));
+    assert_eq!(model["token_count"], 2);
+    let paid = trainer_before - balance(&env, trainer.id.as_str()).await?;
+    assert!(
+        paid < NearToken::from_millinear(30).as_yoctonear(),
+        "mint_model cost {paid}"
+    );
+    let token: Value = env
+        .contract
+        .call_function("nft_token", json!({ "token_id": "model-run-1" }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    assert_eq!(token["owner_id"], json!(env.bob.id));
+    assert_eq!(token["metadata"]["title"], "Model run-1");
+    // The dataset is no bigger for it, and the model is not a sample.
+    assert_eq!(minted(&env).await?, SAMPLES);
+    let twice = call_gas(
+        &env,
+        trainer,
+        "mint_model",
+        json!({ "run_id": "run-1", "sealed_hash": hash_b64(7), "sealed_ref": "fastfs:model" }),
+        NearToken::from_millinear(100),
+        100,
+    )
+    .await?;
+    assert!(twice.unwrap_err().contains("already has its model token"));
+
+    // It changes hands like any token, and the app can still get its key, to
+    // open it for the new owner.
+    transfer(&env, &env.bob, &env.alice, "model-run-1").await??;
+    let models: Value = env
+        .contract
+        .call_function("get_models", json!({ "from": 0, "limit": 10 }))
+        .read_only::<Value>()
+        .fetch_from(&env.network)
+        .await?
+        .data;
+    assert_eq!(models.as_array().unwrap().len(), 1);
+    assert_eq!(models[0]["owner_id"], json!(env.alice.id));
+    assert_eq!(models[0]["renter_id"], json!(env.bob.id));
+    let response = call_gas(
+        &env,
+        trainer,
+        "request_model_key",
+        json!({ "run_id": "run-1", "app_public_key": trainer_public }),
+        NearToken::from_yoctonear(0),
+        300,
+    )
+    .await??;
+    assert_eq!(decrypt(&response[0], trainer_secret), model_key);
+
     // A whole batch of 50 is lent and rented in one call each: the events fit
     // NEAR's log limit.
     let batch: Vec<String> = (3..=52).map(|i| i.to_string()).collect();

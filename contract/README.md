@@ -64,6 +64,22 @@ spends it, it reads as `over` everywhere, so the sample can change hands, be
 listed again, and anyone can clear the record (the lender gets the storage
 back).
 
+**Model tokens.** A training run's model is a token of the dataset it was
+trained on, `model-<run_id>` (samples' ids are numbers, and `minted` counts
+only them). The app that recorded the run asks for the token's key with
+`request_model_key({ run_id, app_public_key })`: the MPC network's key for the
+path `nearkat/samples/v1/model-<run_id>`, given to no other app, before the
+token exists (to seal the model) and after (to open it for its owner). It
+then calls `mint_model({ run_id, sealed_hash, sealed_ref })`, once a run,
+attaching the token's storage (about 0.02 NEAR; the rest is refunded): the
+token goes to the run's renter, with the sealed blob's SHA-256 and FastFS ref.
+`get_model({ token_id })` and `get_models({ from, limit })` show a model with
+its run (app, renter, `model_sha256`, accuracy) and current owner;
+`get_sample` is None for one. A model changes hands like any token, but can't
+be lent as a sample. The chain decides which app gets the key; that the app
+opens the model only for the token's owner rests on the app's attested code.
+Event: `model_minted`.
+
 **History import.** `collection.history_import` (default false) lets owners
 teach their token from their ChatGPT or Claude history; the keeper refuses
 imports otherwise. It's fixed at deployment and kept under its own storage

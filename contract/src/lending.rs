@@ -261,6 +261,10 @@ impl Contract {
                 format!("Sample {token_id} is listed twice")
             );
             require!(
+                !crate::dataset::is_model_token(token_id),
+                format!("{token_id} is a model, which can't be lent as a sample")
+            );
+            require!(
                 self.owner_of(token_id) == owner_id,
                 "Only the owner can lend a sample"
             );

@@ -3245,4 +3245,218 @@ mod sample_loans {
         let bytes: usize = get_logs().iter().map(|l| l.len()).sum();
         assert!(bytes < 16_384, "borrow_many logged {bytes} bytes");
     }
+
+    // ---- A run's model is a token, sealed like a sample ----
+
+    const MODEL_DEPOSIT: NearToken = NearToken::from_millinear(50);
+
+    /// Run `run-1` recorded on samples 1 and 2, and its model minted.
+    fn with_model() -> Contract {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1", "2"]);
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+        c
+    }
+
+    #[test]
+    fn a_runs_model_is_minted_to_the_renter() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1", "2"]);
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        let view = c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+        assert_eq!(view.token_id, "model-run-1");
+        assert_eq!(view.run_id, "run-1");
+        assert_eq!(view.owner_id, acc("bob.near"));
+        assert_eq!(view.renter_id, acc("bob.near"));
+        assert_eq!(view.app_id, "app-one");
+        assert_eq!(view.model_sha256, SHA);
+        assert_eq!(view.accuracy_bps, 9_250);
+        assert_eq!(view.token_count, 2);
+        assert_eq!(view.sealed_hash, hash(9));
+        assert_eq!(view.sealed_ref, "model-ref");
+        // The storage is charged, and the rest refunded to the trainer.
+        let refund: u128 = transfers(Some("trainer.near")).iter().sum();
+        assert!(refund > 0 && refund < MODEL_DEPOSIT.as_yoctonear());
+        let logs = get_logs();
+        assert!(logs.iter().any(|l| l.contains("\"nft_mint\"")
+            && l.contains("\"model-run-1\"")
+            && l.contains("\"owner_id\":\"bob.near\"")));
+        assert!(logs.iter().any(|l| l.contains("\"model_minted\"")));
+        assert_eq!(c.get_model("model-run-1".to_string()), Some(view.clone()));
+        assert_eq!(c.get_models(0, 10), vec![view]);
+        assert_eq!(c.get_models(1, 10), vec![]);
+        let token = c.nft_token("model-run-1".to_string()).unwrap();
+        assert_eq!(token.owner_id, acc("bob.near"));
+        let metadata = token.metadata.unwrap();
+        assert_eq!(metadata.title.as_deref(), Some("Model run-1"));
+        assert!(metadata.extra.unwrap().contains(SHA));
+        // It is not a sample, and the dataset is no bigger for it.
+        assert_eq!(c.get_sample("model-run-1".to_string()), None);
+        assert_eq!(c.get_model("1".to_string()), None);
+        assert_eq!(c.get_collection().minted.0, 5);
+    }
+
+    #[test]
+    fn a_model_follows_its_token() {
+        let mut c = with_model();
+        ctx("bob.near", YOCTO);
+        c.nft_transfer(acc("carol.near"), "model-run-1".to_string(), None, None);
+        let view = c.get_model("model-run-1".to_string()).unwrap();
+        assert_eq!(view.owner_id, acc("carol.near"));
+        assert_eq!(view.renter_id, acc("bob.near"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Run run-1 already has its model token")]
+    fn a_run_has_one_model_token() {
+        let mut c = with_model();
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        c.mint_model("run-1".to_string(), hash(8), "other-ref".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "No such run")]
+    fn a_model_needs_a_recorded_run() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Another app trained this run's model")]
+    fn only_the_app_that_trained_mints_the_model() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_B, "other.near", MODEL_DEPOSIT, 0);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Only a registered training app can mint a model")]
+    fn the_renter_cannot_mint_the_model() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        ctx("bob.near", MODEL_DEPOSIT);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "for the model token's storage")]
+    fn minting_a_model_pays_its_storage() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_A, "trainer.near", YOCTO, 0);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "sealed hash must be 32 bytes")]
+    fn a_models_sealed_hash_is_a_sha256() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1"]);
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        c.mint_model(
+            "run-1".to_string(),
+            vec![1u8; 31].into(),
+            "model-ref".to_string(),
+        );
+    }
+
+    /// The derivation paths of the MPC requests the last call made.
+    fn requested_paths() -> Vec<String> {
+        near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .filter(|r| r.receiver_id == acc("v1.signer"))
+            .flat_map(|r| r.actions.iter())
+            .filter_map(|a| match a {
+                near_sdk::mock::MockAction::FunctionCallWeight { args, .. } => {
+                    let v: near_sdk::serde_json::Value =
+                        near_sdk::serde_json::from_slice(args).unwrap();
+                    Some(
+                        v["request"]["derivation_path"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                    )
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_app_that_trained_gets_the_models_key_before_and_after_minting() {
+        let mut c = rented();
+        record(&mut c, "run-1", &["1", "2"]);
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_model_key("run-1".to_string(), APP_KEY.to_string());
+        assert_eq!(requested_paths(), vec!["nearkat/samples/v1/model-run-1"]);
+        as_app(APP_KEY_A, "trainer.near", MODEL_DEPOSIT, 0);
+        c.mint_model("run-1".to_string(), hash(9), "model-ref".to_string());
+        // Long after the rentals ended, and whoever owns the token by then.
+        as_app(
+            APP_KEY_A,
+            "trainer.near",
+            NearToken::from_yoctonear(0),
+            u64::MAX,
+        );
+        let _ = c.request_model_key("run-1".to_string(), APP_KEY.to_string());
+        assert_eq!(requested_paths(), vec!["nearkat/samples/v1/model-run-1"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Another app trained this run's model")]
+    fn another_app_gets_no_model_key() {
+        let mut c = with_model();
+        as_app(APP_KEY_B, "other.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_model_key("run-1".to_string(), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Only a registered training app can request a model's key")]
+    fn the_owner_gets_no_model_key() {
+        let mut c = with_model();
+        ctx("bob.near", NearToken::from_yoctonear(0));
+        let _ = c.request_model_key("run-1".to_string(), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "No such run")]
+    fn no_model_key_without_a_run() {
+        let mut c = rented();
+        as_app(APP_KEY_A, "trainer.near", NearToken::from_yoctonear(0), 0);
+        let _ = c.request_model_key("run-9".to_string(), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "model-run-1 is a model, which can't be lent as a sample")]
+    fn a_model_is_not_lent_as_a_sample() {
+        let mut c = with_model();
+        ctx("bob.near", STORAGE);
+        lend(&mut c, &["model-run-1"], 5, &["app-one"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample model-run-1 is already sealed")]
+    fn the_keeper_cannot_reseal_a_model() {
+        let mut c = with_model();
+        ctx("keeper.near", NearToken::from_yoctonear(0));
+        c.set_samples(vec![("model-run-1".to_string(), hash(1), "x".to_string())]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample model-run-1 is already sealed")]
+    fn the_keeper_gets_no_ingest_key_for_a_model() {
+        let mut c = with_model();
+        ctx("keeper.near", NearToken::from_yoctonear(0));
+        let _ = c.request_ingest_keys(ids(&["model-run-1"]), APP_KEY.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Sample model-run-1: rental ended")]
+    fn a_model_is_not_recorded_as_a_training_sample() {
+        let mut c = with_model();
+        record(&mut c, "run-2", &["model-run-1"]);
+    }
 }

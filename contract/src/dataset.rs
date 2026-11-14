@@ -1,5 +1,10 @@
 //! Dataset collections: each token is one training sample, and every sample
 //! is minted to the creator when the collection launches.
+//!
+//! A training run's model is a token here too. The app that trained it seals
+//! what the run learned under the token's own key, stores it on FastFS and
+//! mints the token (`model-<run_id>`) to the renter. Only that app can get
+//! the key again, to open the model for whoever owns the token.
 
 use near_contract_standards::non_fungible_token::events::NftMint;
 use near_contract_standards::non_fungible_token::metadata::TokenMetadata;
@@ -12,7 +17,7 @@ use crate::apps::require_direct_call;
 use crate::ckd::sample_key_path;
 use crate::kat::{CollectionKind, Kat};
 use crate::lending::log_event;
-use crate::{Contract, ContractExt};
+use crate::{Contract, ContractExt, KAT_STORAGE_RESERVE_BYTES};
 
 /// Raw storage key of a dataset's classes and counts. Under its own key, so
 /// collections from before datasets read as characters with no migration.
@@ -45,6 +50,16 @@ const MAX_RUN_TOKENS_PAGE: u32 = 100;
 const RUN_PREFIX: &[u8] = b"run:";
 const RUN_TOKENS_PREFIX: &[u8] = b"runtok:";
 const SAMPLE_RUNS_PREFIX: &[u8] = b"runs:";
+/// A model token's id is this, then the run that trained it. Samples' ids
+/// are numbers, so the two never collide.
+pub(crate) const MODEL_TOKEN_PREFIX: &str = "model-";
+/// How many model tokens exist, as a u32.
+const MODEL_COUNT_KEY: &[u8] = b"models";
+/// `modelat:<index, little-endian u32>` holds the run id of the model minted
+/// at that position.
+const MODEL_AT_PREFIX: &[u8] = b"modelat:";
+/// Most models `get_models` returns at once.
+const MAX_MODELS_PAGE: u32 = 100;
 /// Gas for `on_sample_keys`, which only reads the results.
 const GAS_FOR_SAMPLE_KEYS: Gas = Gas::from_tgas(10);
 /// An MPC response ({big_y, big_c}) is far below this.
@@ -148,6 +163,44 @@ pub struct RunView {
     pub accuracy_bps: u16,
     pub token_count: u32,
     pub recorded_at: U64,
+}
+
+/// A run's model token: the run it came from, and its sealed blob.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelView {
+    pub token_id: TokenId,
+    pub run_id: String,
+    pub owner_id: AccountId,
+    /// The training app that trained it, the only one that can open it.
+    pub app_id: String,
+    /// Who rented the samples; the token was minted to them.
+    pub renter_id: AccountId,
+    /// SHA-256 of the model file the app hands the owner, as the run recorded it.
+    pub model_sha256: String,
+    pub accuracy_bps: u16,
+    /// How many samples the run is recorded for.
+    pub token_count: u32,
+    /// SHA-256 of the sealed blob on FastFS.
+    pub sealed_hash: Base64VecU8,
+    pub sealed_ref: String,
+    pub recorded_at: U64,
+}
+
+pub(crate) fn model_token_id(run_id: &str) -> TokenId {
+    format!("{MODEL_TOKEN_PREFIX}{run_id}")
+}
+
+pub(crate) fn is_model_token(token_id: &str) -> bool {
+    token_id.starts_with(MODEL_TOKEN_PREFIX)
+}
+
+fn model_at_slot(index: u32) -> Vec<u8> {
+    [MODEL_AT_PREFIX, index.to_le_bytes().as_slice()].concat()
+}
+
+fn model_count() -> u32 {
+    read_raw(MODEL_COUNT_KEY).unwrap_or(0)
 }
 
 impl RunRecord {
@@ -379,6 +432,149 @@ impl Contract {
         run.view(&run_id)
     }
 
+    /// Has the MPC network derive the key of a run's model token, encrypted
+    /// to `app_public_key`, for the training app that recorded the run and
+    /// signed this transaction. The app asks before the token exists, to seal
+    /// the model, and afterwards, to open it for the token's owner. The chain
+    /// controls which app gets the key; that the app opens the model only
+    /// for the owner rests on its attested code. Resolves to
+    /// `on_sample_keys`' answer, with one entry.
+    pub fn request_model_key(&mut self, run_id: String, app_public_key: String) -> Promise {
+        require_direct_call();
+        let app_id = self.require_signer_app("request a model's key");
+        self.require_dataset();
+        self.require_run_of(&run_id, &app_id);
+        self.sample_key_requests(vec![model_token_id(&run_id)], &app_public_key)
+    }
+
+    /// Mints a run's model as the token `model-<run_id>`, to the run's
+    /// renter, and records its sealed blob: its sha256 and FastFS ref. Only
+    /// the training app that recorded the run, once a run. The deposit pays
+    /// the token's storage (about 0.02 NEAR); the rest is refunded.
+    #[payable]
+    pub fn mint_model(
+        &mut self,
+        run_id: String,
+        sealed_hash: Base64VecU8,
+        sealed_ref: String,
+    ) -> ModelView {
+        require_direct_call();
+        let app_id = self.require_signer_app("mint a model");
+        self.require_dataset();
+        let run = self.require_run_of(&run_id, &app_id);
+        let hash: [u8; 32] = sealed_hash
+            .0
+            .try_into()
+            .unwrap_or_else(|_| env::panic_str("sealed hash must be 32 bytes"));
+        require!(
+            (1..=MAX_SAMPLE_REF_LEN).contains(&sealed_ref.len()),
+            "sealed ref must be 1 to 256 bytes"
+        );
+        let token_id = model_token_id(&run_id);
+        require!(
+            self.kats.get(&token_id).is_none(),
+            format!("Run {run_id} already has its model token")
+        );
+        let before = env::storage_usage();
+        let metadata = TokenMetadata {
+            title: Some(format!("Model {run_id}")),
+            description: Some(format!(
+                "A classifier trained on {} rented samples. Its weights are sealed: \
+                 only the training app that made it can open them, for the owner.",
+                run.token_count
+            )),
+            extra: Some(
+                near_sdk::serde_json::json!({
+                    "run_id": run_id,
+                    "app_id": run.app_id,
+                    "model_sha256": run.model_sha256,
+                    "accuracy_bps": run.accuracy_bps,
+                })
+                .to_string(),
+            ),
+            ..Default::default()
+        };
+        self.tokens.internal_mint_with_refund(
+            token_id.clone(),
+            run.renter_id.clone(),
+            Some(metadata),
+            None,
+        );
+        let mut kat = Kat::new(NearToken::from_yoctonear(0));
+        kat.context_hash = Some(hash);
+        kat.context_ref = Some(sealed_ref);
+        kat.context_version = 1;
+        self.kats.insert(token_id.clone(), kat);
+        self.kat_epochs.insert(token_id.clone(), 0);
+        // Written through, so the storage they take is measured below.
+        self.kats.flush();
+        self.kat_epochs.flush();
+        let index = model_count();
+        write_raw(&model_at_slot(index), &run_id);
+        write_raw(MODEL_COUNT_KEY, &(index + 1));
+        let bytes = env::storage_usage().saturating_sub(before) + KAT_STORAGE_RESERVE_BYTES;
+        let cost = env::storage_byte_cost().saturating_mul(u128::from(bytes));
+        let deposit = env::attached_deposit();
+        require!(
+            deposit >= cost,
+            format!("Attach at least {cost} for the model token's storage")
+        );
+        let refund = deposit.saturating_sub(cost);
+        if !refund.is_zero() {
+            Promise::new(env::predecessor_account_id())
+                .transfer(refund)
+                .detach();
+        }
+        NftMint {
+            owner_id: &run.renter_id,
+            token_ids: &[token_id.as_str()],
+            memo: None,
+        }
+        .emit();
+        log_event(
+            "model_minted",
+            near_sdk::serde_json::json!({
+                "token_id": token_id,
+                "run_id": run_id,
+                "app_id": app_id,
+                "owner_id": run.renter_id,
+                "model_sha256": run.model_sha256,
+            }),
+        );
+        self.get_model(token_id)
+            .unwrap_or_else(|| env::panic_str("Model not found"))
+    }
+
+    /// A model token and the run behind it; None for a sample or an unknown token.
+    pub fn get_model(&self, token_id: TokenId) -> Option<ModelView> {
+        let run_id = token_id.strip_prefix(MODEL_TOKEN_PREFIX)?;
+        let kat = self.kats.get(&token_id)?;
+        let owner_id = self.tokens.owner_by_id.get(&token_id)?;
+        let run = read_run(run_id)?;
+        Some(ModelView {
+            token_id: token_id.clone(),
+            run_id: run_id.to_string(),
+            owner_id,
+            app_id: run.app_id,
+            renter_id: run.renter_id,
+            model_sha256: run.model_sha256,
+            accuracy_bps: run.accuracy_bps,
+            token_count: run.token_count,
+            sealed_hash: kat.context_hash?.to_vec().into(),
+            sealed_ref: kat.context_ref.clone()?,
+            recorded_at: U64(run.recorded_at),
+        })
+    }
+
+    /// A page of the collection's models, in the order minted; at most 100.
+    pub fn get_models(&self, from: u32, limit: u32) -> Vec<ModelView> {
+        let end = model_count().min(from.saturating_add(limit.min(MAX_MODELS_PAGE)));
+        (from..end)
+            .filter_map(|index| read_raw::<String>(&model_at_slot(index)))
+            .filter_map(|run_id| self.get_model(model_token_id(&run_id)))
+            .collect()
+    }
+
     pub fn get_run(&self, run_id: String) -> Option<RunView> {
         read_run(&run_id).map(|run| run.view(&run_id))
     }
@@ -444,7 +640,11 @@ impl Contract {
         }
     }
 
+    /// A sample and its sealed blob; None for a model token (see `get_model`).
     pub fn get_sample(&self, token_id: TokenId) -> Option<SampleView> {
+        if is_model_token(&token_id) {
+            return None;
+        }
         let kat = self.kats.get(&token_id)?;
         let owner_id = self.tokens.owner_by_id.get(&token_id)?;
         Some(SampleView {
@@ -500,6 +700,13 @@ impl Contract {
         self.signer_app().unwrap_or_else(|| {
             env::panic_str(&format!("Only a registered training app can {action}"))
         })
+    }
+
+    /// The run, which `app_id` must have recorded.
+    fn require_run_of(&self, run_id: &str, app_id: &str) -> RunRecord {
+        let run = read_run(run_id).unwrap_or_else(|| env::panic_str("No such run"));
+        require!(run.app_id == app_id, "Another app trained this run's model");
+        run
     }
 
     fn require_rental(&self, token_id: &TokenId, app_id: &str, renter_id: Option<&AccountId>) {
