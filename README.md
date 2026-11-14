@@ -21,7 +21,7 @@ federated learning: the data stays sealed and only vetted code may open it.
 | Hackathon | NEAR Hackathon 2026, tracks **Privacy & Private AI** and **NFTs That Do Something** |
 | Demo video | <https://youtu.be/Zb-o5v76MYE> |
 | Short explainer video | <https://youtu.be/Yl03G_zljwY> |
-| Live demo (testnet) | <https://web-production-bffc5.up.railway.app/?demo=hotdogs.pad.pals-c0b7a5.testnet> |
+| Live demo (testnet) | <https://web-production-bffc5.up.railway.app/collections> |
 | Contracts (testnet) | launchpad `pad.pals-c0b7a5.testnet`, dataset `hotdogs.pad.pals-c0b7a5.testnet`, characters `nft2.pals-c0b7a5.testnet` |
 | Try it without a wallet | [Check the live deployment from a terminal](#1-check-the-live-deployment-from-a-terminal-no-wallet) |
 | Run everything locally | [Run the whole thing locally](#3-run-the-whole-thing-locally) |
@@ -143,12 +143,14 @@ The same accounts in an explorer:
 
 ### 2. In the browser (testnet wallet with about 2 NEAR)
 
-Open <https://web-production-bffc5.up.railway.app/?demo=hotdogs.pad.pals-c0b7a5.testnet>.
-The `?demo=` part adds a guide bar that walks through these steps.
+Open <https://web-production-bffc5.up.railway.app/collections>. For a guide bar
+that walks through these steps, open
+<https://web-production-bffc5.up.railway.app/?demo=hotdogs.pad.pals-c0b7a5.testnet>
+instead.
 
 | Do | See |
 | --- | --- |
-| Open **Collections** | The home character collection and every launch, including the Hotdogs dataset |
+| On the **Collections** page | The home character collection and every launch, including the Hotdogs dataset |
 | Open the Hotdogs collection | 200 samples as sealed tiles: class counts, no picture anywhere |
 | Open a model under **Models** | Its run from the chain: samples used, accuracy, the model file's hash. No weights |
 | Connect a wallet. In **Rent samples** pick the app, enter 2 or more, press Rent | One wallet confirmation; each holder is paid 0.01 NEAR per sample in the same transaction |
