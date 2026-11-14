@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import type { Stage } from "../lib/art.ts";
 import type { LoanTraining, LoanView, RunView } from "../lib/contract.ts";
 import { formatNear, shorten } from "../lib/format.ts";
@@ -27,6 +28,7 @@ export function SamplePanel({
   runs,
   runCount,
   labels,
+  modelPaths = {},
 }: {
   name: string;
   seed: string;
@@ -37,6 +39,8 @@ export function SamplePanel({
   /** How many runs the contract counts; may exceed what was read. */
   runCount: number;
   labels: Record<string, string>;
+  /** By run id: the page of the token a run's model was minted as, for runs that have one. */
+  modelPaths?: Record<string, string>;
 }) {
   const stage = Math.min(3, runCount) as Stage;
   const current = loan && loan.status !== "over" ? loan : null;
@@ -123,6 +127,13 @@ export function SamplePanel({
                   model <span className="font-mono">{shorten(run.model_sha256, 8)}</span>, rented by{" "}
                   <span className="font-mono">{run.renter_id}</span>
                 </p>
+                {modelPaths[run.run_id] && (
+                  <p className="mt-1 text-xs">
+                    <Link className="text-glow underline" to={modelPaths[run.run_id] as string}>
+                      Its model is a token
+                    </Link>
+                  </p>
+                )}
               </li>
             ))}
           </ul>

@@ -42,7 +42,8 @@ so first run `cargo near build non-reproducible-wasm` in `../contract` and in
 | `/kat/:id/verify` | What the browser can check about the kat and its keeper, including a Phala keeper's TDX quote |
 | `/launch` | The launchpad: launch a collection with its own prompt (shown when `VITE_FACTORY_ID` is set) |
 | `/c/:contract` | A collection: its public prompt and starter, who can open minds, whether this app's keeper serves it, and minting |
-| `/c/:contract/kat/:id` | Talk to a token of a launched collection |
+| `/c/:contract/kat/:id` | Talk to a token of a launched collection; for a dataset, a sample's rentals and runs |
+| `/c/:contract/kat/model-:run` | A model trained on a dataset and minted as a token: its run and hashes from the chain, and, for its owner, the model itself, opened by the training app that made it |
 | `/c/:contract/kat/:id/verify` | Verify it, including whether the contract has attested the keeper's key |
 
 ## Notes

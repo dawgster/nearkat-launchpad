@@ -90,11 +90,19 @@ test("trains and tries a model", async ({ page, browser }) => {
   const progress = train.getByRole("list", { name: "Progress" });
   await expect(progress.getByText("epoch 1 of 1")).toBeVisible({ timeout: 300_000 });
   const record = train.getByRole("region", { name: "On-chain record" });
-  await expect(record).toContainText("recorded for 4 samples", { timeout: 120_000 });
+  // The record shows once the run is done: recorded, and its model minted as a token.
+  await expect(record).toContainText("recorded for 4 samples", { timeout: 180_000 });
   await expect(record).toContainText("The model's hash matches the one recorded");
   await expect(record).toContainText(process.env.E2E_TRAINER_KEY as string);
   await expect(record).toContainText("trusted for this app");
   await expect(train.getByRole("button", { name: /^Train on/ })).toHaveCount(0);
+
+  // The model is minted to the renter as a token of the collection, its weights sealed.
+  await expect(progress.getByText("Sealing the model as a token")).toBeVisible();
+  const token = train.getByRole("region", { name: "Model token" });
+  await expect(token).toContainText(/minted to you as token model-run-[0-9a-f]{12}/);
+  await expect(token).toContainText("names this model's hash", { timeout: 60_000 });
+  await expect(token).toContainText(process.env.E2E_BOB_ID as string);
 
   // The model downloads, and runs in the browser.
   const [download] = await Promise.all([
@@ -113,10 +121,56 @@ test("trains and tries a model", async ({ page, browser }) => {
   await expect(verdict).toContainText(/hotdog|not hotdog/, { timeout: 30_000 });
   await expect(verdict).toContainText(/\d+% sure/);
   await expect(train.getByRole("img", { name: "What you dropped" })).toBeVisible();
+
+  // The token's page: what the contract recorded, and the model itself for its owner. The
+  // training app gets the token's key, puts the model together again, and the page holds
+  // the file to the hash on-chain before running it.
+  await token.getByRole("link", { name: "Open the token's page" }).click();
+  await expect(renter.getByRole("heading", { level: 1 })).toHaveText(/^Model run-[0-9a-f]{12}$/);
+  const modelPath = new URL(renter.url()).pathname;
+  expect(modelPath).toMatch(
+    new RegExp(`^/c/${contract.replaceAll(".", "\\.")}/kat/model-run-[0-9a-f]{12}$`),
+  );
+  const about = renter.getByRole("region", { name: "The model", exact: true });
+  await expect(about).toContainText("4 rented samples");
+  await expect(about).toContainText(`(${TRAINER_APP_ID})`);
+  await expect(renter.getByTestId("model-sealed-ref")).toHaveText(/^fastfs:/);
+  const opening = renter.getByRole("region", { name: "Open the model" });
+  await opening.getByRole("button", { name: "Open the model" }).click();
+  await expect(opening.getByText("The file matches the hash recorded on-chain")).toBeVisible({
+    timeout: 180_000,
+  });
+  await expect(opening.getByText(/Held-out accuracy in your browser: \d+%/)).toBeVisible({
+    timeout: 60_000,
+  });
+  await opening.getByLabel("Choose a photo").setInputFiles(resolve(FIXTURES, "hotdog/1.jpg"));
+  await expect(opening.getByRole("status", { name: "Verdict" })).toContainText(/\d+% sure/, {
+    timeout: 30_000,
+  });
+
+  // The collection lists it, and the renter holds it as a token, apart from any samples.
+  await renter.getByRole("link", { name: "Back to Trainset" }).click();
+  const models = renter.getByRole("list", { name: "Minted models" });
+  await expect(models.getByRole("link", { name: /Model run-[0-9a-f]{12}/ })).toHaveCount(1);
+  await expect(
+    renter
+      .getByRole("region", { name: "Yours" })
+      .getByRole("link", { name: /Model run-[0-9a-f]{12}/ }),
+  ).toHaveCount(1);
+  // The model is not offered for rent as if it were a sample.
+  await expect(renter.getByRole("region", { name: "List your samples" })).toContainText(
+    "You have no samples free to list.",
+  );
   await renter.close();
 
+  // Anyone else sees the model's record, but only its owner can open it.
+  await connect(page, `${ALICE_URL}${modelPath}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Model run-[0-9a-f]{12}$/);
+  await expect(page.getByTestId("model-closed")).toHaveText("Only its owner can open it.");
+  await expect(page.getByRole("button", { name: "Open the model" })).toHaveCount(0);
+
   // The lender withdraws the 2 offers nobody rented.
-  await page.reload();
+  await connect(page, `${ALICE_URL}/c/${contract}`);
   const relist = page.getByRole("region", { name: "List your samples" });
   await relist.getByRole("button", { name: "Withdraw your 2 offers" }).click();
   await expect(relist.getByText("Withdrew the offers on 2 samples.")).toBeVisible({

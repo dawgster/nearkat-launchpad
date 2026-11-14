@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  isModelToken,
   KatContract,
   LOAN_STORAGE_DEPOSIT,
+  type ModelView,
+  modelTokenOf,
   PartialBatchError,
   pickRentable,
   returnValue,
@@ -290,5 +293,155 @@ describe("katsOf", () => {
     const ids = await new KatContract(near as never, "set.near").katsOf("creator.near");
     expect(ids).toEqual(owned.map((t) => t.token_id));
     expect(calls.map((c) => c.from_index)).toEqual(froms);
+  });
+});
+
+describe("models", () => {
+  const model = (n: number): ModelView => ({
+    token_id: `model-run-${n}`,
+    run_id: `run-${n}`,
+    owner_id: "renter.near",
+    app_id: "app-a",
+    renter_id: "renter.near",
+    model_sha256: "ab".repeat(32),
+    accuracy_bps: 9000,
+    token_count: 150,
+    sealed_hash: "c2VhbGVk",
+    sealed_ref: `fastfs:trainer.near:${"a".repeat(64)}:${"1".repeat(44)}`,
+    recorded_at: "1700000000000000000",
+  });
+
+  test("a model's token is named after its run, and told apart from samples by its id", () => {
+    expect(modelTokenOf("run-0a1b2c3d4e5f")).toBe("model-run-0a1b2c3d4e5f");
+    expect(isModelToken("model-run-0a1b2c3d4e5f")).toBe(true);
+    expect(isModelToken("17")).toBe(false);
+  });
+
+  test("reads one model, and null for a sample", async () => {
+    const calls: Array<[string, object]> = [];
+    const near = {
+      view: async (_id: string, method: string, args: { token_id: string }) => {
+        calls.push([method, args]);
+        return args.token_id === "model-run-1" ? model(1) : null;
+      },
+    };
+    const contract = new KatContract(near as never, "set.near");
+    expect(await contract.getModel("model-run-1")).toEqual(model(1));
+    expect(await contract.getModel("7")).toBeNull();
+    expect(calls[0]).toEqual(["get_model", { token_id: "model-run-1" }]);
+  });
+
+  test.each([
+    [0, [0]],
+    [3, [0]],
+    [100, [0, 100]],
+    [250, [0, 100, 200]],
+  ])("reads all %i models, a page of 100 at a time", async (n, froms) => {
+    const all = Array.from({ length: n }, (_, i) => model(i));
+    const calls: Array<{ from: number; limit: number }> = [];
+    const near = {
+      view: async (_id: string, method: string, args: { from: number; limit: number }) => {
+        if (method !== "get_models") {
+          throw new Error(method);
+        }
+        calls.push(args);
+        return all.slice(args.from, args.from + args.limit);
+      },
+    };
+    expect(await new KatContract(near as never, "set.near").getModels()).toEqual(all);
+    expect(calls.map((call) => call.from)).toEqual(froms);
+    expect(calls.every((call) => call.limit === 100)).toBe(true);
+  });
+
+  test("a collection whose code predates models has none", async () => {
+    const near = {
+      view: async () => {
+        throw new Error("MethodResolveError(MethodNotFound)");
+      },
+    };
+    const contract = new KatContract(near as never, "old.near");
+    expect(await contract.getModels()).toEqual([]);
+    expect(await contract.getModel("model-run-1")).toBeNull();
+  });
+
+  test("any other failure reading models is passed on", async () => {
+    const near = {
+      view: async () => {
+        throw new Error("Too many requests");
+      },
+    };
+    const contract = new KatContract(near as never, "set.near");
+    await expect(contract.getModels()).rejects.toThrow("Too many requests");
+    await expect(contract.getModel("model-run-1")).rejects.toThrow("Too many requests");
+  });
+
+  // An owner's tokens as the standard returns them: by id as text, so models come last.
+  const ownerNear = (ids: string[]) => ({
+    view: async (_id: string, method: string, args: { from_index: string; limit: number }) => {
+      if (method === "nft_supply_for_owner") {
+        return String(ids.length);
+      }
+      if (method !== "nft_tokens_for_owner") {
+        throw new Error(method);
+      }
+      const from = Number(args.from_index);
+      return ids.slice(from, from + args.limit).map((token_id) => ({ token_id }));
+    },
+  });
+
+  test("an owner's tokens: samples by number, then the models they hold", async () => {
+    const contract = new KatContract(
+      ownerNear(["10", "2", "model-run-b", "33", "model-run-a"]) as never,
+      "set.near",
+    );
+    expect(await contract.katsOf("me.near")).toEqual([
+      "2",
+      "10",
+      "33",
+      "model-run-a",
+      "model-run-b",
+    ]);
+  });
+
+  test("an owner's samples leave out the models they hold", async () => {
+    const contract = new KatContract(
+      ownerNear(["10", "2", "model-run-b", "33"]) as never,
+      "set.near",
+    );
+    expect(await contract.samplesOf("me.near")).toEqual(["2", "10", "33"]);
+  });
+
+  test("offers and rentals never read a model token's loan", async () => {
+    const asked: string[] = [];
+    const near = {
+      view: async (
+        _id: string,
+        method: string,
+        args: { token_id?: string; from_index?: string },
+      ) => {
+        if (method === "nft_tokens") {
+          return args.from_index === "0"
+            ? [
+                { token_id: "1", owner_id: "lender.near" },
+                { token_id: "model-run-1", owner_id: "me.near" },
+              ]
+            : [];
+        }
+        asked.push(`${method}:${args.token_id}`);
+        if (method === "get_loan") {
+          return { status: "offered", lender_id: "lender.near", borrower_id: null, fee: "5" };
+        }
+        if (method === "get_loan_training") {
+          return { apps: ["a"], app_id: null, spent: false };
+        }
+        throw new Error(method);
+      },
+    };
+    const contract = new KatContract(near as never, "set.near");
+    expect(await contract.sampleOffers()).toEqual([
+      { tokenId: "1", fee: 5n, lender: "lender.near", apps: ["a"] },
+    ]);
+    expect(await contract.rentalsOf("me.near")).toEqual([]);
+    expect(asked.some((call) => call.includes("model-"))).toBe(false);
   });
 });

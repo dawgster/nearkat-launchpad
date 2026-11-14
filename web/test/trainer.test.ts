@@ -38,6 +38,32 @@ test("downloads the model's bytes", async () => {
   expect(await trainer.model(session, "run-1")).toEqual(new Uint8Array([1, 2, 3]));
 });
 
+test("asks for a model token's file with the session's token", async () => {
+  const fetchImpl = vi.fn(
+    async (_url: string, _init?: RequestInit) => new Response(new Uint8Array([4, 5, 6])),
+  );
+  const trainer = createTrainer("http://t.example/", fetchImpl as unknown as typeof fetch);
+  expect(await trainer.tokenModel(session, "set.c.near", "model-run-0a1b2c3d4e5f")).toEqual(
+    new Uint8Array([4, 5, 6]),
+  );
+  const [url, init] = fetchImpl.mock.calls[0] ?? [];
+  expect(url).toBe("http://t.example/models/set.c.near/model-run-0a1b2c3d4e5f");
+  expect(init?.method).toBe("GET");
+  expect((init?.headers as Record<string, string> | undefined)?.authorization).toBe("Bearer tok");
+});
+
+test("passes on why the training app won't open a model token", async () => {
+  const fetchImpl = async () =>
+    Response.json(
+      { error: "forbidden", message: "Only the token's owner may open the model" },
+      { status: 403 },
+    );
+  const trainer = createTrainer("http://t.example", fetchImpl as unknown as typeof fetch);
+  const refused = trainer.tokenModel(session, "set.c.near", "model-run-1");
+  await expect(refused).rejects.toBeInstanceOf(KeeperError);
+  await expect(refused).rejects.toThrow("Only the token's owner may open the model");
+});
+
 test("a rejected token signs the renter in again and the run starts on the second try", async () => {
   sessionStorage.clear();
   let issued = 0;

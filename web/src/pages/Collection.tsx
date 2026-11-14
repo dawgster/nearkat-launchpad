@@ -6,9 +6,9 @@ import { MintPanel } from "../components/MintPanel.tsx";
 import { RentPanel } from "../components/RentPanel.tsx";
 import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
-import { RentalsUnavailable, type TrainerAccess, TrainPanel } from "../components/TrainPanel.tsx";
+import { RentalsUnavailable, TrainPanel } from "../components/TrainPanel.tsx";
 import { PLAIN_STAGE_NAMES, STAGE_NAMES, stageOf } from "../lib/art.ts";
-import { KatContract } from "../lib/contract.ts";
+import { isModelToken, KatContract, MODEL_PREFIX } from "../lib/contract.ts";
 import { formatNear, shorten } from "../lib/format.ts";
 import {
   type Terms as CollectionTerms,
@@ -17,11 +17,10 @@ import {
   type TeeRequirement,
 } from "../lib/launchpad.ts";
 import { describeProblem } from "../lib/problems.ts";
-import { KeeperSession } from "../lib/session.ts";
-import { createTrainer } from "../lib/trainer.ts";
 import { useAsync } from "../lib/useAsync.ts";
 import { ViewCache } from "../lib/viewCache.ts";
-import { SIGN_IN_MESSAGE, useServices } from "../services.tsx";
+import { useServices } from "../services.tsx";
+import { useTrainers } from "../trainers.ts";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
 function Privacy({ tee }: { tee: TeeRequirement | null }) {
@@ -338,6 +337,8 @@ export function Collection() {
           {tokens.status === "ready" && tokens.data.length > 0 && (
             <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {tokens.data.map(({ id, version }) => {
+                // A dataset's models are tokens too, named after their run.
+                const isModel = dataset !== null && isModelToken(id);
                 const art = (
                   <>
                     <TokenArt
@@ -348,12 +349,14 @@ export function Collection() {
                       size={72}
                       decorative
                     />
-                    <span>
-                      <span className="block font-bold">
-                        {c.name} #{id}
+                    <span className="min-w-0">
+                      <span className="block break-all font-bold">
+                        {isModel ? `Model ${id.slice(MODEL_PREFIX.length)}` : `${c.name} #${id}`}
                       </span>
                       <span className="text-sm text-mist">
-                        {(home ? STAGE_NAMES : PLAIN_STAGE_NAMES)[stageOf(version)]}
+                        {isModel
+                          ? "Trained model, sealed"
+                          : (home ? STAGE_NAMES : PLAIN_STAGE_NAMES)[stageOf(version)]}
                       </span>
                     </span>
                   </>
@@ -673,31 +676,7 @@ function DatasetSection({
     accountId ? `rentals/${contractId}/${accountId}` : null,
     () => reader.rentalsOf(accountId as string),
   );
-  const { signMessage } = wallet;
-  // One sign-in per training app, kept for the tab apart from the keeper's.
-  const trainers = useMemo(() => {
-    if (!accountId || !signMessage) {
-      return {};
-    }
-    return Object.fromEntries(
-      Object.entries(config.trainers).map(
-        ([appId, { url, recipient }]): [string, TrainerAccess] => {
-          const trainer = createTrainer(url);
-          const session = new KeeperSession({
-            keeper: trainer,
-            accountId,
-            signMessage,
-            // Each training app signs renters in under its own recipient, so a
-            // sign-in for one service never opens a session with another.
-            expect: { message: SIGN_IN_MESSAGE, recipient },
-            callbackUrl: window.location.origin,
-            scope: `trainer.${appId}`,
-          });
-          return [appId, { trainer, session }];
-        },
-      ),
-    );
-  }, [config, accountId, signMessage]);
+  const trainers = useTrainers(accountId);
   const explorer =
     config.networkId === "sandbox"
       ? null
@@ -706,7 +685,8 @@ function DatasetSection({
   const [mine, reloadMine] = useAsync(
     accountId ? `my-samples/${contractId}/${accountId}` : null,
     async () => {
-      const ids = await reader.katsOf(accountId as string);
+      // The account's samples only: a model it holds is a token too, but can't be rented out.
+      const ids = await reader.samplesOf(accountId as string);
       const statuses = await Promise.all(
         ids.map(async (id) => [id, (await reader.getLoan(id))?.status] as const),
       );
@@ -718,8 +698,10 @@ function DatasetSection({
       };
     },
   );
+  const [models, reloadModels] = useAsync(`models/${contractId}`, () => reader.getModels());
   const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
   const signer = wallet.near && accountId ? new KatContract(wallet.near, contractId) : null;
+  const tokenPath = (tokenId: string) => `/c/${contractId}/kat/${tokenId}`;
 
   return (
     <>
@@ -829,14 +811,67 @@ function DatasetSection({
           trainers={trainers}
           getRun={(runId) => reader.getRun(runId)}
           getAppKey={(publicKey) => reader.getAppKey(publicKey)}
+          getModel={(tokenId) => reader.getModel(tokenId)}
+          tokenPath={tokenPath}
           txUrl={(hash) => (explorer ? `${explorer}${hash}` : null)}
           onFinished={() => {
             reader.forget();
             void reloadRentals();
             void reloadOffers();
+            void reloadModels();
           }}
         />
       )}
+      <section className="card" aria-labelledby="models">
+        <h2 id="models" className="card-title flex items-center gap-2">
+          <Icon name="lock" size={18} className="text-mist" />
+          Models
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          A model trained on these samples is minted to whoever rented them, as a token of this
+          collection. What it learned is sealed like the samples: only the training app that made it
+          can open it, for the token's owner.
+        </p>
+        {models.status === "loading" && (
+          <p className="mt-3 text-sm text-mist" role="status">
+            Reading the models…
+          </p>
+        )}
+        {models.status === "error" && (
+          <p className="mt-3 text-sm text-alarm" role="alert">
+            Can't read the models right now. {describeProblem(models.error)}
+          </p>
+        )}
+        {models.status === "ready" && models.data.length === 0 && (
+          <p className="mt-3 text-sm text-mist">No model has been minted here yet.</p>
+        )}
+        {models.status === "ready" && models.data.length > 0 && (
+          <ul className="mt-3 space-y-3" aria-label="Minted models">
+            {models.data.map((model) => (
+              <li key={model.token_id}>
+                <Link
+                  to={tokenPath(model.token_id)}
+                  className="block rounded-xl bg-black/25 p-3.5 text-sm ring-1 ring-cream/8 transition-colors hover:ring-glow/50"
+                >
+                  <span className="block break-all font-bold">Model {model.run_id}</span>
+                  <span className="mt-1 block text-mist">
+                    {(model.accuracy_bps / 100).toFixed(2)}% held-out accuracy, trained on{" "}
+                    {model.token_count} {model.token_count === 1 ? "sample" : "samples"} by{" "}
+                    {labels[model.app_id] ? `${labels[model.app_id]} ` : ""}
+                    <span className="break-all font-mono text-xs">({model.app_id})</span>
+                  </span>
+                  <span className="mt-1 block text-xs text-mist">
+                    owned by{" "}
+                    <span className="font-mono text-cream" title={model.owner_id}>
+                      {shorten(model.owner_id, 12)}
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </>
   );
 }

@@ -93,7 +93,11 @@ test("rehearses the stage demo at full size", async ({ page, browser }) => {
   const record = train.getByRole("region", { name: "On-chain record" });
   await expect(record).toContainText(`recorded for ${RENT} samples`, { timeout: 20 * 60_000 });
   await expect(record).toContainText("The model's hash matches the one recorded");
-  lap("train + record");
+  lap("train + record + mint the model token");
+  const token = train.getByRole("region", { name: "Model token" });
+  await expect(token).toContainText(/minted to you as token model-run-[0-9a-f]{12}/);
+  await expect(token).toContainText("names this model's hash", { timeout: 60_000 });
+  console.log(`[rehearsal] token: ${(await token.innerText()).replaceAll("\n", " | ")}`);
   console.log(`[rehearsal] trainer says: ${(await progress.innerText()).replaceAll("\n", " | ")}`);
   console.log(`[rehearsal] record: ${(await record.innerText()).replaceAll("\n", " | ")}`);
 
@@ -115,6 +119,16 @@ test("rehearses the stage demo at full size", async ({ page, browser }) => {
   const verdict = train.getByRole("status", { name: "Verdict" });
   await expect(verdict).toContainText(/\d+% sure/, { timeout: 30_000 });
   console.log(`[rehearsal] a held-out hotdog photo: ${await verdict.innerText()}`);
+
+  // The model's token: its owner has the training app open it again from its sealed weights.
+  last = Date.now();
+  await token.getByRole("link", { name: "Open the token's page" }).click();
+  const opening = renter.getByRole("region", { name: "Open the model" });
+  await opening.getByRole("button", { name: "Open the model" }).click();
+  await expect(opening.getByText("The file matches the hash recorded on-chain")).toBeVisible({
+    timeout: 5 * 60_000,
+  });
+  lap("open the model from its token");
   await renter.close();
 });
 

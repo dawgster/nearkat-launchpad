@@ -1,7 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { useEffect, useState } from "react";
-import type { AppKeyView, Rental, RunView } from "../lib/contract.ts";
+import { Link } from "react-router";
+import type { AppKeyView, ModelView, Rental, RunView } from "../lib/contract.ts";
+import { saveFile } from "../lib/download.ts";
 import { KeeperError } from "../lib/keeper.ts";
 import type { Classifier, Picture } from "../lib/model.ts";
 import { describeProblem } from "../lib/problems.ts";
@@ -9,17 +11,12 @@ import {
   MIN_TRAIN_SAMPLES,
   type RunState,
   type Stage,
-  type TokenSession,
-  type Trainer,
+  type TrainerAccess,
 } from "../lib/trainer.ts";
 import { Icon } from "./Icon.tsx";
 import { TryModel } from "./TryModel.tsx";
 
-export interface TrainerAccess {
-  trainer: Trainer;
-  /** Signs in to this trainer: one message for the wallet, kept for the tab. */
-  session: TokenSession;
-}
+export type { TrainerAccess };
 
 export interface TrainPanelProps {
   contractId: string;
@@ -32,6 +29,10 @@ export interface TrainPanelProps {
   trainers: Record<string, TrainerAccess>;
   getRun: (runId: string) => Promise<RunView | null>;
   getAppKey: (publicKey: string) => Promise<AppKeyView | null>;
+  /** Reads a model token's record, to check the token the training app says it minted. */
+  getModel?: (tokenId: string) => Promise<ModelView | null>;
+  /** Where a token's page is; the minted model links there. */
+  tokenPath?: (tokenId: string) => string;
   /** A link to a transaction in an explorer, where one covers this network. */
   txUrl?: (hash: string) => string | null;
   pollMs?: number;
@@ -51,6 +52,7 @@ const STEPS: Array<[Exclude<Stage, "failed">, string]> = [
   ["loading", "Loading the samples"],
   ["training", "Training"],
   ["recording", "Recording the run on-chain"],
+  ["minting", "Sealing the model as a token"],
   ["done", "Done"],
 ];
 
@@ -94,17 +96,6 @@ function describe(error: unknown): string {
   return error instanceof KeeperError ? error.message : describeProblem(error);
 }
 
-function saveFile(bytes: Uint8Array, name: string) {
-  const url = URL.createObjectURL(
-    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/octet-stream" }),
-  );
-  const link = Object.assign(document.createElement("a"), { href: url, download: name });
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 type Job =
   | { appId: string; phase: "starting" }
   | { appId: string; phase: "running"; run: RunState; lastStage: Stage; failures: number }
@@ -124,10 +115,17 @@ interface Proof {
   problem: string | null;
 }
 
+/** What the contract shows for the token the training app says it minted. */
+interface Minted {
+  model: ModelView | null;
+  problem: string | null;
+}
+
 /**
  * Trains a model on the samples the account has rented: signs in to the
  * app's trainer, starts the run and follows it, checks the record the run
- * left on-chain, then offers the model to download and to try out here.
+ * left on-chain and the token the model was minted as, then offers the model
+ * to download and to try out here.
  */
 export function TrainPanel({
   contractId,
@@ -137,6 +135,8 @@ export function TrainPanel({
   trainers,
   getRun,
   getAppKey,
+  getModel,
+  tokenPath,
   txUrl,
   pollMs = 1000,
   retryMs = 1000,
@@ -148,6 +148,7 @@ export function TrainPanel({
 }: TrainPanelProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [proof, setProof] = useState<Proof | null>(null);
+  const [minted, setMinted] = useState<Minted | null>(null);
   const [model, setModel] = useState<Uint8Array | null>(null);
   const [modelProblem, setModelProblem] = useState<string | null>(null);
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
@@ -161,6 +162,7 @@ export function TrainPanel({
     }
     setJob({ appId, phase: "starting" });
     setProof(null);
+    setMinted(null);
     setModel(null);
     setModelProblem(null);
     setSaveProblem(null);
@@ -244,6 +246,13 @@ export function TrainPanel({
         current &&
         setProof({ record: null, publicKey: null, appKey: null, problem: describe(error) }),
     );
+    const token = job?.phase === "done" ? job.run.modelToken : undefined;
+    if (token && getModel) {
+      readWithRetry(() => getModel(token), retryMs).then(
+        (found) => current && setMinted({ model: found, problem: null }),
+        (error: unknown) => current && setMinted({ model: null, problem: describe(error) }),
+      );
+    }
     access.trainer.model(access.session, doneId).then(
       (bytes) => current && setModel(bytes),
       (error: unknown) => current && setModelProblem(describe(error)),
@@ -327,6 +336,13 @@ export function TrainPanel({
             </p>
           )}
           <Record run={job.run} proof={proof} txUrl={txUrl} />
+          <ModelToken
+            run={job.run}
+            minted={minted}
+            checked={getModel !== undefined}
+            tokenPath={tokenPath}
+            txUrl={txUrl}
+          />
           {modelProblem && (
             <p role="alert" className="text-sm text-alarm">
               {modelProblem}
@@ -403,8 +419,13 @@ function Progress({ job }: { job: Exclude<Job, { phase: "starting" }> }) {
   return (
     <ol aria-label="Progress" className="mt-4 space-y-1.5 text-sm">
       {STEPS.map(([stage, label], index) => {
-        const state =
-          index < at || job.phase === "done"
+        // A finished run whose model isn't a token: minting failed, or the app doesn't mint.
+        const unminted = stage === "minting" && job.phase === "done" && !run?.modelToken;
+        const state = unminted
+          ? run?.mintProblem
+            ? "failed"
+            : "later"
+          : index < at || job.phase === "done"
             ? "done"
             : index === at
               ? job.phase === "failed"
@@ -514,6 +535,99 @@ function Record({
         >
           View the transaction
         </a>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The token the run's model was minted as, checked against the contract:
+ * the training app says it minted one, the chain says whose it is and which
+ * model it names.
+ */
+function ModelToken({
+  run,
+  minted,
+  checked,
+  tokenPath,
+  txUrl,
+}: {
+  run: RunState;
+  minted: Minted | null;
+  /** Whether the token is read from the contract; without that only the app's word is shown. */
+  checked: boolean;
+  tokenPath: ((tokenId: string) => string) | undefined;
+  txUrl: ((hash: string) => string | null) | undefined;
+}) {
+  if (run.mintProblem) {
+    return (
+      <p
+        role="status"
+        className="flex items-start gap-2 rounded-xl border border-lamp/30 bg-lamp/10 px-3 py-2 text-sm text-lamp"
+      >
+        <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+        <span>
+          The model wasn't minted as a token: {run.mintProblem.replace(/\.$/, "")}. You can still
+          download it here while the training app keeps it.
+        </span>
+      </p>
+    );
+  }
+  const token = run.modelToken;
+  if (!token) {
+    return null;
+  }
+  const link = run.mintTx && txUrl ? txUrl(run.mintTx) : null;
+  const found = minted?.model ?? null;
+  const sameModel = found !== null && found.model_sha256 === run.modelSha256;
+  return (
+    <section
+      aria-label="Model token"
+      className="space-y-2 rounded-xl bg-black/25 p-4 text-sm ring-1 ring-cream/8"
+    >
+      <p className="eyebrow flex items-center gap-2">
+        <Icon name="lock" size={14} />
+        Model token
+      </p>
+      <p>
+        The model was minted to you as token <span className="break-all font-mono">{token}</span>.
+        What the run learned is sealed under the token's own key: only this training app can open
+        it, for whoever owns the token.
+      </p>
+      {checked &&
+        (!minted ? (
+          <p className="text-mist" role="status">
+            Reading the token on-chain…
+          </p>
+        ) : minted.problem ? (
+          <p role="alert" className="text-alarm">
+            Couldn't read the token on-chain: {minted.problem}
+          </p>
+        ) : !found ? (
+          <p role="alert" className="text-alarm">
+            This token isn't on-chain, so the model isn't yours as a token.
+          </p>
+        ) : (
+          <p className={sameModel ? "text-mist" : "text-alarm"}>
+            On-chain it belongs to <span className="break-all font-mono">{found.owner_id}</span>
+            {sameModel
+              ? " and names this model's hash."
+              : ", but names a different model's hash than the training app gave."}
+          </p>
+        ))}
+      {(tokenPath || link) && (
+        <p className="flex flex-wrap gap-x-4 gap-y-1">
+          {tokenPath && (
+            <Link className="text-glow underline" to={tokenPath(token)}>
+              Open the token's page
+            </Link>
+          )}
+          {link && (
+            <a className="text-glow underline" href={link} target="_blank" rel="noreferrer">
+              View the mint transaction
+            </a>
+          )}
+        </p>
       )}
     </section>
   );

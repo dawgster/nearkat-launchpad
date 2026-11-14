@@ -3,7 +3,15 @@ import { KeeperError, type Session, type SignedMessage } from "./keeper.ts";
 /** The fewest samples a training app trains on: it refuses a run on fewer. */
 export const MIN_TRAIN_SAMPLES = 2;
 
-export type Stage = "checking" | "keys" | "loading" | "training" | "recording" | "done" | "failed";
+export type Stage =
+  | "checking"
+  | "keys"
+  | "loading"
+  | "training"
+  | "recording"
+  | "minting"
+  | "done"
+  | "failed";
 
 /** A training run as the training app reports it. It never holds samples or keys. */
 export interface RunState {
@@ -23,6 +31,12 @@ export interface RunState {
   recordTx?: string;
   /** Set when only part of the run could be recorded; says why. */
   partial?: string;
+  /** The token the model was minted as, to the renter, once the run is done. */
+  modelToken?: string;
+  /** The transaction that minted it, when the app knows it. */
+  mintTx?: string;
+  /** Set instead of `modelToken` when the run is done but its model couldn't be minted; says why. */
+  mintProblem?: string;
   error?: string;
 }
 
@@ -49,6 +63,13 @@ export interface TokenSession {
   call<T>(run: (token: string) => Promise<T>): Promise<T>;
 }
 
+/** A training app this deployment knows the address of, and the account's sign-in to it. */
+export interface TrainerAccess {
+  trainer: Trainer;
+  /** Signs in to this trainer: one message for the wallet, kept for the tab. */
+  session: TokenSession;
+}
+
 export interface Trainer {
   attestation(): Promise<TrainerAttestation>;
   info(): Promise<TrainerInfo>;
@@ -60,6 +81,12 @@ export interface Trainer {
   run(id: string): Promise<RunState>;
   /** The trained model's ONNX bytes; only for the renter, once the run is done. */
   model(session: TokenSession, id: string): Promise<Uint8Array>;
+  /**
+   * A model token's ONNX bytes, put together again from its sealed weights;
+   * only for the token's owner, and only from the app that trained it. The
+   * app asks NEAR's MPC network for the key first, so this takes a while.
+   */
+  tokenModel(session: TokenSession, contract: string, tokenId: string): Promise<Uint8Array>;
 }
 
 /** A client for a training app. Errors are `KeeperError`s, so a session renews on a 401. */
@@ -119,6 +146,15 @@ export function createTrainer(baseUrl: string, fetchImpl: typeof fetch = fetch):
     model: (session, id) =>
       session.call(async (token) => {
         const response = await send("GET", `/runs/${encodeURIComponent(id)}/model`, { token });
+        return new Uint8Array(await response.arrayBuffer());
+      }),
+    tokenModel: (session, contract, tokenId) =>
+      session.call(async (token) => {
+        const response = await send(
+          "GET",
+          `/models/${encodeURIComponent(contract)}/${encodeURIComponent(tokenId)}`,
+          { token },
+        );
         return new Uint8Array(await response.arrayBuffer());
       }),
   };

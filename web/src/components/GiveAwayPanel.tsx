@@ -6,6 +6,8 @@ export interface GiveAwayPanelProps {
   katName: string;
   /** What one token is called, as in "this kat lives on mainnet". */
   noun?: string;
+  /** What giving it away means, in place of the words for a character. */
+  note?: string;
   /** The current owner, who cannot give the kat to themselves. */
   ownerId: string;
   network: "mainnet" | "testnet" | "sandbox";
@@ -44,6 +46,7 @@ function objection(
 export function GiveAwayPanel({
   katName,
   noun = "kat",
+  note,
   ownerId,
   network,
   accountExists,
@@ -98,7 +101,7 @@ export function GiveAwayPanel({
         Give away
       </h2>
       <p className="mt-1.5 text-sm text-mist">
-        {katName} keeps its personality, memories and balance. You lose access.
+        {note ?? `${katName} keeps its personality, memories and balance. You lose access.`}
       </p>
       <label htmlFor="receiver" className="sr-only">
         Account to give {katName} to

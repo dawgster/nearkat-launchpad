@@ -1,14 +1,15 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { expect, test, vi } from "vitest";
 import {
   RentalsUnavailable,
   TrainPanel,
   type TrainPanelProps,
 } from "../src/components/TrainPanel.tsx";
-import type { AppKeyView, RunView } from "../src/lib/contract.ts";
+import type { AppKeyView, ModelView, RunView } from "../src/lib/contract.ts";
 import { KeeperError } from "../src/lib/keeper.ts";
 import type { RunState, TokenSession, Trainer } from "../src/lib/trainer.ts";
 
@@ -42,6 +43,7 @@ function fakeTrainer(states: Array<Partial<RunState>>) {
     train: vi.fn(async (session) => session.call(async () => ({ ...base }))),
     run: vi.fn(async () => (queue.length > 1 ? queue.shift() : queue[0]) as RunState),
     model: vi.fn(async (session) => session.call(async () => MODEL)),
+    tokenModel: vi.fn(async (session) => session.call(async () => MODEL)),
   };
   return trainer;
 }
@@ -81,7 +83,12 @@ function setup(trainer: Trainer, overrides: Partial<TrainPanelProps> = {}) {
     heldout: vi.fn(async () => 0.7),
     ...overrides,
   };
-  render(<TrainPanel {...props} />);
+  // The minted model links to its token's page, so the panel sits in a router.
+  render(
+    <MemoryRouter>
+      <TrainPanel {...props} />
+    </MemoryRouter>,
+  );
   return { props, session };
 }
 
@@ -255,4 +262,81 @@ test("says a run needs more than one rented sample instead of offering it", () =
   expect(screen.queryByRole("button", { name: /^Train on/ })).toBeNull();
   expect(screen.getByText(/A run needs at least 2: rent 1 more for this app/)).toBeTruthy();
   expect(trainer.train).not.toHaveBeenCalled();
+});
+
+const mintedModel = (overrides: Partial<ModelView> = {}): ModelView => ({
+  token_id: "model-run-1",
+  run_id: "run-1",
+  owner_id: "me.test",
+  app_id: "local-trainer",
+  renter_id: "me.test",
+  model_sha256: SHA,
+  accuracy_bps: 7500,
+  token_count: 4,
+  sealed_hash: "c2VhbGVk",
+  sealed_ref: `fastfs:trainer.test:${"a".repeat(64)}:${"1".repeat(44)}`,
+  recorded_at: "1700000000000000000",
+  ...overrides,
+});
+
+test("shows the model minted as a token, checked on-chain, with a link to its page", async () => {
+  const trainer = fakeTrainer([
+    { stage: "recording" },
+    { stage: "minting" },
+    { ...finished(), modelToken: "model-run-1", mintTx: "MintTx1" },
+  ]);
+  const getModel = vi.fn(async () => mintedModel());
+  setup(trainer, {
+    getModel,
+    tokenPath: (tokenId) => `/c/hotdogs.launch.test/kat/${tokenId}`,
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+
+  const progress = screen.getByRole("list", { name: "Progress" });
+  expect(within(progress).getByText("Sealing the model as a token")).toBeTruthy();
+  const token = await screen.findByRole("region", { name: "Model token" });
+  expect(token.textContent).toContain("model-run-1");
+  expect(token.textContent).toMatch(/sealed under the token's own key/);
+  expect(await within(token).findByText(/names this model's hash/)).toBeTruthy();
+  expect(token.textContent).toContain("me.test");
+  expect(getModel).toHaveBeenCalledWith("model-run-1");
+  expect(
+    within(token).getByRole("link", { name: "Open the token's page" }).getAttribute("href"),
+  ).toBe("/c/hotdogs.launch.test/kat/model-run-1");
+  expect(
+    within(token).getByRole("link", { name: "View the mint transaction" }).getAttribute("href"),
+  ).toBe("https://explorer.test/txns/MintTx1");
+  // The model still downloads from the run, as before.
+  expect(await screen.findByRole("button", { name: "Download model" })).toBeTruthy();
+});
+
+test("says so when the token the training app names isn't on-chain, or names another model", async () => {
+  const run = { ...finished(), modelToken: "model-run-1" };
+  setup(fakeTrainer([run]), { getModel: vi.fn(async () => null), retryMs: 1 });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  const token = await screen.findByRole("region", { name: "Model token" });
+  expect(await within(token).findByText(/This token isn't on-chain/)).toBeTruthy();
+  cleanup();
+
+  setup(fakeTrainer([run]), {
+    getModel: vi.fn(async () => mintedModel({ model_sha256: "0".repeat(64) })),
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  const other = await screen.findByRole("region", { name: "Model token" });
+  expect(await within(other).findByText(/names a different model's hash/)).toBeTruthy();
+});
+
+test("says why the model wasn't minted as a token, and still offers it", async () => {
+  const trainer = fakeTrainer([
+    { ...finished(), mintProblem: "The token's key could not be fetched." },
+  ]);
+  setup(trainer, { getModel: vi.fn(async () => null) });
+  await userEvent.click(screen.getByRole("button", { name: "Train on 4 rented samples" }));
+  expect(
+    await screen.findByText(
+      /The model wasn't minted as a token: The token's key could not be fetched\. You can still/,
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Model token" })).toBeNull();
+  expect(await screen.findByRole("button", { name: "Download model" })).toBeTruthy();
 });

@@ -8,6 +8,7 @@ import { Growth } from "../components/Growth.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { ImportPanel } from "../components/ImportPanel.tsx";
 import { LendPanel } from "../components/LendPanel.tsx";
+import { ModelPanel } from "../components/ModelPanel.tsx";
 import { NaturePanel } from "../components/NaturePanel.tsx";
 import { SamplePanel } from "../components/SamplePanel.tsx";
 import { Savannah, type SavannahMood } from "../components/Savannah.tsx";
@@ -15,7 +16,13 @@ import { Shell } from "../components/Shell.tsx";
 import { TokenArt } from "../components/TokenArt.tsx";
 import { type Panel, TokenLayout } from "../components/TokenLayout.tsx";
 import { WalletPanel } from "../components/WalletPanel.tsx";
-import type { KatContract, RunView } from "../lib/contract.ts";
+import {
+  isModelToken,
+  type KatContract,
+  type ModelView,
+  modelTokenOf,
+  type RunView,
+} from "../lib/contract.ts";
 import { DAY_PHASE_TITLES, useDayGreetings, useDayPhase } from "../lib/dayPhase.ts";
 import { formatNear, shorten } from "../lib/format.ts";
 import { type ChatReply, KeeperError } from "../lib/keeper.ts";
@@ -28,6 +35,7 @@ import { useAsync } from "../lib/useAsync.ts";
 import { type TokenWallet, TokenWallets } from "../lib/wallet.ts";
 import { proofId, useScope } from "../scope.tsx";
 import { useServices } from "../services.tsx";
+import { useTrainers } from "../trainers.ts";
 import { useWallet } from "../wallet/WalletProvider.tsx";
 
 /** How long to wait for the keeper to catch up with the chain before showing an error. */
@@ -639,8 +647,12 @@ function ExportPanel({ noun, download }: { noun: string; download: () => Promise
   );
 }
 
-/** A token's page: a character's conversation, or a dataset sample's rentals and runs. */
+/**
+ * A token's page: a character's conversation, a dataset sample's rentals and
+ * runs, or a model trained on a dataset.
+ */
 export function Kat() {
+  const { id = "" } = useParams();
   const scope = useScope();
   const [collection] = useAsync(`collection/${scope.contractId}`, () =>
     scope.contract.getCollection(),
@@ -659,9 +671,78 @@ export function Kat() {
     typeof collection.data.kind === "object" &&
     "Dataset" in collection.data.kind
   ) {
-    return <SampleView />;
+    return isModelToken(id) ? (
+      <ModelTokenView classes={collection.data.kind.Dataset.classes} />
+    ) : (
+      <SampleView />
+    );
   }
   return <KatPage />;
+}
+
+/**
+ * A model trained on the dataset and minted as a token: what the contract
+ * recorded, and the model itself for whoever owns the token. Its weights are
+ * never read here: the training app that made it opens them for the owner.
+ */
+function ModelTokenView({ classes }: { classes: string[] }) {
+  const { id = "" } = useParams();
+  const scope = useScope();
+  const { config } = useServices();
+  const wallet = useWallet();
+  const navigate = useNavigate();
+  const { contract, signer } = scope;
+  const [model] = useAsync(`model/${scope.contractId}/${id}`, () => contract.getModel(id));
+  const [apps] = useAsync(`training-apps/${scope.contractId}`, () => contract.trainingApps());
+  const trainers = useTrainers(wallet.accountId);
+  const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
+  return (
+    <Shell world="burrow">
+      <div className="descend">
+        <Link
+          to={scope.backPath}
+          className="inline-flex items-center gap-1.5 text-sm text-mist transition-colors hover:text-cream"
+        >
+          <Icon name="arrowLeft" size={15} />
+          {scope.backLabel}
+        </Link>
+        {model.status === "loading" && <p className="mt-10 text-mist">Reading the model…</p>}
+        {model.status === "error" && (
+          <p className="mt-10 text-alarm" role="alert">
+            Can't read this model from the contract. {describeProblem(model.error)}
+          </p>
+        )}
+        {model.status === "ready" && !model.data && (
+          <p className="mt-10 text-mist">There is no model {id} in this collection.</p>
+        )}
+        {model.status === "ready" && model.data && (
+          <ModelPanel
+            contractId={scope.contractId}
+            model={model.data}
+            classes={classes}
+            labels={labels}
+            viewer={wallet.accountId}
+            access={trainers[model.data.app_id]}
+          >
+            {signer && (
+              <GiveAwayPanel
+                noun="model"
+                katName={`Model ${model.data.run_id}`}
+                note="Whoever holds the token can have the training app open the model. A file you already opened stays with you."
+                ownerId={model.data.owner_id}
+                network={config.networkId}
+                accountExists={(accountId) => contract.accountExists(accountId)}
+                give={async (receiverId) => {
+                  await signer.transfer(id, receiverId);
+                  navigate(scope.backPath);
+                }}
+              />
+            )}
+          </ModelPanel>
+        )}
+      </div>
+    </Shell>
+  );
 }
 
 /** A dataset sample: owner, rental, runs. The picture is never read or shown. */
@@ -679,6 +760,21 @@ function SampleView() {
     const views = await Promise.all(ids.map((run) => contract.getRun(run)));
     return views.filter((run): run is RunView => run !== null);
   });
+  // A run's model may have been minted as a token: link to it where it was.
+  const ranIn = runs.status === "ready" ? runs.data : null;
+  const [models] = useAsync(
+    ranIn ? `sample-models/${scope.contractId}/${id}/${ranIn.length}` : null,
+    async () => {
+      const found = await Promise.all(
+        (ranIn ?? []).map((run) => contract.getModel(modelTokenOf(run.run_id)).catch(() => null)),
+      );
+      return Object.fromEntries(
+        found
+          .filter((model): model is ModelView => model !== null)
+          .map((model) => [model.run_id, scope.tokenPath(model.token_id)]),
+      );
+    },
+  );
   const [apps] = useAsync(`training-apps/${scope.contractId}`, () => contract.trainingApps());
   const labels = Object.fromEntries(apps.status === "ready" ? apps.data : []);
   const name = `${scope.name} #${id}`;
@@ -711,6 +807,7 @@ function SampleView() {
             runs={runs.status === "ready" ? runs.data : []}
             runCount={sample.data.runs}
             labels={labels}
+            modelPaths={models.status === "ready" ? models.data : {}}
           />
         )}
       </div>

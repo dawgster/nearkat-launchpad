@@ -128,6 +128,60 @@ export interface RunView {
   recorded_at: string;
 }
 
+/** A trained model's token id: `model-` and the run that made it. */
+export const MODEL_PREFIX = "model-";
+
+/** Whether a token of a dataset collection is a trained model, not a sample. */
+export const isModelToken = (tokenId: string) => tokenId.startsWith(MODEL_PREFIX);
+
+/** The token a run's model is minted as. */
+export const modelTokenOf = (runId: string) => `${MODEL_PREFIX}${runId}`;
+
+/**
+ * A trained model minted as a token, as `get_model` shows it. What is sealed
+ * is the classifier the run learned; `model_sha256` is the hash of the whole
+ * ONNX file the training app puts together from it.
+ */
+export interface ModelView {
+  token_id: string;
+  run_id: string;
+  owner_id: string;
+  /** The training app that made it, and the only one that can open it. */
+  app_id: string;
+  /** Who rented the samples and was minted the token. */
+  renter_id: string;
+  /** Hex. */
+  model_sha256: string;
+  accuracy_bps: number;
+  /** How many samples it was trained on. */
+  token_count: number;
+  /** SHA-256 of the sealed blob, base64. */
+  sealed_hash: string;
+  sealed_ref: string;
+  /** Nanoseconds. */
+  recorded_at: string;
+}
+
+/** Models read per `get_models` call; the contract returns at most this many. */
+const MODELS_PAGE = 100;
+
+/** A view the collection's code doesn't have: it was published before the method existed. */
+const isMissingMethod = (error: unknown) =>
+  /MethodNotFound|MethodResolveError|does not exist/i.test(String(error));
+
+/** Numbered tokens first, lowest number first; then the rest (models) by id. */
+function byTokenId(a: string, b: string): number {
+  const [x, y] = [Number(a), Number(b)];
+  const [named, otherNamed] = [Number.isNaN(x), Number.isNaN(y)];
+  if (named !== otherNamed) {
+    return named ? 1 : -1;
+  }
+  if (named) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  return x - y;
+}
+
 export interface AppKeyView {
   app_id: string;
   label: string;
@@ -265,7 +319,10 @@ export class KatContract {
     return config;
   }
 
-  /** Token ids owned by an account, lowest number first. A dataset's creator holds hundreds. */
+  /**
+   * Token ids owned by an account, lowest number first, then any models it
+   * holds. A dataset's creator holds hundreds.
+   */
   async katsOf(accountId: string): Promise<string[]> {
     // The standard panics on a from_index at or past the end, so count first.
     const count = Number(
@@ -284,7 +341,12 @@ export class KatContract {
       }
       ids.push(...page.map((token) => token.token_id));
     }
-    return ids.sort((a, b) => Number(a) - Number(b));
+    return ids.sort(byTokenId);
+  }
+
+  /** The dataset samples an account owns, lowest number first: its tokens without its models. */
+  async samplesOf(accountId: string): Promise<string[]> {
+    return (await this.katsOf(accountId)).filter((id) => !isModelToken(id));
   }
 
   /** An account's tokens with their context versions, which set how grown each one is drawn. */
@@ -373,7 +435,7 @@ export class KatContract {
     try {
       return (await this.#view<LoanView | null>("get_loan", { token_id: tokenId })) ?? null;
     } catch (error) {
-      if (/MethodNotFound|MethodResolveError|does not exist/i.test(String(error))) {
+      if (isMissingMethod(error)) {
         return null;
       }
       throw error;
@@ -521,6 +583,42 @@ export class KatContract {
     return (await this.#view<RunView | null>("get_run", { run_id: runId })) ?? null;
   }
 
+  /** A model token's record; null for a sample, a token that isn't there, or an older contract. */
+  async getModel(tokenId: string): Promise<ModelView | null> {
+    try {
+      return (await this.#view<ModelView | null>("get_model", { token_id: tokenId })) ?? null;
+    } catch (error) {
+      if (isMissingMethod(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Every model minted in the collection, in the order minted; none on an older contract. */
+  async getModels(): Promise<ModelView[]> {
+    const models: ModelView[] = [];
+    for (;;) {
+      let page: ModelView[];
+      try {
+        page =
+          (await this.#view<ModelView[]>("get_models", {
+            from: models.length,
+            limit: MODELS_PAGE,
+          })) ?? [];
+      } catch (error) {
+        if (isMissingMethod(error)) {
+          return [];
+        }
+        throw error;
+      }
+      models.push(...page);
+      if (page.length < MODELS_PAGE) {
+        return models;
+      }
+    }
+  }
+
   /** `[app_id, label]` for every registered training app. Labels are the apps' own words. */
   async trainingApps(): Promise<Array<[string, string]>> {
     return (await this.#view<Array<[string, string]>>("training_apps", {})) ?? [];
@@ -535,7 +633,7 @@ export class KatContract {
    * those of them on offer to training apps.
    */
   async sampleOffers(max = SAMPLE_SCAN_LIMIT): Promise<Offer[]> {
-    const tokens = await this.#tokens(max);
+    const tokens = await this.#samples(max);
     const offers: Offer[] = [];
     for (const batch of chunked(tokens, 25)) {
       const found = await Promise.all(
@@ -566,7 +664,7 @@ export class KatContract {
    * the first `max` samples: active, borrowed by the account and not spent.
    */
   async rentalsOf(accountId: string, max = SAMPLE_SCAN_LIMIT): Promise<Rental[]> {
-    const tokens = await this.#tokens(max);
+    const tokens = await this.#samples(max);
     const byApp = new Map<string, string[]>();
     for (const batch of chunked(tokens, 25)) {
       const found = await Promise.all(
@@ -588,6 +686,11 @@ export class KatContract {
       }
     }
     return [...byApp].map(([appId, tokenIds]) => ({ appId, tokenIds }));
+  }
+
+  /** The samples among the first `max` tokens: a dataset's models are tokens too, and are left out. */
+  async #samples(max: number): Promise<Array<{ token_id: string; owner_id: string }>> {
+    return (await this.#tokens(max)).filter((token) => !isModelToken(token.token_id));
   }
 
   /** The first `max` tokens with their owners, in pages. */
