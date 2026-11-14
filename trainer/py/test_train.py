@@ -210,3 +210,70 @@ def test_refuses_an_oversized_image_before_decoding_it(tmp_path):
     proc, _ = run(tmp_path, stdin=stdin_lines([big]))
     assert proc.returncode == 2
     assert "line 41: image too large (label 'hotdog')" in proc.stderr
+
+
+def assemble(tmp_path, head: str, name="rebuilt.onnx"):
+    out = tmp_path / name
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "assemble.py"), "--out", str(out)],
+        input=head, capture_output=True, text=True, cwd=HERE,
+    )
+    return proc, out
+
+
+@pytest.fixture(scope="module")
+def trained_with_head(tmp_path_factory):
+    """One run that also wrote its head: (model path, head JSON text, tmp dir)."""
+    tmp_path = tmp_path_factory.mktemp("head")
+    head = tmp_path / "head.json"
+    proc, out = run(tmp_path, "--head-out", str(head))
+    assert proc.returncode == 0, proc.stderr
+    return out, head.read_text(), tmp_path
+
+
+def test_the_head_is_the_linear_layer_alone(trained_with_head):
+    _, head, _ = trained_with_head
+    doc = json.loads(head)
+    assert doc["features"] == train.FEATURES == 960
+    assert doc["backbone_sha256"] == train.WEIGHTS_SHA256
+    # Two classes: 2 x 960 weights and 2 biases, as float32.
+    assert len(base64.b64decode(doc["weight"])) == 2 * 960 * 4
+    assert len(base64.b64decode(doc["bias"])) == 2 * 4
+
+
+def test_the_model_is_rebuilt_byte_for_byte_from_its_head(trained_with_head):
+    out, head, tmp_path = trained_with_head
+    proc, rebuilt = assemble(tmp_path, head)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.splitlines()[-1]) == {"stage": "done", "classes": 2}
+    assert rebuilt.read_bytes() == out.read_bytes()
+
+
+def test_the_model_file_does_not_name_its_source(trained_with_head):
+    out, _, _ = trained_with_head
+    proto = onnx.load(str(out))
+    assert all(len(node.metadata_props) == 0 for node in proto.graph.node)
+    assert b"train.py" not in out.read_bytes()
+
+
+def test_assemble_refuses_a_head_for_another_backbone(trained_with_head):
+    _, head, tmp_path = trained_with_head
+    doc = json.loads(head)
+    doc["backbone_sha256"] = "0" * 64
+    proc, out = assemble(tmp_path, json.dumps(doc), "other.onnx")
+    assert proc.returncode == 2
+    assert "another backbone" in proc.stderr
+    assert not out.exists()
+
+
+def test_assemble_refuses_a_misshapen_head(trained_with_head):
+    _, head, tmp_path = trained_with_head
+    doc = json.loads(head)
+    doc["weight"] = base64.b64encode(b"\x00" * 12).decode()
+    proc, out = assemble(tmp_path, json.dumps(doc), "short.onnx")
+    assert proc.returncode == 2
+    assert "wrong shape" in proc.stderr
+    proc, _ = assemble(tmp_path, "not json", "junk.onnx")
+    assert proc.returncode == 2
+    assert "malformed head" in proc.stderr
+    assert not out.exists()

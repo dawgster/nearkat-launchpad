@@ -7,6 +7,13 @@ memory, streams them to `py/train.py`, records the run on-chain (which spends
 the rentals) and keeps the ONNX model for the renter. Keys and images are never
 logged, returned or written to disk.
 
+The model also becomes a token. After recording the run, the app asks the
+collection for the key of the token `model-<run id>` (`request_model_key`, which
+the collection grants only to the app that recorded the run), seals what the run
+learned under it, stores that on FastFS and mints the token to the renter
+(`mint_model`). Whoever owns the token can have the app open it again; see
+"Model tokens" below.
+
 ## Running
 
 The app imports modules from `../keeper/src`, so the keeper's dependencies must
@@ -43,6 +50,31 @@ the collection's order, whose argmax is the SVM's prediction.
 from when the last sample has been read. The weights' SHA-256 is pinned in
 `train.py` and checked on every load.
 
+## Model tokens
+
+What a run learns is only the linear layer on top of the backbone: 960 weights
+and a bias for each class, a few kilobytes. `train.py --head-out` writes it on
+its own, and that is what the token seals:
+`{ v, kind: "model-head", token_id, run_id, classes, head }`, encrypted with
+AES-256-GCM under the token's key (the MPC network's key for the path
+`nearkat/samples/v1/model-<run id>`, the same scheme as a sample's). The
+backbone is public and named in the head by its SHA-256.
+
+`py/assemble.py` puts a head and the backbone back together into the ONNX file.
+The exporter's notes about source files and lines are stripped from the file,
+so with the same libraries it is byte for byte the file `train.py` exported and
+has the SHA-256 the run recorded on-chain. `GET /models/:contract/:token_id`
+does this for the token's owner: it checks the owner on-chain, gets the key,
+reads the sealed head from FastFS, checks it against the hash on the token,
+rebuilds the file and checks it against the run's `model_sha256`. It always
+opens from the token, not from the run's copy in memory, and keeps the last
+four rebuilt models. A rebuilt file that doesn't match is refused (409): that
+happens when the app's libraries differ from those that trained the model.
+
+If sealing or minting fails, the run still finishes: it is recorded, the model
+can be downloaded from the run, and the run's status carries `mintProblem`
+instead of `modelToken`.
+
 ## Environment
 
 | Variable | Default | Meaning |
@@ -71,8 +103,10 @@ from when the last sample has been read. The weights' SHA-256 is pinned in
 ## The trainer's key
 
 The NEAR key derives from the root secret. It must be a **full-access** key on
-`TRAINER_ACCOUNT_ID`, because `record_training` takes a deposit and
-`register_app_key` must be signed by the key it registers. On start the app
+`TRAINER_ACCOUNT_ID`, because `record_training` and `mint_model` take deposits
+(0.1 NEAR attached to each call, most of it refunded; a model token's storage
+costs about 0.02 NEAR) and `register_app_key` must be signed by the key it
+registers. The account also pays for the FastFS upload of each sealed model. On start the app
 prints the key; add it with:
 
     near account add-key TRAINER_ACCOUNT_ID grant-full-access use-manually ed25519:<key> \
@@ -95,8 +129,9 @@ Before a run, the app reads `get_app_key` for its key on the collection:
 - `GET /attestation`: `{ mode, app_id, public_key, seal_public_key, quote?, event_log?, compose_hash? }`
 - `POST /auth/challenge`, `POST /auth/session`: NEP-413 sign-in, as the keeper.
 - `POST /train { contract, token_ids }` (session): 202 and the run, or 400 with the reason.
-- `GET /runs/:id`: the run's state (stage, epoch, accuracy, `recordTx`, ...). Public; it holds no samples or keys.
+- `GET /runs/:id`: the run's state (stage, epoch, accuracy, `recordTx`, `modelToken`, `mintTx`, ...). Public; it holds no samples or keys.
 - `GET /runs/:id/model` (session): the ONNX model; 403 unless the session is the renter, 404 until the run is done.
+- `GET /models/:contract/:token_id` (session): the ONNX model a model token stands for; 403 unless the session owns the token now, 404 if it is not a model, 400 if another app trained it, 409 if what was rebuilt doesn't match the record. Takes a few seconds: one MPC request and a rebuild.
 
 At most 20 runs are kept (the oldest finished one is dropped first), and a model
 is dropped 24 hours after its run finished.

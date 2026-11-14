@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ContractRefusal } from "../src/chain.ts";
+import { openModel } from "../src/model.ts";
 import { PythonError } from "../src/python.ts";
 import { ensureRegistered } from "../src/register.ts";
 import { MIN_RUN_SAMPLES, MODEL_TTL_MS, type RunState, Runs } from "../src/run.ts";
@@ -12,6 +13,7 @@ import {
   CONTRACT,
   FakePython,
   FakeTrainerChain,
+  HEAD,
   HELDOUT,
   jpegFor,
   LAUNCHPAD,
@@ -27,10 +29,33 @@ function setup(launchpadId: string | null = null) {
     appId: APP_ID,
     chain,
     python: python.run,
+    assemble: python.assemble,
     heldoutDir: HELDOUT,
     ensureRegistered,
   });
   return { chain, python, runs, ensureRegistered };
+}
+
+/** One finished run on samples 1 and 2, with its model token's id. */
+async function trained(ctx: ReturnType<typeof setup>) {
+  await ctx.chain.addRentedSample("1", "cat");
+  await ctx.chain.addRentedSample("2", "dog");
+  const { id } = await ctx.runs.start(CONTRACT, RENTER, ["1", "2"]);
+  const state = await settle(ctx.runs, id);
+  return { id, state, token: `model-${id}` };
+}
+
+/** The app after a restart: the same chain, none of the runs or models it held. */
+function restarted(ctx: ReturnType<typeof setup>, launchpadId: string | null = null) {
+  return new Runs({
+    launchpadId,
+    appId: APP_ID,
+    chain: ctx.chain,
+    python: ctx.python.run,
+    assemble: ctx.python.assemble,
+    heldoutDir: HELDOUT,
+    ensureRegistered: ctx.ensureRegistered,
+  });
 }
 
 /** Waits for a run to finish, one way or the other. */
@@ -557,6 +582,181 @@ describe("Runs and registration", () => {
     await chain.addRentedSample("1", "cat");
     const started = await runs.start(CONTRACT, RENTER, ["1"]);
     expect((await settle(runs, started.id)).error).toBe("Could not get the samples' keys");
+  });
+});
+
+describe("a run's model token", () => {
+  test("seals what the run learned and mints it to the renter", async () => {
+    const ctx = setup();
+    const { id, state, token } = await trained(ctx);
+    expect(state).toMatchObject({ stage: "done", modelToken: token, mintTx: "mint-tx-1" });
+    expect(state.mintProblem).toBeUndefined();
+    expect(ctx.chain.modelKeyRequests).toEqual([id]);
+    const minted = ctx.chain.models.get(token);
+    expect(minted).toMatchObject({ run_id: id, owner_id: RENTER, app_id: APP_ID });
+    // What FastFS holds is the head, sealed under the token's own key.
+    const blob = await ctx.chain.fastfsStore(CONTRACT).get(minted?.sealed_ref as string);
+    expect(createHash("sha256").update(blob).digest("base64")).toBe(minted?.sealed_hash);
+    expect(Buffer.from(blob).toString("latin1")).not.toContain(HEAD.weight);
+    const doc = openModel(ctx.chain.keyOf(token), blob, token);
+    expect(doc).toEqual({
+      v: 1,
+      kind: "model-head",
+      token_id: token,
+      run_id: id,
+      classes: ["cat", "dog"],
+      head: HEAD,
+    });
+    expect(() => openModel(ctx.chain.keyOf("1"), blob, token)).toThrow("cannot be decrypted");
+  });
+
+  test("the run stands when its token can't be minted", async () => {
+    const ctx = setup();
+    ctx.chain.modelKeyFailure = new Error("the MPC network is down");
+    const { id, state } = await trained(ctx);
+    expect(state.stage).toBe("done");
+    expect(state.modelToken).toBeUndefined();
+    expect(state.mintProblem).toBe("it could not be sealed and minted on-chain");
+    expect(state.recordedTokens).toBe(2);
+    expect(ctx.chain.mintCalls).toBe(0);
+    expect(ctx.runs.model(id, RENTER)).toEqual(ctx.python.model);
+  });
+
+  test("tries a mint again once after a transport error", async () => {
+    const ctx = setup();
+    ctx.chain.mintScript.push(new Error("fetch failed"));
+    const { state, token } = await trained(ctx);
+    expect(ctx.chain.mintCalls).toBe(2);
+    expect(state).toMatchObject({ modelToken: token, mintTx: "mint-tx-2" });
+  });
+
+  test("does not mint again when the mint landed and only its reply was lost", async () => {
+    const ctx = setup();
+    ctx.chain.mintLandedButLost = 1;
+    const { state, token } = await trained(ctx);
+    expect(ctx.chain.mintCalls).toBe(1);
+    expect(state.modelToken).toBe(token);
+    expect(state.mintProblem).toBeUndefined();
+  });
+
+  test("does not try again a mint the collection refused", async () => {
+    const ctx = setup();
+    ctx.chain.mintScript.push(
+      new ContractRefusal("Attach at least 1 for the model token's storage"),
+    );
+    const { state } = await trained(ctx);
+    expect(ctx.chain.mintCalls).toBe(1);
+    expect(state.stage).toBe("done");
+    expect(state.modelToken).toBeUndefined();
+    expect(state.mintProblem).toBeDefined();
+  });
+
+  test("opens from the sealed token, even while the run's own copy is kept", async () => {
+    const ctx = setup();
+    const { id, token } = await trained(ctx);
+    expect(await ctx.runs.tokenModel(CONTRACT, token, RENTER)).toEqual(ctx.python.model);
+    expect(ctx.chain.modelKeyRequests).toEqual([id, id]);
+    expect(ctx.python.assembled).toEqual([HEAD]);
+  });
+
+  test("is rebuilt from its sealed head by an app that never held the run", async () => {
+    const ctx = setup();
+    const { id, token } = await trained(ctx);
+    const later = restarted(ctx);
+    const model = await later.tokenModel(CONTRACT, token, RENTER);
+    expect(model).toEqual(ctx.python.model);
+    expect(ctx.python.assembled).toEqual([HEAD]);
+    expect(ctx.chain.modelKeyRequests).toEqual([id, id]);
+    expect(ctx.ensureRegistered).toHaveBeenCalledTimes(2);
+    // Kept for the next request, and handed out as a copy.
+    model.fill(0);
+    expect(await later.tokenModel(CONTRACT, token, RENTER)).toEqual(ctx.python.model);
+    expect(ctx.python.assembled).toHaveLength(1);
+    expect(ctx.chain.modelKeyRequests).toHaveLength(2);
+  });
+
+  test("two requests at once share one rebuild", async () => {
+    const ctx = setup();
+    const { token } = await trained(ctx);
+    const later = restarted(ctx);
+    const [a, b] = await Promise.all([
+      later.tokenModel(CONTRACT, token, RENTER),
+      later.tokenModel(CONTRACT, token, RENTER),
+    ]);
+    expect(a).toEqual(ctx.python.model);
+    expect(b).toEqual(ctx.python.model);
+    expect(ctx.python.assembled).toHaveLength(1);
+  });
+
+  test("follows its token to a new owner", async () => {
+    const ctx = setup();
+    const { token } = await trained(ctx);
+    (ctx.chain.models.get(token) as { owner_id: string }).owner_id = "buyer.near";
+    for (const runs of [ctx.runs, restarted(ctx)]) {
+      await expect(runs.tokenModel(CONTRACT, token, RENTER)).rejects.toMatchObject({
+        status: 403,
+        message: "Only the model's owner may open it",
+      });
+      expect(await runs.tokenModel(CONTRACT, token, "buyer.near")).toEqual(ctx.python.model);
+    }
+  });
+
+  test("refuses what is not a model, before any key", async () => {
+    const ctx = setup();
+    await trained(ctx);
+    for (const id of ["1", "model-run-000000000000"]) {
+      await expect(ctx.runs.tokenModel(CONTRACT, id, RENTER)).rejects.toMatchObject({
+        status: 404,
+      });
+    }
+    expect(ctx.chain.modelKeyRequests).toHaveLength(1);
+  });
+
+  test("refuses a model another training app made", async () => {
+    const ctx = setup();
+    ctx.chain.runApp = "b".repeat(64);
+    const { token } = await trained(ctx);
+    await expect(restarted(ctx).tokenModel(CONTRACT, token, RENTER)).rejects.toMatchObject({
+      status: 400,
+      message: "Another training app made this model; only that app can open it",
+    });
+    expect(ctx.chain.modelKeyRequests).toHaveLength(1);
+  });
+
+  test("refuses a collection its launchpad didn't launch", async () => {
+    const ctx = setup();
+    const { token } = await trained(ctx);
+    ctx.chain.factoryId = "other.near";
+    await expect(
+      restarted(ctx, LAUNCHPAD).tokenModel(CONTRACT, token, RENTER),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(ctx.chain.modelKeyRequests).toHaveLength(1);
+  });
+
+  test("refuses a sealed blob that is not the one recorded", async () => {
+    const ctx = setup();
+    const { token } = await trained(ctx);
+    (ctx.chain.models.get(token) as { sealed_hash: string }).sealed_hash = createHash("sha256")
+      .update("another blob")
+      .digest("base64");
+    await expect(restarted(ctx).tokenModel(CONTRACT, token, RENTER)).rejects.toMatchObject({
+      status: 409,
+      message: `Model ${token} does not match its record`,
+    });
+    expect(ctx.python.assembled).toEqual([]);
+  });
+
+  test("refuses a rebuilt file that is not the one the run recorded", async () => {
+    const ctx = setup();
+    const { token } = await trained(ctx);
+    ctx.python.rebuilt = Buffer.from("a model from other libraries");
+    const later = restarted(ctx);
+    await expect(later.tokenModel(CONTRACT, token, RENTER)).rejects.toMatchObject({
+      status: 409,
+    });
+    // Not kept: the next request rebuilds again.
+    ctx.python.rebuilt = null;
+    expect(await later.tokenModel(CONTRACT, token, RENTER)).toEqual(ctx.python.model);
   });
 });
 

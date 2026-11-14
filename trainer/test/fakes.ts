@@ -12,10 +12,12 @@ import { mpcAnswer, mpcDerivedKey, mpcPublicKeyOf } from "../../keeper/test/mpc.
 import {
   ContractRefusal,
   type LoanTraining,
+  type ModelView,
   type TrainerChain,
   type TrainingRecord,
 } from "../src/chain.ts";
-import type { runPython } from "../src/python.ts";
+import { type Head, modelTokenId } from "../src/model.ts";
+import type { assembleModel, runPython } from "../src/python.ts";
 
 export const KEY_SOURCE: KeySource = { mpc_contract_id: "v1.signer", domain_id: 2 };
 export const CONTRACT = "cats-vs-dogs.launch.near";
@@ -62,6 +64,19 @@ export class FakeTrainerChain implements TrainerChain {
   landedButLost = 0;
   /** Registered app keys: public key to the app id it is registered to. */
   readonly appKeys = new Map<string, string>();
+  /** Model tokens, by token id. */
+  readonly models = new Map<string, ModelView>();
+  /** The run ids model keys were asked for, in order. */
+  readonly modelKeyRequests: string[] = [];
+  /** What each mintModel call does in turn: throw the error, or succeed (null). */
+  readonly mintScript: Array<Error | null> = [];
+  mintCalls = 0;
+  /** This many mints land on-chain, then their reply is lost as a transport error. */
+  mintLandedButLost = 0;
+  /** Thrown by every requestModelKey call. */
+  modelKeyFailure: Error | null = null;
+  /** The app the collection says recorded every run. */
+  runApp = APP_ID;
   readonly #txs = new Map<string, Uint8Array[]>();
   readonly #store = new FastfsStore({
     uploader: "keeper.near",
@@ -81,6 +96,11 @@ export class FakeTrainerChain implements TrainerChain {
   /** The key the MPC network derives for a sample, as the keeper would have sealed it with. */
   #sampleKey(tokenId: string): Buffer {
     return sampleKey(mpcDerivedKey(this.mpcSecret, CONTRACT, sampleKeyPath(tokenId)), tokenId);
+  }
+
+  /** The key the MPC network derives for a token, sample or model. */
+  keyOf(tokenId: string): Buffer {
+    return this.#sampleKey(tokenId);
   }
 
   /** Seals a sample into FastFS and rents it to `renter` for the app. */
@@ -182,6 +202,56 @@ export class FakeTrainerChain implements TrainerChain {
     return this.records.filter((r) => r.run_id === runId).flatMap((r) => r.token_ids);
   }
 
+  async requestModelKey(_contract: string, runId: string, appPublicKey: string) {
+    this.modelKeyRequests.push(runId);
+    if (this.modelKeyFailure) {
+      throw this.modelKeyFailure;
+    }
+    if (!this.records.some((r) => r.run_id === runId)) {
+      throw new ContractRefusal("No such run");
+    }
+    return [mpcAnswer(this.mpcSecret, CONTRACT, sampleKeyPath(modelTokenId(runId)), appPublicKey)];
+  }
+
+  async mintModel(_contract: string, runId: string, sealedHash: string, sealedRef: string) {
+    this.mintCalls += 1;
+    const scripted = this.mintScript.shift();
+    if (scripted) {
+      throw scripted;
+    }
+    const tokenId = modelTokenId(runId);
+    const records = this.records.filter((r) => r.run_id === runId);
+    const [first] = records;
+    if (!first) {
+      throw new ContractRefusal("No such run");
+    }
+    if (this.models.has(tokenId)) {
+      throw new ContractRefusal(`Run ${runId} already has its model token`);
+    }
+    this.models.set(tokenId, {
+      token_id: tokenId,
+      run_id: runId,
+      owner_id: first.renter_id,
+      app_id: this.runApp,
+      renter_id: first.renter_id,
+      model_sha256: first.model_sha256,
+      accuracy_bps: first.accuracy_bps,
+      token_count: records.reduce((n, r) => n + r.token_ids.length, 0),
+      sealed_hash: sealedHash,
+      sealed_ref: sealedRef,
+      recorded_at: "1",
+    });
+    if (this.mintLandedButLost > 0) {
+      this.mintLandedButLost -= 1;
+      throw new Error("fetch failed");
+    }
+    return `mint-tx-${this.mintCalls}`;
+  }
+
+  async getModel(_contract: string, tokenId: string) {
+    return this.models.get(tokenId) ?? null;
+  }
+
   async getAppKey(_contract: string, publicKey: string) {
     const appId = this.appKeys.get(publicKey);
     return appId === undefined ? null : { app_id: appId };
@@ -200,6 +270,14 @@ export class FakeTrainerChain implements TrainerChain {
   }
 }
 
+/** A head for two classes with one feature each: the shape is real, the numbers arbitrary. */
+export const HEAD: Head = {
+  features: 1,
+  backbone_sha256: "5c".repeat(32),
+  weight: Buffer.from(new Float32Array([-1.5, 1.5]).buffer).toString("base64"),
+  bias: Buffer.from(new Float32Array([0.25, -0.25]).buffer).toString("base64"),
+};
+
 /** A Python stand-in: records what it was given and returns a fixed model. */
 export class FakePython {
   readonly received: Array<{ label: string; jpeg: Buffer }> = [];
@@ -212,6 +290,11 @@ export class FakePython {
   failure: Error | null = null;
   /** Resolves the run when set; otherwise it finishes at once. */
   gate: Promise<void> | null = null;
+  head: Head = HEAD;
+  /** The heads `assemble` was asked to rebuild a model from. */
+  readonly assembled: Head[] = [];
+  /** What `assemble` rebuilds; the trained model unless set. */
+  rebuilt: Buffer | null = null;
 
   readonly run: typeof runPython = async (args) => {
     this.epochs.push(args.epochs);
@@ -225,6 +308,16 @@ export class FakePython {
       throw this.failure;
     }
     args.onProgress({ stage: "done", accuracy: this.accuracy, heldout: this.heldout, seconds: 1 });
-    return { accuracy: this.accuracy, heldout: this.heldout, model: this.model };
+    return {
+      accuracy: this.accuracy,
+      heldout: this.heldout,
+      model: this.model,
+      head: this.head,
+    };
+  };
+
+  readonly assemble: typeof assembleModel = async (args) => {
+    this.assembled.push(args.head);
+    return Buffer.from(this.rebuilt ?? this.model);
   };
 }

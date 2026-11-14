@@ -22,6 +22,20 @@ console.log("some library chatter");
 emit({ stage: "epoch", epoch: 1, epochs: 1, loss: 0.25 });
 const summary = rows.map((r) => `${r.label}:${Buffer.from(r.jpeg, "base64").toString()}`);
 writeFileSync(arg("--out"), `model for ${arg("--classes")} from ${arg("--heldout")}: ${summary}`);
+if (mode !== "no-head") {
+  // One feature, as many classes as --classes names: the head's shape is all the app checks.
+  const classes = arg("--classes").split(",").length;
+  const floats = (n) => Buffer.from(new Float32Array(n).fill(0.5).buffer).toString("base64");
+  writeFileSync(
+    arg("--head-out"),
+    JSON.stringify({
+      features: 1,
+      backbone_sha256: "ab".repeat(32),
+      weight: floats(classes),
+      bias: floats(classes),
+    }),
+  );
+}
 if (mode !== "no-done") {
   emit({ stage: "done", accuracy: 0.5, heldout: 4, seconds: 0.1 });
 }

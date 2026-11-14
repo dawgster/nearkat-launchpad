@@ -19,7 +19,7 @@ export interface AppOptions {
   info: { app_id: string; label: string; classes_supported: "any"; heldout: number };
   /** Origins the web app is served from, for CORS. */
   webOrigins: string[];
-  limits?: { auth: RateLimiter; train: RateLimiter };
+  limits?: { auth: RateLimiter; train: RateLimiter; open?: RateLimiter };
   /** Behind one reverse proxy, the client is the last address in X-Forwarded-For. */
   trustProxy?: boolean;
 }
@@ -29,6 +29,8 @@ type Env = { Variables: { accountId: string } };
 /** 200 token ids of up to 64 characters, and JSON around them. */
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_ID_LENGTH = 64;
+/** A model token's id: `model-`, then a run id of up to 64 characters. */
+const MAX_TOKEN_ID_LENGTH = 70;
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -57,6 +59,9 @@ function publicRun(run: RunState): RunState {
     ...(run.recordedTokens !== undefined && { recordedTokens: run.recordedTokens }),
     ...(run.recordTx !== undefined && { recordTx: run.recordTx }),
     ...(run.partial !== undefined && { partial: run.partial }),
+    ...(run.modelToken !== undefined && { modelToken: run.modelToken }),
+    ...(run.mintTx !== undefined && { mintTx: run.mintTx }),
+    ...(run.mintProblem !== undefined && { mintProblem: run.mintProblem }),
     ...(run.error !== undefined && { error: run.error }),
   };
 }
@@ -67,6 +72,8 @@ export function createApp(options: AppOptions): Hono<Env> {
   const limits = {
     auth: options.limits?.auth ?? new RateLimiter({ burst: 30, refillMs: 2_000 }),
     train: options.limits?.train ?? new RateLimiter({ burst: 5, refillMs: 10_000 }),
+    // Opening a model costs an MPC request and a rebuild.
+    open: options.limits?.open ?? new RateLimiter({ burst: 5, refillMs: 10_000 }),
   };
   const limit = (limiter: RateLimiter, key: string) => {
     const waitMs = limiter.take(key);
@@ -134,6 +141,7 @@ export function createApp(options: AppOptions): Hono<Env> {
   });
   app.use("/train", signedIn);
   app.use("/runs/:id/model", signedIn);
+  app.use("/models/*", signedIn);
 
   app.get("/attestation", async (c) => c.json(await options.attestation()));
   app.get("/info", (c) => c.json(options.info));
@@ -193,6 +201,27 @@ export function createApp(options: AppOptions): Hono<Env> {
     return c.body(new Uint8Array(model), 200, {
       "content-type": "application/octet-stream",
       "content-disposition": `attachment; filename="${id}.onnx"`,
+      "cache-control": "no-store",
+    });
+  });
+
+  // The model a token stands for, for whoever owns the token now.
+  app.get("/models/:contract/:token", async (c) => {
+    const contract = c.req.param("contract");
+    const token = c.req.param("token");
+    if (
+      contract.length < 2 ||
+      contract.length > MAX_ID_LENGTH ||
+      token.length === 0 ||
+      token.length > MAX_TOKEN_ID_LENGTH
+    ) {
+      throw new BadRequest("A contract and a model token are required");
+    }
+    limit(limits.open, c.get("accountId"));
+    const model = await runs.tokenModel(contract, token, c.get("accountId"));
+    return c.body(new Uint8Array(model), 200, {
+      "content-type": "application/octet-stream",
+      "content-disposition": `attachment; filename="${token}.onnx"`,
       "cache-control": "no-store",
     });
   });

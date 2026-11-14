@@ -23,6 +23,7 @@ import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import numpy as np  # noqa: E402
+import onnx  # noqa: E402
 import torch  # noqa: E402
 from PIL import Image  # noqa: E402
 from sklearn.svm import LinearSVC  # noqa: E402
@@ -225,6 +226,30 @@ def export_onnx(model: nn.Module, out: Path) -> None:
             # One file: the app reads back only `out`, and onnxruntime-web can't open external data.
             external_data=False,
         )
+    # The exporter notes on every node where in this source it came from (file path, line,
+    # module name). Dropped, so the file depends only on the weights and the libraries:
+    # `assemble.py` then rebuilds it byte for byte, and it has the hash the run recorded.
+    proto = onnx.load(str(out))
+    for node in proto.graph.node:
+        del node.metadata_props[:]
+    onnx.save(proto, str(out))
+
+
+def write_head(model: Classifier, out: Path) -> None:
+    """What the run learned, apart from the public backbone: the linear layer, as
+    little-endian float32 (weight: one row a class), base64. `assemble.py` reads it back."""
+    weight = model.head.weight.detach().numpy().astype("<f4")
+    bias = model.head.bias.detach().numpy().astype("<f4")
+    out.write_text(
+        json.dumps(
+            {
+                "features": FEATURES,
+                "backbone_sha256": WEIGHTS_SHA256,
+                "weight": base64.b64encode(weight.tobytes()).decode(),
+                "bias": base64.b64encode(bias.tobytes()).decode(),
+            }
+        )
+    )
 
 
 def train(samples, classes, deadline: float) -> Classifier:
@@ -246,6 +271,8 @@ def main() -> int:
     parser.add_argument("--classes", required=True)
     parser.add_argument("--heldout", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    # Where to write the trained head on its own (see write_head); not written if unset.
+    parser.add_argument("--head-out", type=Path)
     # Accepted for compatibility: the SVM is fitted once, so a run is always one epoch.
     parser.add_argument("--epochs", type=int, default=1)
     # The budget for training, scoring and export, counted once every sample is read
@@ -278,6 +305,8 @@ def main() -> int:
     heldout = load_heldout(heldout_files)
     accuracy = evaluate(model, heldout, deadline)
     export_onnx(model, args.out)
+    if args.head_out is not None:
+        write_head(model, args.head_out)
     emit(
         {
             "stage": "done",

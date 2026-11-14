@@ -39,7 +39,7 @@ COPY trainer/package.json trainer/package-lock.json ./trainer/
 RUN cd trainer && npm ci --omit=dev
 COPY keeper/src ./keeper/src
 COPY trainer/src ./trainer/src
-COPY trainer/py/train.py ./trainer/py/train.py
+COPY trainer/py/train.py trainer/py/assemble.py ./trainer/py/
 COPY --from=python /opt/python /opt/python
 COPY --from=python /app/trainer/py/.venv ./trainer/py/.venv
 COPY --from=weights /opt/torch /opt/torch

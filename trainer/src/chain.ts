@@ -30,6 +30,24 @@ export interface TrainingRecord {
   accuracy_bps: number;
 }
 
+/** A run's model token, as `get_model` shows it. */
+export interface ModelView {
+  token_id: string;
+  run_id: string;
+  owner_id: string;
+  /** The training app that trained it, the only one the collection gives its key. */
+  app_id: string;
+  renter_id: string;
+  /** Hex, of the model file. */
+  model_sha256: string;
+  accuracy_bps: number;
+  token_count: number;
+  /** SHA-256 of the sealed blob, base64. */
+  sealed_hash: string;
+  sealed_ref: string;
+  recorded_at: string;
+}
+
 /** What the training app needs from the dataset collections it trains on. */
 export interface TrainerChain {
   /**
@@ -56,12 +74,33 @@ export interface TrainerChain {
   recordTraining(contract: string, run: TrainingRecord): Promise<string | null>;
   /** Every sample a run is recorded for, in the order recorded; empty if there is no such run. */
   getRunTokens(contract: string, runId: string): Promise<string[]>;
+  /**
+   * Has the collection fetch the key of a run's model token from the MPC
+   * network: one answer. Only for a run this app recorded.
+   */
+  requestModelKey(
+    contract: string,
+    runId: string,
+    appPublicKey: string,
+  ): Promise<Array<{ big_y: string; big_c: string } | null>>;
+  /**
+   * Mints a run's model token to its renter, with its sealed blob's SHA-256
+   * (base64) and FastFS ref; the transaction's hash, if known.
+   */
+  mintModel(
+    contract: string,
+    runId: string,
+    sealedHash: string,
+    sealedRef: string,
+  ): Promise<string | null>;
+  /** A model token and its run; null for a sample or an unknown token. */
+  getModel(contract: string, tokenId: string): Promise<ModelView | null>;
   /** The app a public key is registered to on the collection, or null if it isn't. */
   getAppKey(contract: string, publicKey: string): Promise<{ app_id: string } | null>;
   registerAppKey(contract: string, proof: KeyProof & { label: string }): Promise<void>;
   /** The MPC network's public key for a CKD domain. */
   mpcPublicKey(source: KeySource): Promise<string>;
-  /** Reads the collection's FastFS files. */
+  /** Reads the collection's FastFS files, and stores this app's own (sealed models). */
   fastfsStore(contract: string): FastfsStore;
 }
 
@@ -82,6 +121,18 @@ const RUN_TOKENS_PAGE = 100;
 
 /** What each `record_training` call attaches for storage; the contract refunds the rest. */
 const RECORD_DEPOSIT = "0.1 NEAR";
+
+/** What `mint_model` attaches for the token's storage (about 0.02 NEAR); the rest is refunded. */
+const MINT_DEPOSIT = "0.1 NEAR";
+
+/** The hash of the transaction a call was sent in, if the outcome names it. */
+function txHashOf(outcome: unknown): string | null {
+  const o = outcome as
+    | { transaction?: { hash?: unknown }; transaction_outcome?: { id?: unknown } }
+    | undefined;
+  const hash = o?.transaction?.hash ?? o?.transaction_outcome?.id;
+  return typeof hash === "string" ? hash : null;
+}
 
 /**
  * The training app's account on NEAR. It signs with a full-access key:
@@ -165,12 +216,42 @@ export class NearTrainerChain implements TrainerChain {
   }
 
   async recordTraining(contract: string, run: TrainingRecord): Promise<string | null> {
-    const outcome = (await this.#call(contract, "record_training", run, {
-      gas: "300 Tgas",
-      attachedDeposit: RECORD_DEPOSIT,
-    })) as { transaction?: { hash?: unknown }; transaction_outcome?: { id?: unknown } } | undefined;
-    const hash = outcome?.transaction?.hash ?? outcome?.transaction_outcome?.id;
-    return typeof hash === "string" ? hash : null;
+    return txHashOf(
+      await this.#call(contract, "record_training", run, {
+        gas: "300 Tgas",
+        attachedDeposit: RECORD_DEPOSIT,
+      }),
+    );
+  }
+
+  async requestModelKey(contract: string, runId: string, appPublicKey: string) {
+    const outcome = (await this.#call(
+      contract,
+      "request_model_key",
+      { run_id: runId, app_public_key: appPublicKey },
+      { gas: "300 Tgas" },
+    )) as unknown;
+    return sampleKeyAnswers(mpcAnswerIn(outcome, "model key"), 1);
+  }
+
+  async mintModel(
+    contract: string,
+    runId: string,
+    sealedHash: string,
+    sealedRef: string,
+  ): Promise<string | null> {
+    return txHashOf(
+      await this.#call(
+        contract,
+        "mint_model",
+        { run_id: runId, sealed_hash: sealedHash, sealed_ref: sealedRef },
+        { gas: "100 Tgas", attachedDeposit: MINT_DEPOSIT },
+      ),
+    );
+  }
+
+  getModel(contract: string, tokenId: string) {
+    return this.#view<ModelView>(contract, "get_model", { token_id: tokenId });
   }
 
   async getRunTokens(contract: string, runId: string): Promise<string[]> {
@@ -217,13 +298,26 @@ export class NearTrainerChain implements TrainerChain {
   }
 
   /**
-   * A reader of the collection's FastFS files, for one run. One ingest
-   * transaction holds up to 20 samples, so each transaction's arguments are
-   * fetched from the archival node once and kept for the run (they are the
-   * sealed blobs, never plaintext). A failed fetch is not kept.
+   * The collection's FastFS files, for one run. One ingest transaction holds
+   * up to 20 samples, so each transaction's arguments are fetched from the
+   * archival node once and kept for the run (they are the sealed blobs, never
+   * plaintext). A failed fetch is not kept. The app's own uploads (a run's
+   * sealed model) go one file a transaction, from its own account.
    */
   fastfsStore(contract: string): FastfsStore {
-    const readOnly = () => Promise.reject(new Error("The training app does not upload"));
+    const upload = async (receiver: string, args: Uint8Array) => {
+      const outcome = (await this.#near
+        .transaction(this.#signerId)
+        .functionCall(receiver, "__fastdata_fastfs", args, { gas: "10 Tgas" })
+        .send({ waitUntil: "FINAL" })) as unknown;
+      const hash = txHashOf(outcome);
+      if (!hash) {
+        throw new Error("The FastFS upload returned no transaction hash");
+      }
+      return hash;
+    };
+    const oneAtATime = () =>
+      Promise.reject(new Error("The training app uploads one file a transaction"));
     const fetched = new Map<string, Promise<Uint8Array[]>>();
     const transactionArgs = (txHash: string, sender: string) => {
       const key = `${sender}:${txHash}`;
@@ -238,8 +332,8 @@ export class NearTrainerChain implements TrainerChain {
     return new FastfsStore({
       uploader: this.#signerId,
       receiver: contract,
-      upload: readOnly,
-      uploadMany: readOnly,
+      upload,
+      uploadMany: oneAtATime,
       transactionArgs,
       gatewayUrl: this.#gatewayUrl,
     });

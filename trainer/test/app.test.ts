@@ -31,6 +31,9 @@ const RUN_FIELDS = [
   "recordedTokens",
   "recordTx",
   "partial",
+  "modelToken",
+  "mintTx",
+  "mintProblem",
   "error",
 ];
 
@@ -41,6 +44,7 @@ function setup() {
     appId: APP_ID,
     chain,
     python: python.run,
+    assemble: python.assemble,
     heldoutDir: HELDOUT,
     ensureRegistered: async () => {},
   });
@@ -162,6 +166,54 @@ describe("trainer HTTP API", () => {
     const text = JSON.stringify(state);
     expect(text).not.toContain(jpegFor("1").toString("base64"));
     expect(text).not.toContain(token);
+  });
+
+  test("a finished run names its model token", async () => {
+    const ctx = setup();
+    const token = await ctx.signIn(RENTER);
+    const { run } = await train(ctx, token);
+    const state = await finished(ctx, run.id);
+    expect(state.modelToken).toBe(`model-${run.id}`);
+    expect(state.mintTx).toBe("mint-tx-1");
+  });
+
+  test("opens a model token only for its owner", async () => {
+    const ctx = setup();
+    const renter = await ctx.signIn(RENTER);
+    const { run } = await train(ctx, renter);
+    await finished(ctx, run.id);
+    const path = `/models/${CONTRACT}/model-${run.id}`;
+
+    expect((await ctx.app.request(path)).status).toBe(401);
+    const other = await ctx.signIn("someone.near");
+    const refused = await ctx.app.request(path, ctx.as(other, undefined, "GET"));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: "forbidden" });
+
+    const ok = await ctx.app.request(path, ctx.as(renter, undefined, "GET"));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("application/octet-stream");
+    expect(ok.headers.get("cache-control")).toBe("no-store");
+    expect(Buffer.from(await ok.arrayBuffer())).toEqual(ctx.python.model);
+
+    // The token changes hands: the model goes with it.
+    (ctx.chain.models.get(`model-${run.id}`) as { owner_id: string }).owner_id = "someone.near";
+    expect((await ctx.app.request(path, ctx.as(renter, undefined, "GET"))).status).toBe(403);
+    expect((await ctx.app.request(path, ctx.as(other, undefined, "GET"))).status).toBe(200);
+  });
+
+  test("a sample or an unknown token is not a model", async () => {
+    const ctx = setup();
+    const renter = await ctx.signIn(RENTER);
+    const { run } = await train(ctx, renter);
+    await finished(ctx, run.id);
+    for (const id of ["1", "model-run-000000000000"]) {
+      const response = await ctx.app.request(
+        `/models/${CONTRACT}/${id}`,
+        ctx.as(renter, undefined, "GET"),
+      );
+      expect(response.status).toBe(404);
+    }
   });
 
   test("train without a session is refused", async () => {

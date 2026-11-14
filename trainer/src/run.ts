@@ -4,10 +4,11 @@ import { HttpError } from "../../keeper/src/errors.ts";
 import { openSample } from "../../keeper/src/samples.ts";
 import { ContractRefusal, isRentalEnded, type TrainerChain, type TrainingRecord } from "./chain.ts";
 import { classWithoutHeldout } from "./heldout.ts";
-import { PythonError, type runPython } from "./python.ts";
+import { type Head, isModelToken, modelTokenId, openModel, sealModel } from "./model.ts";
+import { assembleModel, PythonError, type runPython } from "./python.ts";
 
 /** A run exists only once its rentals are checked, so it starts at "keys". */
-export type Stage = "keys" | "loading" | "training" | "recording" | "done" | "failed";
+export type Stage = "keys" | "loading" | "training" | "recording" | "minting" | "done" | "failed";
 
 /** A run as the renter sees it. It never holds keys, images or Python's output. */
 export interface RunState {
@@ -26,6 +27,12 @@ export interface RunState {
   recordTx?: string;
   /** Set when only part of the run could be recorded; says why. */
   partial?: string;
+  /** The run's model token (`model-<run id>`), minted to the renter; set when done. */
+  modelToken?: string;
+  /** The `mint_model` transaction, when its hash is known. */
+  mintTx?: string;
+  /** Set instead of `modelToken` when the model could not be sealed and minted. */
+  mintProblem?: string;
   error?: string;
 }
 
@@ -44,6 +51,13 @@ export class ForbiddenError extends HttpError {
 export class NotFoundError extends HttpError {
   constructor(message: string) {
     super(404, "not_found", message);
+  }
+}
+
+/** A model token's sealed blob, or the model rebuilt from it, is not what the chain records. */
+export class ModelMismatch extends HttpError {
+  constructor(message: string) {
+    super(409, "model_mismatch", message);
   }
 }
 
@@ -66,7 +80,16 @@ const STAGE_FAILURE: Record<Exclude<Stage, "done" | "failed">, string> = {
   loading: "Could not load the samples",
   training: "Training failed",
   recording: "Could not record the run",
+  minting: "Could not mint the model token",
 };
+
+/** What the renter is told when the model token could not be minted; the run still stands. */
+const MINT_PROBLEM = "it could not be sealed and minted on-chain";
+/** The most rebuilt models kept in memory for their owners (about 12 MB each). */
+const MAX_OPENED_MODELS = 4;
+
+const sha256Hex = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+const sha256Base64 = (data: Uint8Array) => createHash("sha256").update(data).digest("base64");
 
 /** Runs `fn` on every item, at most `limit` at a time; results in order. */
 async function mapLimit<T, R>(
@@ -97,6 +120,8 @@ export interface RunsOptions {
   appId: string;
   chain: TrainerChain;
   python: typeof runPython;
+  /** Rebuilds a model file from its head; `assembleModel` unless replaced, for tests. */
+  assemble?: typeof assembleModel;
   /** The held-out images, `<dir>/<class>/*.jpg`; every class needs some. */
   heldoutDir: string;
   /** Registers the app's key with the collection if it isn't yet. */
@@ -120,6 +145,10 @@ export const MODEL_TTL_MS = 24 * 60 * 60 * 1000;
  * the samples from FastFS and streams them to Python, then records the run
  * on-chain and keeps the model for the renter. Keys and images live only in
  * the pipeline's local variables.
+ *
+ * The model also becomes a token: what the run learned is sealed under the
+ * token's own key from the MPC network, stored on FastFS and minted to the
+ * renter. `tokenModel` opens it again, for whoever owns the token by then.
  */
 export class Runs {
   readonly #o: RunsOptions;
@@ -133,6 +162,10 @@ export class Runs {
   readonly #finishedAt = new Map<string, number>();
   /** `contract:token` of every sample in a run that has not finished. */
   readonly #busy = new Set<string>();
+  /** Models rebuilt from their tokens, newest last: `contract:token` to the file. */
+  readonly #opened = new Map<string, Buffer>();
+  /** Models being rebuilt now, so two requests for one token share the work. */
+  readonly #opening = new Map<string, Promise<Buffer>>();
 
   constructor(o: RunsOptions) {
     this.#o = o;
@@ -241,6 +274,142 @@ export class Runs {
   }
 
   /**
+   * The model a token stands for, for the token's owner only: read from the
+   * chain as of now, so it follows the token when it changes hands. The
+   * sealed head is fetched from FastFS, opened with the token's key and
+   * rebuilt into the model file, which must have the hash the run recorded.
+   * Always from the token, never from a run's own copy, so what the owner
+   * gets is what the chain holds; the last few rebuilt are kept.
+   */
+  async tokenModel(contract: string, tokenId: string, caller: string): Promise<Buffer> {
+    if (!isModelToken(tokenId)) {
+      throw new NotFoundError("No such model");
+    }
+    const { chain, appId } = this.#o;
+    const collection = await chain.getCollection(contract);
+    await this.#requireLaunched(contract, collection.factory_id);
+    const model = await chain.getModel(contract, tokenId);
+    if (!model) {
+      throw new NotFoundError("No such model");
+    }
+    if (model.app_id !== appId) {
+      throw new BadRequest("Another training app made this model; only that app can open it");
+    }
+    if (model.owner_id !== caller) {
+      throw new ForbiddenError("Only the model's owner may open it");
+    }
+    const slot = `${contract}:${tokenId}`;
+    const opened = this.#opened.get(slot);
+    if (opened) {
+      return Buffer.from(opened);
+    }
+    let opening = this.#opening.get(slot);
+    if (!opening) {
+      opening = (async () => {
+        await this.#o.ensureRegistered(contract);
+        const mpcPublicKey = await chain.mpcPublicKey(collection.key_source);
+        const key = await this.#modelKey(contract, model.run_id, mpcPublicKey);
+        const blob = await chain.fastfsStore(contract).get(model.sealed_ref);
+        if (sha256Base64(blob) !== model.sealed_hash) {
+          throw new ModelMismatch(`Model ${tokenId} does not match its record`);
+        }
+        let head: Head;
+        try {
+          head = openModel(key, blob, tokenId).head;
+        } catch (error) {
+          throw new ModelMismatch((error as Error).message);
+        }
+        const file = await (this.#o.assemble ?? assembleModel)({ head });
+        if (sha256Hex(file) !== model.model_sha256) {
+          // The file depends on the libraries that export it, so an app
+          // whose libraries changed since the run can't reproduce it.
+          throw new ModelMismatch(
+            `Model ${tokenId} was rebuilt, but not as the file its run recorded`,
+          );
+        }
+        this.#opened.set(slot, file);
+        for (const oldest of this.#opened.keys()) {
+          if (this.#opened.size <= MAX_OPENED_MODELS) {
+            break;
+          }
+          this.#opened.delete(oldest);
+        }
+        return file;
+      })().finally(() => this.#opening.delete(slot));
+      this.#opening.set(slot, opening);
+    }
+    return Buffer.from(await opening);
+  }
+
+  /** The key of a run's model token, from the MPC network through the collection. */
+  async #modelKey(contract: string, runId: string, mpcPublicKey: string): Promise<Buffer> {
+    const tokenId = modelTokenId(runId);
+    const keys = await fetchSampleKeys(
+      contract,
+      (_ids, appPublicKey) => this.#o.chain.requestModelKey(contract, runId, appPublicKey),
+      mpcPublicKey,
+      [tokenId],
+      1,
+    );
+    return keys.get(tokenId) as Buffer;
+  }
+
+  /**
+   * Seals what the run learned under its model token's key, stores it on
+   * FastFS and mints the token to the renter. When the mint's outcome is
+   * unknown, the chain is asked whether the token exists before trying again.
+   */
+  async #mint(state: RunState, classes: string[], head: Head, mpcPublicKey: string): Promise<void> {
+    const { chain } = this.#o;
+    const { contract, id: runId } = state;
+    const tokenId = modelTokenId(runId);
+    const key = await this.#modelKey(contract, runId, mpcPublicKey);
+    const blob = sealModel(key, {
+      v: 1,
+      kind: "model-head",
+      token_id: tokenId,
+      run_id: runId,
+      classes,
+      head,
+    });
+    const ref = await chain.fastfsStore(contract).put(blob);
+    const hash = sha256Base64(blob);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const tx = await chain.mintModel(contract, runId, hash, ref);
+        if (tx) {
+          state.mintTx = tx;
+        }
+        break;
+      } catch (error) {
+        const minted = await chain.getModel(contract, tokenId).catch(() => null);
+        if (minted?.sealed_ref === ref) {
+          break;
+        }
+        if (error instanceof ContractRefusal || attempt > 0) {
+          throw error;
+        }
+      }
+    }
+    state.modelToken = tokenId;
+  }
+
+  /**
+   * A collection is code its deployer chose: one a renter wrote could relay
+   * this app's signed calls elsewhere. Only the launchpad's are known to run
+   * the published collection code.
+   */
+  async #requireLaunched(contract: string, factoryId: string | null): Promise<void> {
+    const launchpad = this.#o.launchpadId;
+    if (
+      launchpad &&
+      (factoryId !== launchpad || !(await this.#o.chain.isLaunched(launchpad, contract)))
+    ) {
+      throw new BadRequest(`This trainer only trains on collections from ${launchpad}`);
+    }
+  }
+
+  /**
    * One `record_training` call. When the outcome is unknown, the chain is
    * asked whether it landed, and only if it didn't is the call tried again,
    * once; a refused or lost repeat is checked the same way.
@@ -279,16 +448,7 @@ export class Runs {
   async #check(contract: string, renter: string, tokenIds: string[]) {
     const { chain, appId } = this.#o;
     const collection = await chain.getCollection(contract);
-    // A collection is code its deployer chose: one a renter wrote could
-    // relay this app's signed calls elsewhere. Only the launchpad's are
-    // known to run the published collection code.
-    const launchpad = this.#o.launchpadId;
-    if (
-      launchpad &&
-      (collection.factory_id !== launchpad || !(await chain.isLaunched(launchpad, contract)))
-    ) {
-      throw new BadRequest(`This trainer only trains on collections from ${launchpad}`);
-    }
+    await this.#requireLaunched(contract, collection.factory_id);
     if (!collection.classes) {
       throw new BadRequest(`${contract} is not a dataset`);
     }
@@ -454,6 +614,15 @@ export class Runs {
       this.#models.set(state.id, result.model);
       state.accuracy = result.accuracy;
       state.modelSha256 = modelSha256;
+      // The run stands whether or not its token can be minted: the renter
+      // has paid, and the model is kept for them either way.
+      state.stage = "minting";
+      try {
+        await this.#mint(state, checked.classes, result.head, mpcPublicKey);
+      } catch (error) {
+        console.error(`Run ${state.id}: the model token was not minted`, describe(error));
+        state.mintProblem = MINT_PROBLEM;
+      }
       state.stage = "done";
       this.#finish(state.id);
     } catch (error) {
