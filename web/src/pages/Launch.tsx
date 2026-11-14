@@ -459,9 +459,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
         </p>
         <h1 className="text-[2.4rem] leading-[1.05] sm:text-6xl">Launch a collection</h1>
         <p className="mt-5 max-w-[40rem] text-lg leading-relaxed text-mist">
-          Every token in your collection shares one prompt and starts from the same context. From
-          there, each grows its own way through conversations with whoever owns it, and keeps what
-          it learned when it changes hands.
+          {isDataset
+            ? "Every token of a dataset holds one labelled picture, sealed so that nobody is shown it. Holders rent their samples to training apps, and a trained model comes back to the renter as a token of the same collection."
+            : "Every token in your collection shares one prompt and starts from the same context. From there, each grows its own way through conversations with whoever owns it, and keeps what it learned when it changes hands."}
         </p>
       </div>
 
@@ -754,10 +754,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                   onChange={() => setOwnImages(false)}
                 />
                 <span>
-                  Generated, and growing
+                  {isDataset ? "Generated" : "Generated, and growing"}
                   <span className="block text-sm text-mist">
-                    Each token gets the art in the preview, served by the keeper, so wallets and
-                    marketplaces see it change as the token grows.
+                    {isDataset
+                      ? "Each sample gets the art in the preview, served by the keeper to wallets and marketplaces. The picture it holds is never shown."
+                      : "Each token gets the art in the preview, served by the keeper, so wallets and marketplaces see it change as the token grows."}
                   </span>
                 </span>
               </label>
@@ -803,7 +804,11 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
             )}
           </Step>
 
-          <Step n={5} title="Who can open the tokens' minds" group>
+          <Step
+            n={5}
+            title={isDataset ? "Who seals the samples" : "Who can open the tokens' minds"}
+            group
+          >
             <div className="grid gap-3">
               <label className="option">
                 <input
@@ -821,8 +826,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                     </span>
                   )}
                   <span className="block text-sm text-mist">
-                    Only owners can read their token's context through the app, but the keeper's
-                    operator could read it too unless the keeper runs in a TEE.
+                    {isDataset
+                      ? "It seals each picture at launch. Whoever runs it could see the pictures then, unless it runs in a TEE."
+                      : "Only owners can read their token's context through the app, but the keeper's operator could read it too unless the keeper runs in a TEE."}
                   </span>
                 </span>
               </label>
@@ -836,9 +842,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
                 <span>
                   Only inside a Phala TEE app
                   <span className="block text-sm text-mist">
-                    Contexts are encrypted with keys that only this Phala Cloud app can get from
-                    dstack's key service. A keeper running as any other app refuses to serve the
-                    collection. This is fixed at launch.
+                    {isDataset
+                      ? "The pictures are sealed by a keeper running as this Phala Cloud app, and training apps must show the contract a TDX quote before they are given a key. This is fixed at launch."
+                      : "Contexts are encrypted with keys that only this Phala Cloud app can get from dstack's key service. A keeper running as any other app refuses to serve the collection. This is fixed at launch."}
                   </span>
                 </span>
               </label>
@@ -1021,7 +1027,9 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
             ))}
           </div>
           <p className="mt-2 text-sm text-mist">
-            Each token's art comes from its number and grows as it saves conversations.
+            {isDataset
+              ? "Each sample's art comes from its number. The picture it holds is never shown."
+              : "Each token's art comes from its number and grows as it saves conversations."}
           </p>
           {isDataset ? (
             <>

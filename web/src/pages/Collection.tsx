@@ -44,6 +44,66 @@ function Privacy({ tee }: { tee: TeeRequirement | null }) {
   );
 }
 
+/**
+ * Who is given a dataset's keys. Says plainly what a collection without a TEE
+ * requirement leaves to trust.
+ */
+function DatasetPrivacy({
+  tee,
+  keySource,
+}: {
+  tee: TeeRequirement | null;
+  keySource: { mpc_contract_id: string; domain_id: number } | null;
+}) {
+  return (
+    <section className="card" aria-labelledby="privacy">
+      <h2 id="privacy" className="card-title">
+        Who can open the samples
+      </h2>
+      <ul className="mt-4 space-y-4">
+        <Point icon="lock">
+          {tee ? (
+            <p className="text-sm leading-relaxed text-mist">
+              <span className="font-bold text-glow">Only apps that prove where they run.</span>{" "}
+              Nobody is shown a picture in this app, its holder included. The keeper that sealed the
+              samples (Phala app{" "}
+              <span className="break-all font-mono text-cream">{tee.Phala.app_id}</span>) and every
+              training app must show this contract a TDX quote naming their app before they are
+              given a key.
+            </p>
+          ) : (
+            <p className="text-sm leading-relaxed text-mist">
+              <span className="font-bold text-cream">Training apps only.</span> Nobody is shown a
+              picture in this app, its holder included. This collection doesn't require a TEE,
+              though: the keeper that sealed the samples and the training apps its creator vouches
+              for run where their operators could read what they open.
+            </p>
+          )}
+        </Point>
+        {keySource && (
+          <Point icon="key">
+            <p className="text-sm leading-relaxed text-mist">
+              <span className="font-bold text-cream">Keys from NEAR's MPC network.</span> Each
+              sample has a key of its own, which the network (
+              <span className="font-mono">{keySource.mpc_contract_id}</span>, domain{" "}
+              {keySource.domain_id}) derives for this collection's account alone. The contract
+              passes it to the keeper to seal the sample, and after that only to the training app
+              the sample is rented to, until that app records its run.
+            </p>
+          </Point>
+        )}
+        <Point icon="shield">
+          <p className="text-sm leading-relaxed text-mist">
+            <span className="font-bold text-cream">Models are sealed the same way.</span> What a run
+            learns is minted to the renter as a token. Only the app that trained it is given its
+            key, and it opens the model for whoever owns the token.
+          </p>
+        </Point>
+      </ul>
+    </section>
+  );
+}
+
 /** One figure about the collection, with a bar when it fills toward a limit. */
 function Stat({ label, value, share }: { label: string; value: string; share?: number }) {
   return (
@@ -162,6 +222,7 @@ export function Collection() {
                 {shorten(s.admin_id, 12)}
               </span>
             </span>
+            {dataset && <span className="chip text-mist">Dataset</span>}
             {c.tee && (
               <span className="chip chip-accent">
                 <Icon name="lock" size={14} />
@@ -172,131 +233,164 @@ export function Collection() {
         </div>
       </div>
 
-      <dl className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Mint price" value={`${formatNear(s.mint_price)} NEAR`} />
-        <Stat
-          label="Minted"
-          value={`${c.minted}${c.max_supply !== null ? ` of ${c.max_supply}` : ""}`}
-          share={c.max_supply ? Number(c.minted) / Number(c.max_supply) : undefined}
-        />
-        <Stat label="Royalty" value={`${c.terms.royalty_bps / 100}%`} />
-        <Stat
-          label="Per message"
-          value={`${formatNear(home ? prices.chat : pricesFor(c.terms, prices).chat, 6)} NEAR`}
-        />
-      </dl>
+      {dataset ? (
+        // A dataset has no mint and no conversations: what counts is what it holds.
+        <dl className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="Sealed samples" value={c.minted} />
+          <Stat label="Classes" value={String(dataset.classes.length)} />
+          <Stat label="A rental buys" value="1 training run" />
+          <Stat label="Royalty" value={`${c.terms.royalty_bps / 100}%`} />
+        </dl>
+      ) : (
+        <dl className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="Mint price" value={`${formatNear(s.mint_price)} NEAR`} />
+          <Stat
+            label="Minted"
+            value={`${c.minted}${c.max_supply !== null ? ` of ${c.max_supply}` : ""}`}
+            share={c.max_supply ? Number(c.minted) / Number(c.max_supply) : undefined}
+          />
+          <Stat label="Royalty" value={`${c.terms.royalty_bps / 100}%`} />
+          <Stat
+            label="Per message"
+            value={`${formatNear(home ? prices.chat : pricesFor(c.terms, prices).chat, 6)} NEAR`}
+          />
+        </dl>
+      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start lg:gap-8">
         <div className="min-w-0 space-y-5">
-          <div className="card space-y-6">
-            <section aria-labelledby="prompt">
-              <h2 id="prompt" className="card-title">
-                The prompt every token shares
-              </h2>
-              <p className="mt-3 whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
-                {c.prompt}
-              </p>
-            </section>
-            <section aria-labelledby="starter">
-              <h2 id="starter" className="eyebrow">
-                Where each token starts
-              </h2>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{c.starter}</p>
-              <p className="mt-2 text-sm text-mist">
-                From here it changes only through conversations with its owner.
-              </p>
-            </section>
-          </div>
-          <section className="card" aria-labelledby="privacy">
-            <h2 id="privacy" className="card-title">
-              Who can open the tokens' minds
-            </h2>
-            <ul className="mt-4 space-y-4">
-              <Point icon="lock">
-                <Privacy tee={c.tee} />
-              </Point>
-              {c.key_source ? (
-                <Point icon="key">
-                  <p className="text-sm leading-relaxed text-mist">
-                    <span className="font-bold text-cream">Keys from NEAR's MPC network.</span> Each
-                    token's key derives from a key the network (
-                    <span className="font-mono">{c.key_source.mpc_contract_id}</span>, domain{" "}
-                    {c.key_source.domain_id}) makes for this collection's account alone, and hands
-                    only to the keeper this contract names. No keeper holds a key of its own that
-                    could open them, and a new keeper can take over without anything being handed
-                    across.
+          {dataset ? (
+            <>
+              <DatasetSection
+                contractId={contractId}
+                reader={reader}
+                classes={dataset.classes}
+                classCounts={c.class_counts}
+                accountId={wallet.accountId}
+              />
+              <DatasetPrivacy tee={c.tee} keySource={c.key_source ?? null} />
+              <section className="card" aria-labelledby="terms">
+                <h2 id="terms" className="card-title">
+                  Terms
+                </h2>
+                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2.5 text-sm">
+                  <dt className="text-mist">Rental fee</dt>
+                  <dd>Set by each holder, and paid straight to them</dd>
+                  <dt className="text-mist">One rental</dt>
+                  <dd>One training run by the app the renter names</dd>
+                  <dt className="text-mist">Royalty on resales</dt>
+                  <dd>{c.terms.royalty_bps / 100}%, to the creator</dd>
+                </dl>
+                <p className="hint mt-4">Everything here is fixed at launch.</p>
+              </section>
+            </>
+          ) : (
+            <>
+              <div className="card space-y-6">
+                <section aria-labelledby="prompt">
+                  <h2 id="prompt" className="card-title">
+                    The prompt every token shares
+                  </h2>
+                  <p className="mt-3 whitespace-pre-wrap rounded-xl bg-black/35 p-4 text-sm leading-relaxed ring-1 ring-cream/8">
+                    {c.prompt}
                   </p>
-                </Point>
-              ) : (
-                <Point icon="key">
-                  <p className="text-sm leading-relaxed text-mist">
-                    Keys come from the keeper's own secret.
+                </section>
+                <section aria-labelledby="starter">
+                  <h2 id="starter" className="eyebrow">
+                    Where each token starts
+                  </h2>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{c.starter}</p>
+                  <p className="mt-2 text-sm text-mist">
+                    From here it changes only through conversations with its owner.
                   </p>
-                </Point>
-              )}
-              {c.wallet_code_hash != null && (
-                <Point icon="wallet">
-                  <p className="text-sm leading-relaxed text-mist">
-                    <span className="font-bold text-cream">
-                      Every token can have its own wallet
-                    </span>
-                    : a NEAR account with no keys, which only this contract can send from. Its owner
-                    can always send from it; the token itself only within what its owner allows. It
-                    goes with the token the moment it changes hands.
-                  </p>
-                </Point>
-              )}
-              {c.history_import && (
-                <Point icon="download">
-                  <p className="text-sm leading-relaxed text-mist">
-                    <span className="font-bold text-cream">
-                      Owners can teach their token their chat history
-                    </span>
-                    : a ChatGPT or Claude export, trimmed to their own messages and sealed in their
-                    browser to the keeper. The token keeps only what it learns.
-                  </p>
-                </Point>
-              )}
-              {c.sealed_prompt && (
-                <Point icon="shield">
-                  <p className="text-sm leading-relaxed text-mist">
-                    <span className="font-bold text-cream">It also has secret instructions</span>,
-                    sealed to key{" "}
-                    <span className="font-mono">{shorten(c.sealed_prompt.sealed_to, 8)}</span>.{" "}
-                    {c.sealed_key_attested
-                      ? "The contract has verified that this key lives inside the app."
-                      : "The contract hasn't yet verified a keeper holding this key inside the app."}
-                  </p>
-                </Point>
-              )}
-            </ul>
-          </section>
-          <section className="card" aria-labelledby="terms">
-            <h2 id="terms" className="card-title">
-              Terms
-            </h2>
-            <Terms terms={c.terms} />
-            <p className="hint mt-4">
-              {c.base_uri
-                ? `Token images are at ${c.base_uri}<number>.${c.media_extension}.`
-                : "Token images exist only in this app."}{" "}
-              Everything here is fixed at launch.
-            </p>
-          </section>
-          {dataset && (
-            <DatasetSection
-              contractId={contractId}
-              reader={reader}
-              classes={dataset.classes}
-              classCounts={c.class_counts}
-              accountId={wallet.accountId}
-            />
+                </section>
+              </div>
+              <section className="card" aria-labelledby="privacy">
+                <h2 id="privacy" className="card-title">
+                  Who can open the tokens' minds
+                </h2>
+                <ul className="mt-4 space-y-4">
+                  <Point icon="lock">
+                    <Privacy tee={c.tee} />
+                  </Point>
+                  {c.key_source ? (
+                    <Point icon="key">
+                      <p className="text-sm leading-relaxed text-mist">
+                        <span className="font-bold text-cream">Keys from NEAR's MPC network.</span>{" "}
+                        Each token's key derives from a key the network (
+                        <span className="font-mono">{c.key_source.mpc_contract_id}</span>, domain{" "}
+                        {c.key_source.domain_id}) makes for this collection's account alone, and
+                        hands only to the keeper this contract names. No keeper holds a key of its
+                        own that could open them, and a new keeper can take over without anything
+                        being handed across.
+                      </p>
+                    </Point>
+                  ) : (
+                    <Point icon="key">
+                      <p className="text-sm leading-relaxed text-mist">
+                        Keys come from the keeper's own secret.
+                      </p>
+                    </Point>
+                  )}
+                  {c.wallet_code_hash != null && (
+                    <Point icon="wallet">
+                      <p className="text-sm leading-relaxed text-mist">
+                        <span className="font-bold text-cream">
+                          Every token can have its own wallet
+                        </span>
+                        : a NEAR account with no keys, which only this contract can send from. Its
+                        owner can always send from it; the token itself only within what its owner
+                        allows. It goes with the token the moment it changes hands.
+                      </p>
+                    </Point>
+                  )}
+                  {c.history_import && (
+                    <Point icon="download">
+                      <p className="text-sm leading-relaxed text-mist">
+                        <span className="font-bold text-cream">
+                          Owners can teach their token their chat history
+                        </span>
+                        : a ChatGPT or Claude export, trimmed to their own messages and sealed in
+                        their browser to the keeper. The token keeps only what it learns.
+                      </p>
+                    </Point>
+                  )}
+                  {c.sealed_prompt && (
+                    <Point icon="shield">
+                      <p className="text-sm leading-relaxed text-mist">
+                        <span className="font-bold text-cream">
+                          It also has secret instructions
+                        </span>
+                        , sealed to key{" "}
+                        <span className="font-mono">{shorten(c.sealed_prompt.sealed_to, 8)}</span>.{" "}
+                        {c.sealed_key_attested
+                          ? "The contract has verified that this key lives inside the app."
+                          : "The contract hasn't yet verified a keeper holding this key inside the app."}
+                      </p>
+                    </Point>
+                  )}
+                </ul>
+              </section>
+              <section className="card" aria-labelledby="terms">
+                <h2 id="terms" className="card-title">
+                  Terms
+                </h2>
+                <Terms terms={c.terms} />
+                <p className="hint mt-4">
+                  {c.base_uri
+                    ? `Token images are at ${c.base_uri}<number>.${c.media_extension}.`
+                    : "Token images exist only in this app."}{" "}
+                  Everything here is fixed at launch.
+                </p>
+              </section>
+            </>
           )}
           <KeeperPanel
             contractId={contractId}
             collection={c}
             adminId={s.admin_id}
             keeperId={s.keeper_id}
+            dataset={dataset !== null}
             onChange={() => {
               reader.forget();
               void reloadCollection();
@@ -306,7 +400,28 @@ export function Collection() {
         </div>
 
         <div className="lg:sticky lg:top-5">
-          {soldOut ? (
+          {dataset ? (
+            <section className="card" aria-labelledby="how">
+              <h2 id="how" className="card-title">
+                How it works
+              </h2>
+              <ol className="mt-4 space-y-3 text-sm leading-relaxed text-mist">
+                {[
+                  "Holders list their samples for rent to a training app, each at their own fee.",
+                  "A renter takes as many as they need in one transaction. The fees go straight to the holders.",
+                  "The training app opens the rented samples, trains on them and records the run on-chain. Each rental is used up by that one run.",
+                  "The renter gets the model, minted to them as a token of this collection. Nobody is shown a picture.",
+                ].map((step, index) => (
+                  <li key={step} className="flex gap-3">
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-glow/10 font-mono text-xs text-glow ring-1 ring-glow/25">
+                      {index + 1}
+                    </span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : soldOut ? (
             <p className="card text-mist">All {c.max_supply} have been minted.</p>
           ) : (
             <MintPanel
@@ -322,7 +437,7 @@ export function Collection() {
               {minted ? `Minted ${c.name} #${minted}.` : "Minted."} It's listed under "Yours" below.
             </p>
           )}
-          {!home && <KeeperNote contractId={contractId} keeperId={s.keeper_id} />}
+          {!home && !dataset && <KeeperNote contractId={contractId} keeperId={s.keeper_id} />}
         </div>
       </div>
 
@@ -356,7 +471,9 @@ export function Collection() {
                       <span className="text-sm text-mist">
                         {isModel
                           ? "Trained model, sealed"
-                          : (home ? STAGE_NAMES : PLAIN_STAGE_NAMES)[stageOf(version)]}
+                          : dataset
+                            ? "Sealed sample"
+                            : (home ? STAGE_NAMES : PLAIN_STAGE_NAMES)[stageOf(version)]}
                       </span>
                     </span>
                   </>
@@ -457,12 +574,15 @@ function KeeperPanel({
   collection,
   adminId,
   keeperId,
+  dataset = false,
   onChange,
 }: {
   contractId: string;
   collection: CollectionView;
   adminId: string;
   keeperId: string;
+  /** A dataset's keeper sealed the samples at launch; it keeps no minds. */
+  dataset?: boolean;
   onChange: () => void;
 }) {
   const wallet = useWallet();
@@ -494,17 +614,26 @@ function KeeperPanel({
       <h2 id="keeper" className="card-title">
         Keeper
       </h2>
-      <p className="mt-2 text-sm leading-relaxed text-mist">
-        Kept by <span className="font-mono text-cream">{keeperId}</span>
-        {epoch !== undefined && (
-          <>
-            , under key epoch <span className="text-cream">{epoch}</span>. The epoch moves on
-            whenever the keeper changes, so a keeper that is replaced can't read anything saved
-            after it left
-          </>
-        )}
-        .
-      </p>
+      {dataset && (
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          <span className="font-mono text-cream">{keeperId}</span> sealed the samples at launch. The
+          contract gives it a sample's key only before that sample is sealed; since then the keys go
+          to training apps alone.
+        </p>
+      )}
+      {!dataset && (
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          Kept by <span className="font-mono text-cream">{keeperId}</span>
+          {epoch !== undefined && (
+            <>
+              , under key epoch <span className="text-cream">{epoch}</span>. The epoch moves on
+              whenever the keeper changes, so a keeper that is replaced can't read anything saved
+              after it left
+            </>
+          )}
+          .
+        </p>
+      )}
       {isAdmin && (
         <div className="mt-5 space-y-3 rounded-xl bg-black/25 p-4 ring-1 ring-cream/8">
           <p className="eyebrow">Creator controls</p>
