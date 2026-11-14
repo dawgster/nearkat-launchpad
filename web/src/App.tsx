@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from "react-router";
+import { DemoGuide } from "./components/DemoGuide.tsx";
 import { Shell } from "./components/Shell.tsx";
 import type { AppConfig } from "./lib/config.ts";
 import { Collection } from "./pages/Collection.tsx";
@@ -25,6 +26,7 @@ export function App({ config, backend }: { config: AppConfig; backend: WalletBac
     <WalletProvider backend={backend}>
       <ServicesProvider config={config}>
         <BrowserRouter>
+          <DemoGuide />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route
