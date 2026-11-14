@@ -21,7 +21,7 @@ Contents: [The story](#the-story) · [The idea](#the-idea) · [Try it](#try-it) 
 [Applications](#applications-toward-a-decentralized-hugging-face) ·
 [Site map](#site-map) · [Code map](#code-map-a-guide-for-agents) ·
 [Feature → evidence](#feature--evidence) · [Limits](#limits) ·
-[Hackathon disclosure](#hackathon-disclosure)
+[Hackathon disclosure](#hackathon-disclosure) · [License](#license)
 
 ## The story
 
@@ -490,3 +490,8 @@ a reader should know which guarantees have been exercised.
   and, in the TEE design, Phala Cloud / dstack on Intel TDX.
 - **AI assistance.** Much of the code was written with Claude Code; commit
   trailers say where.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The demo dataset is not part of this repository
+and has its own license (AGPL-3.0, see [Limits](#limits)).
