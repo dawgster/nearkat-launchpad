@@ -16,6 +16,12 @@ export interface AppConfig {
    * here can't be trained with from this app.
    */
   trainers: Record<string, TrainerConfig>;
+  /**
+   * The presenter's guide (see DemoGuide): the dataset collection it walks
+   * through, and the accounts it appears for as soon as they connect. Null
+   * leaves the guide to `?demo=` in the address.
+   */
+  demoGuide: { collection: string; accounts: string[] } | null;
 }
 
 export interface TrainerConfig {
@@ -76,6 +82,27 @@ function trainers(
   );
 }
 
+/**
+ * `VITE_DEMO_GUIDE`: `{ "collection": "<account>", "accounts": ["<account>", ...] }`.
+ * Anything else means no guide: a presenter's aid must never stop the app.
+ */
+function demoGuide(value: string | undefined): AppConfig["demoGuide"] {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as { collection?: unknown; accounts?: unknown };
+    const accounts = Array.isArray(parsed.accounts)
+      ? parsed.accounts.filter((a): a is string => typeof a === "string")
+      : [];
+    return typeof parsed.collection === "string" && parsed.collection
+      ? { collection: parsed.collection, accounts }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function loadConfig(env: Env, options: { production?: boolean } = {}): AppConfig {
   const contractId = env.VITE_CONTRACT_ID;
   if (!contractId) {
@@ -111,6 +138,7 @@ export function loadConfig(env: Env, options: { production?: boolean } = {}): Ap
     factoryId: env.VITE_FACTORY_ID || null,
     devWallet,
     trainers: trainers(env.VITE_TRAINER_URLS, authRecipient),
+    demoGuide: demoGuide(env.VITE_DEMO_GUIDE),
   };
 }
 

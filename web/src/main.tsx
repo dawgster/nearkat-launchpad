@@ -19,6 +19,7 @@ try {
       VITE_AUTH_RECIPIENT: import.meta.env.VITE_AUTH_RECIPIENT,
       VITE_FACTORY_ID: import.meta.env.VITE_FACTORY_ID,
       VITE_TRAINER_URLS: import.meta.env.VITE_TRAINER_URLS,
+      VITE_DEMO_GUIDE: import.meta.env.VITE_DEMO_GUIDE,
       ...(import.meta.env.DEV
         ? {
             VITE_DEV_WALLET_ID: import.meta.env.VITE_DEV_WALLET_ID,

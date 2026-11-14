@@ -2,16 +2,16 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
-import { DemoGuide, demoSteps } from "../src/components/DemoGuide.tsx";
+import { DemoGuideBar, demoSteps } from "../src/components/DemoGuide.tsx";
 
 function Where() {
   return <p data-testid="where">{useLocation().pathname}</p>;
 }
 
-const at = (entry: string) =>
+const at = (entry: string, auto: string | null = null) =>
   render(
     <MemoryRouter initialEntries={[entry]}>
-      <DemoGuide />
+      <DemoGuideBar auto={auto} />
       <Where />
     </MemoryRouter>,
   );
@@ -19,6 +19,7 @@ const at = (entry: string) =>
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 describe("DemoGuide", () => {
@@ -53,6 +54,21 @@ describe("DemoGuide", () => {
     cleanup();
     at("/kat/2");
     expect(screen.queryByLabelText("Demo guide")).toBeNull();
+  });
+
+  it("appears for a guided account, and stays closed for the visit once closed", async () => {
+    at("/", "hotdogs.pad.testnet");
+    expect((await screen.findByLabelText("Demo guide")).textContent).toContain("1 / ");
+    await userEvent.click(screen.getByRole("button", { name: "Close the demo guide" }));
+    expect(screen.queryByLabelText("Demo guide")).toBeNull();
+    cleanup();
+    at("/", "hotdogs.pad.testnet");
+    expect(screen.queryByLabelText("Demo guide")).toBeNull();
+    // A new visit: it is back.
+    cleanup();
+    sessionStorage.clear();
+    at("/", "hotdogs.pad.testnet");
+    expect(await screen.findByLabelText("Demo guide")).toBeTruthy();
   });
 
   it("ignores an address that isn't an account name", () => {

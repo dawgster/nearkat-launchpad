@@ -30,6 +30,7 @@ ARG VITE_FACTORY_ID
 ARG VITE_AUTH_RECIPIENT
 ARG VITE_NEAR_RPC_URL
 ARG VITE_TRAINER_URLS
+ARG VITE_DEMO_GUIDE
 # Typechecking runs with the tests; the image only needs the bundle.
 RUN cd web && npx vite build
 

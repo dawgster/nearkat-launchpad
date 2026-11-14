@@ -14,6 +14,7 @@ describe("loadConfig", () => {
       factoryId: null,
       devWallet: null,
       trainers: {},
+      demoGuide: null,
     });
   });
 

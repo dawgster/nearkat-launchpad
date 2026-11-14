@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { useServices } from "../services.tsx";
+import { useWallet } from "../wallet/WalletProvider.tsx";
 
 /**
  * A walkthrough for presenting the app: a bar at the foot of the page with
  * the next thing to show, a line to say, and a button that goes there. It
- * appears only when the address carries `?demo=<dataset collection>`, and then
- * stays through navigation and reloads until it is closed.
+ * appears when the address carries `?demo=<dataset collection>`, or when one
+ * of the accounts the app is configured to guide connects its wallet. It then
+ * stays through navigation, reloads and new visits, at the step it was on,
+ * until it is closed; closing lasts for that visit.
  */
 interface Step {
   title: string;
@@ -18,6 +22,8 @@ interface Step {
 }
 
 const KEY = "demo-guide";
+/** Set for the rest of a visit once the guide is closed, so it doesn't come straight back. */
+const CLOSED = "demo-guide-closed";
 
 export function demoSteps(collection: string): Step[] {
   const page = `/c/${collection}`;
@@ -103,7 +109,7 @@ function load(search: string): Saved | null {
     return { collection: asked, step: 0, small: false };
   }
   try {
-    const raw = sessionStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY);
     const saved = raw ? (JSON.parse(raw) as Partial<Saved>) : null;
     if (saved && typeof saved.collection === "string" && typeof saved.step === "number") {
       return { collection: saved.collection, step: saved.step, small: saved.small === true };
@@ -114,23 +120,57 @@ function load(search: string): Saved | null {
   return null;
 }
 
+function wasClosed(): boolean {
+  try {
+    return sessionStorage.getItem(CLOSED) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** The guide, for whoever the app is configured to guide. */
 export function DemoGuide() {
+  const { config } = useServices();
+  const { accountId } = useWallet();
+  const guided =
+    config.demoGuide && accountId !== null && config.demoGuide.accounts.includes(accountId)
+      ? config.demoGuide.collection
+      : null;
+  return <DemoGuideBar auto={guided} />;
+}
+
+/** `auto`: the collection to start a guide for when none is going, or null. */
+export function DemoGuideBar({ auto }: { auto: string | null }) {
   const location = useLocation();
   const navigate = useNavigate();
   // Read once: the address only switches the guide on.
   const [guide, setGuide] = useState<Saved | null>(() => load(location.search));
 
   useEffect(() => {
+    if (auto && !guide && !wasClosed()) {
+      setGuide({ collection: auto, step: 0, small: false });
+    }
+  }, [auto, guide]);
+
+  useEffect(() => {
     try {
       if (guide) {
-        sessionStorage.setItem(KEY, JSON.stringify(guide));
-      } else {
-        sessionStorage.removeItem(KEY);
+        localStorage.setItem(KEY, JSON.stringify(guide));
       }
     } catch {
       // Without storage the guide lasts until the page is reloaded.
     }
   }, [guide]);
+
+  const close = () => {
+    try {
+      localStorage.removeItem(KEY);
+      sessionStorage.setItem(CLOSED, "1");
+    } catch {
+      // Without storage it may come back on the next page load.
+    }
+    setGuide(null);
+  };
 
   if (!guide) {
     return null;
@@ -176,11 +216,7 @@ export function DemoGuide() {
           Back
         </button>
         {last ? (
-          <button
-            type="button"
-            className="button !px-4 !py-1.5 text-sm"
-            onClick={() => setGuide(null)}
-          >
+          <button type="button" className="button !px-4 !py-1.5 text-sm" onClick={close}>
             Done
           </button>
         ) : (
@@ -196,7 +232,7 @@ export function DemoGuide() {
           type="button"
           className="text-mist"
           aria-label="Close the demo guide"
-          onClick={() => setGuide(null)}
+          onClick={close}
         >
           ✕
         </button>
