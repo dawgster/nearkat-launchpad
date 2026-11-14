@@ -1,3 +1,6 @@
 data/
 web/public/heldout/
 trainer/heldout/
+
+# Local only: the explainer video project
+/explainer/
