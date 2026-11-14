@@ -12,7 +12,8 @@ derivation), released only to that attested code. Two kinds of collection:
 - **Dataset collections.** Each token is one encrypted training sample (an
   image and its label). Holders can rent samples to a training app for a fee
   and a time limit; the app trains inside a TEE and records the run on-chain.
-  Neither the renter nor the holder sees the others' data.
+  Neither the renter nor the holder sees the others' data. The trained model
+  becomes a token of the same collection, sealed the same way.
 
 ## The dataset flow
 
@@ -27,7 +28,13 @@ derivation), released only to that attested code. Two kinds of collection:
    for the samples' keys, decrypts them in memory, fits a linear SVM on frozen
    MobileNetV3-Large features on a CPU (`trainer/py`), scores it on a held-out set, and records the run on-chain,
    which spends the rentals.
-4. The renter downloads the ONNX model and can try it on a photo in the browser.
+4. The training app seals what the run learned (the classifier's weights, a
+   few kilobytes) under a key of its own from NEAR's MPC network, stores it on
+   FastFS and mints it to the renter as the token `model-<run id>`. Only the
+   app that trained it can get that key again. It opens the model for whoever
+   owns the token, so the model can be given away or sold like any NFT.
+5. The renter downloads the ONNX model, from the run or later from the token's
+   page, and can try it on a photo in the browser.
 
 ## Layout
 
@@ -92,6 +99,19 @@ deploying to Phala (not done yet) is in `docs/demo/phala.md`.
 - **Trained models can leak.** A model can reveal some information about its
   training data (memorisation, membership inference). The renter receives the
   model, not the samples, but that is not the same as no leakage.
+- **A model token seals the model at rest, not from its owner.** What sits on
+  FastFS is encrypted, and only the app that trained the model can get its
+  key. But the app hands the model file to the token's owner, and a file once
+  downloaded can be copied: a later owner cannot know that earlier owners kept
+  none. That the app opens it only for the owner rests on its attested code;
+  the chain controls only which app gets the key. The sealed part is the
+  classifier's weights; the rest of the model is the public MobileNetV3-Large
+  backbone, named by its hash.
+- **A model token's file is rebuilt, and the result depends on the app's
+  libraries.** The app puts the sealed weights and the backbone together into
+  the file whose SHA-256 the run recorded. The same image rebuilds it byte for
+  byte; an app updated to other library versions may not, and then refuses to
+  hand it out rather than give a file that doesn't match the record.
 - **The dataset is AGPL-3.0.** The hotdog / not-hotdog images are
   `truepositive/hotdog_nothotdog` (AGPL-3.0), fetched at a pinned commit by
   `scripts/fetch-hotdog.sh` and never committed to this repository. The

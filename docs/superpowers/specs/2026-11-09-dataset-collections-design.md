@@ -277,6 +277,36 @@ A run page shows the `record_training` transaction, the training app's id and
 attested key, the code hash of the app, the key requests that preceded it, and
 the model hash. The existing verify page covers the ingest app.
 
+### The model as a token (added 14 Nov)
+
+The run's output is a token of the same collection, sealed like its inputs.
+After `record_training`, the training app:
+
+1. asks the collection for the key of `model-<run_id>` with
+   `request_model_key(run_id, app_public_key)`: the same per-token CKD path
+   as a sample (`nearkat/samples/v1/model-<run_id>`), released only to the
+   app that recorded the run;
+2. seals what the run learned under it: the SVM's weights (960 a class and a
+   bias, a few KB), with the classes and the backbone's SHA-256. The full
+   12 MB file is mostly the public backbone and would take a dozen FastFS
+   transactions, so only the trained part is stored;
+3. stores the blob on FastFS and calls `mint_model(run_id, sealed_hash,
+   sealed_ref)`, which mints the token to the run's renter.
+
+Opening it: the token's owner signs in to the training app
+(`GET /models/:contract/:token_id`). The app checks the owner on-chain, gets
+the key again, opens the head and rebuilds the ONNX file with the backbone
+(`py/assemble.py`). The file is byte for byte the one the run exported, so the
+page checks it against the run's `model_sha256` as before. The model now
+outlives the app's 24-hour memory and follows the token when it changes
+hands.
+
+Limits, stated in the README: the owner receives the file, so sealing
+protects the model at rest and from everyone but its owners, not from an
+owner who keeps a copy; "only for the owner" rests on the attested app, as a
+rental's single use does; a model token can't be lent yet (the lending and
+key rules for it would be `request_sample_keys`', but no app consumes one).
+
 ## Demo script (testnet)
 
 1. Before the demo, on a real Phala CVM running the ingest app and the training

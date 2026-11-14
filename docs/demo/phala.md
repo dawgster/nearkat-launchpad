@@ -239,7 +239,11 @@ own key on the collection the first time (`register_app_key`, attested).
 
 Go / no-go: training under 60 s; held-out accuracy about 90% (85–92%); the run
 is on-chain (`recordTx` on `GET <trainer-url>/runs/<id>`); rented samples
-cannot be rented again. Fallback script: see `docs/demo/hotdog.md`.
+cannot be rented again; the run has a `modelToken` and no `mintProblem`, and
+"Open the model" on the token's page ends with "The file matches the hash
+recorded on-chain" (the trainer's account pays for the FastFS upload and
+attaches 0.1 NEAR to `mint_model`, most of it refunded). Fallback script: see
+`docs/demo/hotdog.md`.
 
 ## 8. Commit
 

@@ -71,13 +71,26 @@ skipped. If its keys fail, check `~/.near-credentials/testnet/`.
    requests on-chain, then the progress for under a minute. Accuracy appears
    (expect about 90% on the 50 held-out images: a linear SVM on frozen
    MobileNetV3-Large features), the run is recorded on-chain, and the model
-   (about 12 MB) downloads. *Fallback:* if
+   (about 12 MB) downloads. The last step, "Sealing the model as a token",
+   takes about 15 more seconds (one MPC request, one FastFS upload, one
+   mint). *Fallback:* if
    training stalls past 90 seconds, say so, switch to `<recorded-run-url>`, and
-   continue with `<model-file>`.
+   continue with `<model-file>`. If only the token fails ("The model wasn't
+   minted as a token"), the run and the download still stand: say so and go on.
 4. **Try it.** Drop a hotdog photo on the page: it says "hotdog". Open a sample's
    page: it shows it earned rent and trained model #1 for `<app-id>`.
    *Fallback:* load `<model-file>` in the same try box.
-5. *(Stretch)* A second training app rents the same samples and gets a
+5. **The model is a token too.** Follow the "Model token" link under the run:
+   `model-<run id>`, owned by `<renter>`, with the run, the accuracy and the
+   model file's hash from the chain, and no weights in sight. Press "Open the
+   model": the training app checks the owner, gets the token's key and rebuilds
+   the file (about 15 seconds), the page checks its hash against the chain, and
+   the same photo says "hotdog" again. Say what is sealed: the classifier the
+   run learned, on a public backbone. *Fallback:* if opening stalls, show the
+   token's record and its `mint_model` transaction, and skip the photo.
+6. *(Stretch)* Give the model token to another account and open it there: the
+   model follows the token, and `<renter>` is now refused. *Fallback:* skip.
+7. *(Stretch)* A second training app rents the same samples and gets a
    different model. *Fallback:* skip.
 
 If time allows, launch a small folder live, as in "Before the demo", step 3.
