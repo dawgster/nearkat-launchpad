@@ -1065,9 +1065,14 @@ function LaunchForm({ launchpad }: { launchpad: Launchpad }) {
       </div>
 
       <section className="mt-20" aria-labelledby="launched">
-        <h2 id="launched" className="text-3xl">
-          Launched so far
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 id="launched" className="text-3xl">
+            Launched so far
+          </h2>
+          <Link to="/collections" className="link text-sm">
+            All collections
+          </Link>
+        </div>
         {listing.status === "ready" && listing.data.length === 0 && (
           <p className="card mt-6 text-mist">Nothing yet. Yours could be the first.</p>
         )}

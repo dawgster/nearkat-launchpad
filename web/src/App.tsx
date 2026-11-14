@@ -3,6 +3,7 @@ import { DemoGuide } from "./components/DemoGuide.tsx";
 import { Shell } from "./components/Shell.tsx";
 import type { AppConfig } from "./lib/config.ts";
 import { Collection } from "./pages/Collection.tsx";
+import { Collections } from "./pages/Collections.tsx";
 import { Home } from "./pages/Home.tsx";
 import { Kat } from "./pages/Kat.tsx";
 import { Launch } from "./pages/Launch.tsx";
@@ -46,6 +47,7 @@ export function App({ config, backend }: { config: AppConfig; backend: WalletBac
               }
             />
             <Route path="/launch" element={<Launch />} />
+            <Route path="/collections" element={<Collections />} />
             <Route path="/c/:contractId" element={<Collection />} />
             <Route
               path="/c/:contractId/kat/:id"

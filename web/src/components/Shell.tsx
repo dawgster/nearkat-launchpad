@@ -107,6 +107,9 @@ export function Shell({
               <Mark />
               Nearkat burrow
             </Link>
+            <NavLink to="/collections" className={navLink}>
+              Collections
+            </NavLink>
             {launchpad && (
               <NavLink to="/launch" className={navLink}>
                 Launchpad
