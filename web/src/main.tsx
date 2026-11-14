@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import "./index.css";
 import { loadConfig } from "./lib/config.ts";
+import { installPoliteRpc } from "./lib/rpcFetch.ts";
 import { connectorBackend, devBackend } from "./wallet/backend.ts";
 
 const root = createRoot(document.getElementById("root") as HTMLElement);
@@ -27,6 +28,8 @@ try {
     },
     { production: import.meta.env.PROD },
   );
+  // Public endpoints refuse bursts, and a dataset page reads hundreds of samples.
+  installPoliteRpc(config.networkId, config.rpcUrl);
   const backend = config.devWallet ? devBackend(config) : connectorBackend(config);
   root.render(
     <StrictMode>

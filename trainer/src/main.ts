@@ -3,6 +3,7 @@ import { Near, verifyNep413Signature } from "near-kit";
 import { Auth } from "../../keeper/src/auth.ts";
 import { transactionArgsFrom } from "../../keeper/src/chain.ts";
 import { keysFromRootSecret, localRootSecret } from "../../keeper/src/keys.ts";
+import { installPoliteRpc } from "../../keeper/src/rpcFetch.ts";
 import {
   DstackAgent,
   keyProof,
@@ -34,6 +35,8 @@ const quote = dstack ? await dstack.getQuote(reportDataFor(publicKey, sealKey)) 
 
 // The key is the full-access key of the trainer's account: record_training and
 // register_app_key take deposits, and the latter is signed by the key it registers.
+// Public endpoints refuse bursts; see rpcFetch.ts.
+installPoliteRpc(config.network, config.rpcUrl);
 const near = new Near({
   network: config.rpcUrl
     ? {

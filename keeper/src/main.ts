@@ -19,6 +19,7 @@ import { KatService } from "./kats.ts";
 import { keysFromRootSecret, localRootSecret } from "./keys.ts";
 import { FileLoanCounter } from "./loans.ts";
 import { FileJournal, Meter } from "./meter.ts";
+import { installPoliteRpc } from "./rpcFetch.ts";
 import { type ContextStore, FileStore, MirroredStore } from "./store.ts";
 import { DstackAgent, keyProof, phalaCollateral, phalaRootSecret, reportDataFor } from "./tee.ts";
 import { TokenWallets } from "./wallet.ts";
@@ -39,6 +40,8 @@ const appInfo = dstack ? await dstack.info() : null;
 // Fixed for the keeper's lifetime: the quote binds this key to this app instance.
 const sealKey = keys.sealing().publicKeyHex;
 const quote = dstack ? await dstack.getQuote(reportDataFor(keys.nearPublicKey(), sealKey)) : null;
+// Public endpoints refuse bursts; see rpcFetch.ts.
+installPoliteRpc(config.network, config.rpcUrl);
 const near = new Near({
   network: config.rpcUrl
     ? {
