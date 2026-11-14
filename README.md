@@ -1,20 +1,26 @@
 # Nearkat
 
-**NFTs that carry private data only attested code can open.** The token's
+**NFTs that carry private data only attested code can open: a new primitive on
+NEAR.** The token's
 contract decides who gets the decryption key, NEAR's MPC network derives it,
-and the data itself sits encrypted on NEAR. It started as a pet with a private
-memory. The same mechanism now runs a launchpad, encrypted training datasets
-whose samples earn rent, and trained models that are tokens themselves: the
-first pieces of a decentralized Hugging Face.
+and the data itself sits encrypted on NEAR. It started as an **agentic NFT**: a
+pet with a private memory and a wallet of its own. The same mechanism now runs
+a launchpad, encrypted training datasets whose samples earn rent, and trained
+models that are tokens themselves: the first pieces of a decentralized Hugging
+Face. For training on data its owners won't hand over, it is an alternative to
+federated learning: the data stays sealed and only vetted code may open it.
 
 | | |
 | --- | --- |
 | Hackathon | NEAR Hackathon 2026, tracks **Privacy & Private AI** and **NFTs That Do Something** |
+| Demo video | <https://youtu.be/Zb-o5v76MYE> |
+| Short explainer video | <https://youtu.be/Yl03G_zljwY> |
 | Live demo (testnet) | <https://web-production-bffc5.up.railway.app/?demo=hotdogs.pad.pals-c0b7a5.testnet> |
 | Contracts (testnet) | launchpad `pad.pals-c0b7a5.testnet`, dataset `hotdogs.pad.pals-c0b7a5.testnet`, characters `nft2.pals-c0b7a5.testnet` |
 | Try it without a wallet | [Check the live deployment from a terminal](#1-check-the-live-deployment-from-a-terminal-no-wallet) |
 | Run everything locally | [Run the whole thing locally](#3-run-the-whole-thing-locally) |
 | What is and isn't proven | [Limits](#limits) |
+| In keywords | Sealed tokens (a new NEAR primitive) · agentic NFTs · dynamic NFTs · NEAR MPC · confidential key derivation (CKD) · TEE, Intel TDX, remote attestation verified on-chain · confidential computing · private AI · NEAR AI Cloud · FastFS · global contracts · sub-accounts as token-bound accounts · data marketplace · privacy-preserving training (an alternative to federated learning) · model provenance · decentralized AI |
 
 Contents: [The story](#the-story) · [The idea](#the-idea) · [Try it](#try-it) ·
 [How it works](#how-it-works) · [NEAR techniques](#near-techniques-used) ·
@@ -25,9 +31,10 @@ Contents: [The story](#the-story) · [The idea](#the-idea) · [Try it](#try-it) 
 
 ## The story
 
-It began as a Tamagotchi. A *nearkat* is an NFT with a mind: you raise it by
-talking to it, it grows where everyone can see, and when you give it away its
-memories go with it. Making that honest forced one hard question: **where does
+It began as a Tamagotchi. A *nearkat* is an agentic NFT, an NFT with a mind:
+you raise it by talking to it, it grows where everyone can see (a dynamic NFT:
+its art follows its on-chain growth), and when you give it away its memories
+go with it. Making that honest forced one hard question: **where does
 a token's private memory live, and who holds the key?** If the answer is "our
 server", the NFT is a receipt for a database row.
 
@@ -52,6 +59,14 @@ last part holds when the services run inside a TEE. The code for that is built
 and tested; the live demo does not run in one yet. See [Limits](#limits).)
 
 ## The idea
+
+A new kind of primitive on NEAR: the **sealed token**, an NFT whose contract is
+the gate to a decryption key. NEAR's MPC network can derive a key for a
+contract (confidential key derivation); a contract can verify a TEE's
+attestation; an NFT records who owns what. Put together, they give a token
+that carries private data, opens only for code its contract has vetted, and
+takes that data with it when it is sold, lent or rented. Nothing off-chain
+holds a key.
 
 One mechanism, used three times.
 
@@ -253,15 +268,15 @@ minute, and training, recording and minting about 40 seconds. Details:
 
 | Technique | What it does here | Where |
 | --- | --- | --- |
-| **MPC confidential key derivation** (`request_app_private_key` on `v1.signer`) | Derives each collection's, sample's and model's key for the *collection's account*, returned encrypted to a throwaway BLS12-381 key. The keeper and trainer verify the answer with a pairing check | `contract/src/ckd.rs`, `keeper/src/ckd.ts`, `mock-mpc/` |
+| **NEAR MPC confidential key derivation, CKD** (`request_app_private_key` on `v1.signer`) | Derives each collection's, sample's and model's key for the *collection's account*, returned encrypted to a throwaway BLS12-381 key. The keeper and trainer verify the answer with a pairing check | `contract/src/ckd.rs`, `keeper/src/ckd.ts`, `mock-mpc/` |
 | **Contract as key gate** | Only the collection can ask the MPC network for its keys, and it forwards a request only for its keeper, or for an app a sample is rented to, called directly (not through a relay contract) | `contract/src/dataset.rs`, `contract/src/apps.rs` |
-| **TDX attestation verified on-chain** | The contract checks an Intel TDX quote (dcap-qvl, about 166 Tgas), that it commits to the app's keys, and that dstack's event log replays to RTMR3 and names the required app | `contract/src/attestation.rs` |
+| **TEE remote attestation verified on-chain** (confidential computing) | The contract checks an Intel TDX quote (dcap-qvl, about 166 Tgas), that it commits to the app's keys, and that dstack's event log replays to RTMR3 and names the required app | `contract/src/attestation.rs` |
 | **Global contracts** (code published once, used by hash) | Every launched collection and every token wallet runs shared code referenced by hash; upgrades move to another approved hash and run `migrate` in the same batch | `launchpad/src/lib.rs`, `contract/src/upgrade.rs` |
 | **Sub-account factory** | `launch` creates `<slug>.<launchpad>`, initialises it, and refunds the creator if any step fails | `launchpad/src/lib.rs` |
-| **Keyless accounts as token wallets** | Each token can own `<token_id>.<collection>`: an account with no access keys whose only method obeys the collection contract, which applies the owner's spending rules. The wallet moves with the token | `contract/src/wallet.rs`, `token-wallet/` |
+| **Keyless sub-accounts as token wallets** (token-bound accounts, done natively) | Each token can own `<token_id>.<collection>`: an account with no access keys whose only method obeys the collection contract, which applies the owner's spending rules. The wallet moves with the token, and the token's mind can pay from it: this is what makes it an agentic NFT | `contract/src/wallet.rs`, `token-wallet/` |
 | **Promise fan-out with callbacks** | One call requests up to 10 keys from the MPC network in parallel and collects them in a callback; minting 200 samples continues across receipts and anyone can finish it | `contract/src/dataset.rs` |
 | **FastFS** (`__fastdata_fastfs`) | Encrypted blobs are stored as transaction data addressed to the collection, read back from a gateway or any archival node and checked against the on-chain hash | `keeper/src/fastfs.ts`, `keeper/src/store.ts` |
-| **NEP-171 / 177 / 178 / 181** | Core, metadata, approvals and enumeration, so tokens show in wallets and marketplaces | `contract/src/nft.rs` |
+| **NEP-171 / 177 / 178 / 181, as dynamic NFTs** | Core, metadata, approvals and enumeration, so tokens show in wallets and marketplaces. Art is served live and changes with the token's on-chain growth | `contract/src/nft.rs` |
 | **NEP-199 payouts** | Creator royalties on resale | `contract/src/payout.rs` |
 | **NEP-297 events** | `loan_offered`, `loan_started`, `model_minted`, `wallet_payment` and others, sized to stay under the 16 KB log limit for 50-sample batches | `contract/src/lending.rs` |
 | **NEP-413 message signing** | Wallet sign-in to the keeper and to each training app, each with its own recipient so a session for one opens nothing at another | `keeper/src/auth.ts`, `web/src/lib/session.ts` |
@@ -286,7 +301,32 @@ know what it was used for. That is what this adds.
 | A model card someone wrote | An on-chain record: which samples, which app, who paid, file hash, held-out accuracy | Yes |
 | Search, versions, larger models, GPUs, hosted inference | | Not yet |
 
-Uses the same contract already supports, or needs only a new training app for:
+### An alternative to federated learning
+
+This solves the same problem as federated learning: training on data its
+owners will not hand over. Federated learning gets there by keeping the data
+on each owner's machine, training there, and sharing only model updates. This
+project is an alternative that takes the other route:
+the data is encrypted once and stored, and the *code* is what gets vetted.
+Keys are released only to an attested training app, for samples it has paid
+to use.
+
+| | Federated learning | Here |
+| --- | --- | --- |
+| Where training happens | On every data owner's device | In one attested app (a TEE) |
+| What data owners must run | A client, online for every round | Nothing after contributing a sample |
+| What a trainer may run | What the protocol's clients support | Any code, once its identity is attested and a holder lists it |
+| Paying contributors | Outside the protocol | A fee per sample per run, on-chain |
+| Record of what trained a model | Usually none | Samples, app, payer, model hash and score on-chain |
+| What you have to trust | The aggregator, and that updates don't leak | The TEE hardware and the attested code |
+
+The two combine: a federated round could run across several attested apps,
+with the contract deciding which app gets which samples and recording each
+contribution. That is not built.
+
+### Uses
+
+The same contract already supports these, or needs only a new training app:
 
 - **Data unions.** Photographers, clinics or labs each hold their own samples
   and earn per use, without a middleman holding the data.

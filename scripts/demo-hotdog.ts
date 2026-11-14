@@ -26,6 +26,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
+import { installPoliteRpc } from "../keeper/src/rpcFetch.ts";
 
 const here = dirname(new URL(import.meta.url).pathname);
 const keeperRequire = createRequire(resolve(here, "../keeper/package.json"));
@@ -81,6 +82,8 @@ const [whole, frac = ""] = feeNear.split(".");
 const feeYocto = BigInt(whole + frac.padEnd(24, "0"));
 
 const network = values.network as string;
+// Public endpoints refuse bursts, and this script reads every sample: retry and spread the views.
+installPoliteRpc(network, values.rpc);
 if (network !== "testnet" && network !== "sandbox") {
   console.error("--network is testnet or sandbox");
   process.exit(2);
