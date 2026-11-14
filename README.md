@@ -10,6 +10,12 @@ models that are tokens themselves: the first pieces of a decentralized Hugging
 Face. For training on data its owners won't hand over, it is an alternative to
 federated learning: the data stays sealed and only vetted code may open it.
 
+<p align="center">
+  <img src="docs/img/nearkat-mechanism.gif" width="640"
+       alt="Animation of the mechanism: a token owned by alice.near and its encrypted data on FastFS; the collection contract verifies an enclave's TDX quote, NEAR's MPC network derives the key for it, and the enclave opens the data to answer alice only.">
+</p>
+<p align="center"><em>How a sealed token opens: the contract verifies the enclave, NEAR's MPC network derives the key, and the data is read only inside it, for the token's owner.</em></p>
+
 | | |
 | --- | --- |
 | Hackathon | NEAR Hackathon 2026, tracks **Privacy & Private AI** and **NFTs That Do Something** |
