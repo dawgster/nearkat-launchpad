@@ -2,12 +2,17 @@
  * Public RPC endpoints refuse bursts: a page or a run that scans 200 samples
  * makes hundreds of view calls, and a free endpoint answers 429 after the
  * first hundred or so. `politeFetch` wraps `fetch` for the RPC endpoint the
- * app is configured with: a refused call (429, or a network error, which is
- * how a browser sees a 429 without CORS headers) is sent again, to the next
- * endpoint that is not resting, and an endpoint that refuses rests for a
- * growing pause. Calls to any other URL pass through untouched. Sending a
- * JSON-RPC request twice is safe: views are reads, and a signed transaction
- * has the same hash however often it is sent.
+ * app is configured with. A refused call (429, a 5xx, or a network error,
+ * which is how a browser sees a 429 without CORS headers) is sent again, and
+ * an endpoint that refuses rests for a growing pause.
+ *
+ * Only contract views are spread over the other endpoints: they are reads
+ * any node can answer. Everything else (transactions, their status, access
+ * keys) stays on the configured endpoint and waits for it, because
+ * transactions sent at once must reach one node in order (their nonces), and
+ * a second node may not know a transaction or a nonce yet. Sending a request
+ * twice is safe: views are reads, and a signed transaction has the same hash
+ * however often it is sent. Calls to any other URL pass through untouched.
  */
 export interface PoliteOptions {
   /** Requests in flight at once, over all endpoints. */
@@ -64,6 +69,10 @@ const urlOf = (input: unknown): string =>
 
 const same = (a: string, b: string): boolean => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
 
+/** A contract view call, going by its JSON-RPC body. */
+const isView = (init: RequestInit | undefined): boolean =>
+  typeof init?.body === "string" && init.body.includes('"call_function"');
+
 export function politeFetch(
   primary: string,
   fallbacks: string[],
@@ -101,9 +110,10 @@ export function politeFetch(
     try {
       let last: Response | undefined;
       let failure: unknown;
+      const candidates = isView(init) ? endpoints : endpoints.slice(0, 1);
       for (let attempt = 0; attempt < attempts; attempt++) {
         // The endpoint that is free soonest; the configured one wins a tie.
-        const endpoint = endpoints.reduce((a, b) => (b.restingUntil < a.restingUntil ? b : a));
+        const endpoint = candidates.reduce((a, b) => (b.restingUntil < a.restingUntil ? b : a));
         const wait = endpoint.restingUntil - now();
         if (wait > 0) {
           await sleep(wait);
@@ -112,7 +122,8 @@ export function politeFetch(
         try {
           last = await real(endpoint.url, init);
           failure = undefined;
-          refused = last.status === 429;
+          // 5xx is the endpoint's own trouble (a gateway in front of a busy node), not an answer.
+          refused = last.status === 429 || last.status >= 500;
         } catch (error) {
           failure = error;
           refused = true;
